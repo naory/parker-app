@@ -138,6 +138,26 @@ gateRouter.post('/exit', async (req, res) => {
       lot.maxDailyFee ?? undefined,
     )
 
+    // If client hasn't paid yet, return 402 with payment details
+    if (!(req as any).paymentVerified) {
+      res.locals.paymentRequired = {
+        amount: fee.toFixed(6),
+        description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot.name}`,
+        plateNumber: plate,
+        sessionId: session.id,
+      } satisfies PaymentRequired
+
+      // Return fee info without closing the session — session stays active until paid
+      return res.json({
+        session,
+        fee,
+        durationMinutes: Math.round(durationMinutes),
+        ...(alprResult && { alpr: alprResult }),
+      })
+    }
+
+    // Payment verified — end the session
+
     // End NFT session on-chain (if blockchain is configured)
     let txHash: string | undefined
     if (isBlockchainEnabled()) {
@@ -147,16 +167,6 @@ gateRouter.post('/exit', async (req, res) => {
       } catch (err) {
         console.error('On-chain session end failed (continuing with off-chain):', err)
       }
-    }
-
-    // Trigger x402 payment (if client hasn't already paid)
-    if (!(req as any).paymentVerified) {
-      res.locals.paymentRequired = {
-        amount: fee.toFixed(6),
-        description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot.name}`,
-        plateNumber: plate,
-        sessionId: session.id,
-      } satisfies PaymentRequired
     }
 
     // End session in DB
