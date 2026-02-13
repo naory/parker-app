@@ -1,6 +1,66 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import type { Lot } from '@parker/core'
+import { getLotStatus } from '@/lib/api'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+
 export default function Settings() {
+  const lotId = process.env.NEXT_PUBLIC_LOT_ID || ''
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [form, setForm] = useState({
+    name: '',
+    address: '',
+    capacity: '',
+    ratePerHour: '',
+    billingMinutes: '15',
+    maxDailyFee: '',
+  })
+
+  // Load lot settings
+  useEffect(() => {
+    if (!lotId) {
+      setLoading(false)
+      return
+    }
+
+    fetch(`${API_URL}/api/gate/lot/${encodeURIComponent(lotId)}/status`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setForm((prev) => ({
+            ...prev,
+            name: data.name || '',
+          }))
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [lotId])
+
+  function updateField(key: string, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }))
+    setMessage(null)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setMessage(null)
+
+    try {
+      // For MVP, log to console — full save requires a lot update API endpoint
+      console.log('Saving lot settings:', { lotId, ...form })
+      setMessage({ type: 'success', text: 'Settings saved (locally for now)' })
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to save settings' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="p-6">
       <h1 className="mb-6 text-2xl font-bold text-parker-800">Lot Settings</h1>
@@ -10,10 +70,26 @@ export default function Settings() {
         <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-semibold text-gray-700">Lot Information</h2>
           <div className="space-y-3">
-            <Field label="Lot ID" value={process.env.NEXT_PUBLIC_LOT_ID || ''} disabled />
-            <Field label="Lot Name" value="" placeholder="My Parking Lot" />
-            <Field label="Address" value="" placeholder="123 Main St, Tel Aviv" />
-            <Field label="Capacity" value="" placeholder="100" type="number" />
+            <Field label="Lot ID" value={lotId} disabled />
+            <Field
+              label="Lot Name"
+              value={form.name}
+              placeholder="My Parking Lot"
+              onChange={(v) => updateField('name', v)}
+            />
+            <Field
+              label="Address"
+              value={form.address}
+              placeholder="123 Main St, Tel Aviv"
+              onChange={(v) => updateField('address', v)}
+            />
+            <Field
+              label="Capacity"
+              value={form.capacity}
+              placeholder="100"
+              type="number"
+              onChange={(v) => updateField('capacity', v)}
+            />
           </div>
         </section>
 
@@ -21,14 +97,45 @@ export default function Settings() {
         <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-semibold text-gray-700">Pricing</h2>
           <div className="space-y-3">
-            <Field label="Rate per Hour (USDC)" value="" placeholder="3.30" type="number" />
-            <Field label="Billing Increment (min)" value="15" type="number" />
-            <Field label="Max Daily Fee (USDC)" value="" placeholder="25.00" type="number" />
+            <Field
+              label="Rate per Hour (USDC)"
+              value={form.ratePerHour}
+              placeholder="3.30"
+              type="number"
+              onChange={(v) => updateField('ratePerHour', v)}
+            />
+            <Field
+              label="Billing Increment (min)"
+              value={form.billingMinutes}
+              type="number"
+              onChange={(v) => updateField('billingMinutes', v)}
+            />
+            <Field
+              label="Max Daily Fee (USDC)"
+              value={form.maxDailyFee}
+              placeholder="25.00"
+              type="number"
+              onChange={(v) => updateField('maxDailyFee', v)}
+            />
           </div>
         </section>
 
-        <button className="rounded-lg bg-parker-600 px-6 py-3 font-medium text-white transition hover:bg-parker-700">
-          Save Settings
+        {message && (
+          <p
+            className={`text-sm ${
+              message.type === 'success' ? 'text-green-600' : 'text-red-600'
+            }`}
+          >
+            {message.text}
+          </p>
+        )}
+
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-lg bg-parker-600 px-6 py-3 font-medium text-white transition hover:bg-parker-700 disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : 'Save Settings'}
         </button>
       </div>
     </div>
@@ -41,21 +148,25 @@ function Field({
   placeholder,
   type = 'text',
   disabled = false,
+  onChange,
 }: {
   label: string
   value: string
   placeholder?: string
   type?: string
   disabled?: boolean
+  onChange?: (value: string) => void
 }) {
   return (
     <div>
       <label className="mb-1 block text-sm text-gray-500">{label}</label>
       <input
         type={type}
-        defaultValue={value}
+        value={value}
         placeholder={placeholder}
         disabled={disabled}
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        readOnly={!onChange}
         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-parker-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
       />
     </div>

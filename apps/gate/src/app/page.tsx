@@ -11,8 +11,11 @@ export default function GateView() {
   const [lastPlate, setLastPlate] = useState<string | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
 
+  const [lastResult, setLastResult] = useState<{ success: boolean; message: string; fee?: number } | null>(null)
+
   async function handlePlateDetected(plate: string) {
     setLastPlate(plate)
+    setLastResult(null)
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL
     const lotId = process.env.NEXT_PUBLIC_LOT_ID
@@ -25,12 +28,24 @@ export default function GateView() {
         body: JSON.stringify({ plateNumber: plate, lotId }),
       })
 
+      const data = await res.json()
+
       if (res.ok) {
         setGateOpen(true)
         setTimeout(() => setGateOpen(false), 5000)
+        setLastResult({
+          success: true,
+          message: mode === 'entry'
+            ? `Vehicle entered — session started`
+            : `Vehicle exited — ${data.durationMinutes}min, $${data.fee?.toFixed(2)}`,
+          fee: data.fee,
+        })
+      } else {
+        setLastResult({ success: false, message: data.error || 'Operation failed' })
       }
     } catch (error) {
       console.error('Gate operation failed:', error)
+      setLastResult({ success: false, message: 'Network error' })
     }
   }
 
@@ -71,9 +86,22 @@ export default function GateView() {
           {lastPlate && <PlateResult plate={lastPlate} mode={mode} />}
         </div>
 
-        {/* Gate status + manual entry */}
+        {/* Gate status + result + manual entry */}
         <div className="space-y-6">
           <GateStatus open={gateOpen} mode={mode} />
+
+          {/* Operation result */}
+          {lastResult && (
+            <div
+              className={`rounded-lg p-4 text-sm font-medium ${
+                lastResult.success
+                  ? 'bg-green-50 text-green-700 border border-green-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              }`}
+            >
+              {lastResult.message}
+            </div>
+          )}
 
           {/* Manual plate input */}
           <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">

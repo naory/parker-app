@@ -10,6 +10,7 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [streaming, setStreaming] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const startCamera = useCallback(async () => {
     try {
@@ -22,12 +23,14 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
       }
     } catch (err) {
       console.error('Camera access denied:', err)
+      setError('Camera access denied. Please allow camera permissions.')
     }
   }, [])
 
   const captureAndScan = useCallback(async () => {
     if (!videoRef.current || processing) return
     setProcessing(true)
+    setError(null)
 
     try {
       const canvas = document.createElement('canvas')
@@ -47,10 +50,29 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
         reader.readAsDataURL(blob)
       })
 
-      // TODO: Send to /api/gate/scan for ALPR
-      // For now, prompt for manual input
-      const plate = prompt('ALPR not yet connected. Enter plate manually:')
-      if (plate) onCapture(plate)
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL
+      const res = await fetch(`${apiUrl}/api/gate/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64 }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        setError(data.error || 'Scan failed')
+        return
+      }
+
+      const data = await res.json()
+
+      if (data.plateNumber) {
+        onCapture(data.plateNumber)
+      } else {
+        setError('No valid plate detected. Try again or enter manually.')
+      }
+    } catch (err) {
+      console.error('Scan failed:', err)
+      setError('Network error — scan failed')
     } finally {
       setProcessing(false)
     }
@@ -80,7 +102,12 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
 
         {/* ALPR overlay */}
         {streaming && (
-          <div className="absolute inset-x-0 bottom-0 flex justify-center p-4">
+          <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 p-4">
+            {error && (
+              <p className="rounded bg-red-500/90 px-3 py-1 text-xs font-medium text-white backdrop-blur">
+                {error}
+              </p>
+            )}
             <button
               onClick={captureAndScan}
               disabled={processing}

@@ -1,8 +1,51 @@
 'use client'
 
+import { useState, useEffect, useMemo } from 'react'
+import type { SessionRecord } from '@parker/core'
+import { formatPlate, calculateFee } from '@parker/core'
+import { getActiveSessionsByLot } from '@/lib/api'
+
 export default function Sessions() {
-  // TODO: Fetch active sessions for this lot from API
-  const lotId = process.env.NEXT_PUBLIC_LOT_ID
+  const lotId = process.env.NEXT_PUBLIC_LOT_ID || ''
+  const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [now, setNow] = useState(Date.now())
+
+  // Fetch sessions
+  useEffect(() => {
+    if (!lotId) {
+      setLoading(false)
+      return
+    }
+
+    getActiveSessionsByLot(lotId)
+      .then(setSessions)
+      .catch(() => setSessions([]))
+      .finally(() => setLoading(false))
+
+    // Poll every 15s
+    const interval = setInterval(() => {
+      getActiveSessionsByLot(lotId).then(setSessions).catch(() => {})
+    }, 15_000)
+
+    return () => clearInterval(interval)
+  }, [lotId])
+
+  // Tick every second for live durations
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Filter by search
+  const filtered = useMemo(() => {
+    if (!search) return sessions
+    const q = search.toLowerCase().replace(/[\s-]/g, '')
+    return sessions.filter((s) =>
+      s.plateNumber.toLowerCase().replace(/[\s-]/g, '').includes(q),
+    )
+  }, [sessions, search])
 
   return (
     <div className="p-6">
@@ -14,6 +57,8 @@ export default function Sessions() {
         <input
           type="text"
           placeholder="Search by plate number..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
           className="w-full max-w-md rounded-lg border border-gray-300 px-4 py-2 focus:border-parker-500 focus:outline-none"
         />
       </div>
@@ -27,16 +72,52 @@ export default function Sessions() {
               <th className="px-4 py-3">Entry Time</th>
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Est. Fee</th>
-              <th className="px-4 py-3">Actions</th>
+              <th className="px-4 py-3">NFT</th>
             </tr>
           </thead>
           <tbody>
-            {/* TODO: Map over active sessions */}
-            <tr>
-              <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                No active sessions
-              </td>
-            </tr>
+            {loading ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  Loading...
+                </td>
+              </tr>
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  {search ? 'No matching sessions' : 'No active sessions'}
+                </td>
+              </tr>
+            ) : (
+              filtered.map((session) => {
+                const entryDate = new Date(session.entryTime)
+                const durationMs = now - entryDate.getTime()
+                const durationMin = Math.round(durationMs / 60_000)
+                const h = Math.floor(durationMin / 60)
+                const m = durationMin % 60
+                const fee = calculateFee(durationMin, 3.3, 15) // Default rate
+
+                return (
+                  <tr key={session.id} className="border-t border-gray-100 hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium tracking-wider text-parker-800">
+                      {formatPlate(session.plateNumber)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {h > 0 ? `${h}h ` : ''}{m}m
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-800">
+                      ${fee.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400">
+                      {session.tokenId ? `#${session.tokenId}` : '--'}
+                    </td>
+                  </tr>
+                )
+              })
+            )}
           </tbody>
         </table>
       </div>

@@ -3,10 +3,12 @@
 import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
+import { useDriverProfile } from '@/hooks/useDriverProfile'
 
 export default function Register() {
   const { address } = useAccount()
   const router = useRouter()
+  const { setPlate } = useDriverProfile()
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
     plateNumber: '',
@@ -30,6 +32,8 @@ export default function Register() {
       })
 
       if (res.ok) {
+        // Save plate number locally so other pages can look up sessions
+        setPlate(form.plateNumber)
         router.push('/')
       } else {
         const data = await res.json()

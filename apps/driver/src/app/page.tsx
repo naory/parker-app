@@ -5,9 +5,11 @@ import Link from 'next/link'
 
 import { WalletButton } from '@/components/WalletButton'
 import { SessionCard } from '@/components/SessionCard'
+import { useDriverProfile } from '@/hooks/useDriverProfile'
 
 export default function Dashboard() {
   const { isConnected } = useAccount()
+  const { plate, isRegistered } = useDriverProfile()
 
   if (!isConnected) {
     return (
@@ -29,8 +31,18 @@ export default function Dashboard() {
         <WalletButton />
       </header>
 
+      {/* Registration prompt */}
+      {!isRegistered && (
+        <Link
+          href="/register"
+          className="mb-6 block rounded-lg border-2 border-dashed border-parker-300 bg-parker-50 p-4 text-center text-parker-700 transition hover:border-parker-400 hover:bg-parker-100"
+        >
+          Register your vehicle to get started
+        </Link>
+      )}
+
       {/* Active Session */}
-      <SessionCard />
+      <SessionCard plate={plate} />
 
       {/* Quick Actions */}
       <nav className="mt-6 space-y-3">
