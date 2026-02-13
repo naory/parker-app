@@ -1,0 +1,18 @@
+{
+  "name": "@parker/alpr",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@google-cloud/vision": "^4.3.0"
+  },
+  "devDependencies": {
+    "@parker/tsconfig": "workspace:*",
+    "typescript": "^5.4.0"
+  }
+}

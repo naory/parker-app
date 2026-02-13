@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm:*)",
+      "Bash(npx hardhat --version)",
+      "WebSearch",
+      "WebFetch(domain:docs.cdp.coinbase.com)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

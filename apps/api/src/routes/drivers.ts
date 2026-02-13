@@ -1,0 +1,71 @@
+import { Router } from 'express'
+import type { RegisterDriverRequest } from '@parker/core'
+
+import { db } from '../db'
+
+export const driversRouter = Router()
+
+// POST /api/drivers/register — Register new driver + vehicle
+driversRouter.post('/register', async (req, res) => {
+  try {
+    const { plateNumber, countryCode, carMake, carModel } = req.body as RegisterDriverRequest
+
+    // TODO: Verify wallet signature from request headers
+    const wallet = req.headers['x-wallet-address'] as string
+    if (!wallet) {
+      return res.status(400).json({ error: 'Wallet address required' })
+    }
+
+    const driver = await db.createDriver({
+      wallet,
+      plateNumber,
+      countryCode,
+      carMake,
+      carModel,
+    })
+
+    res.status(201).json(driver)
+  } catch (error) {
+    console.error('Failed to register driver:', error)
+    res.status(500).json({ error: 'Failed to register driver' })
+  }
+})
+
+// GET /api/drivers/:plate — Get driver profile
+driversRouter.get('/:plate', async (req, res) => {
+  try {
+    const driver = await db.getDriverByPlate(req.params.plate)
+    if (!driver) {
+      return res.status(404).json({ error: 'Driver not found' })
+    }
+    res.json(driver)
+  } catch (error) {
+    console.error('Failed to get driver:', error)
+    res.status(500).json({ error: 'Failed to get driver' })
+  }
+})
+
+// PUT /api/drivers/:plate — Update profile
+driversRouter.put('/:plate', async (req, res) => {
+  try {
+    const driver = await db.updateDriver(req.params.plate, req.body)
+    if (!driver) {
+      return res.status(404).json({ error: 'Driver not found' })
+    }
+    res.json(driver)
+  } catch (error) {
+    console.error('Failed to update driver:', error)
+    res.status(500).json({ error: 'Failed to update driver' })
+  }
+})
+
+// DELETE /api/drivers/:plate — Deactivate driver
+driversRouter.delete('/:plate', async (req, res) => {
+  try {
+    await db.deactivateDriver(req.params.plate)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('Failed to deactivate driver:', error)
+    res.status(500).json({ error: 'Failed to deactivate driver' })
+  }
+})

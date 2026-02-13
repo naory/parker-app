@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# Hardhat / Solidity
+artifacts/
+cache/
+typechain-types/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+coverage/
+coverage.json
+
+# Turbo
+.turbo/
+
+# Misc
+*.log
+npm-debug.log*
+pnpm-debug.log*
