@@ -1,15 +1,28 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 
 import { CameraFeed } from '@/components/CameraFeed'
 import { PlateResult } from '@/components/PlateResult'
 import { GateStatus } from '@/components/GateStatus'
+import { useGateSocket } from '@/hooks/useGateSocket'
 
 export default function GateView() {
   const [mode, setMode] = useState<'entry' | 'exit'>('entry')
   const [lastPlate, setLastPlate] = useState<string | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
+
+  const lotId = process.env.NEXT_PUBLIC_LOT_ID || null
+
+  // Real-time gate events via WebSocket
+  const handleGateEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
+    if (event.type === 'entry' || event.type === 'exit') {
+      const plate = event.plate as string
+      if (plate) setLastPlate(plate)
+    }
+  }, [])
+
+  const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent)
 
   const [lastResult, setLastResult] = useState<{ success: boolean; message: string; fee?: number } | null>(null)
 
@@ -52,7 +65,13 @@ export default function GateView() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-parker-800">Live Gate</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-parker-800">Live Gate</h1>
+          <span
+            className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-gray-300'}`}
+            title={wsConnected ? 'Connected' : 'Disconnected'}
+          />
+        </div>
 
         {/* Mode toggle */}
         <div className="flex rounded-lg bg-gray-200 p-1">

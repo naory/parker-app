@@ -52,8 +52,8 @@ export function createPaymentClient(options: PaymentClientOptions = {}): Payment
         return null
       }
 
-      const body = await response.json()
-      const paymentDetails = body.x402 as X402PaymentDetails | undefined
+      const body = (await response.json()) as { x402?: X402PaymentDetails }
+      const paymentDetails = body.x402
 
       if (!paymentDetails) {
         console.error('[x402] 402 response missing x402 payment details')

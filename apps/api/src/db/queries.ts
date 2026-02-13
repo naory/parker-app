@@ -42,6 +42,14 @@ async function updateDriver(
   return rows[0] ? mapDriver(rows[0]) : null
 }
 
+async function getDriverByWallet(wallet: string): Promise<DriverRecord | null> {
+  const { rows } = await pool.query(
+    `SELECT * FROM drivers WHERE wallet = $1 AND active = true`,
+    [wallet],
+  )
+  return rows[0] ? mapDriver(rows[0]) : null
+}
+
 async function deactivateDriver(plate: string): Promise<void> {
   await pool.query(`UPDATE drivers SET active = false WHERE plate_number = $1`, [plate])
 }
@@ -109,6 +117,39 @@ async function getLot(lotId: string): Promise<Lot | null> {
   return rows[0] ? mapLot(rows[0]) : null
 }
 
+interface UpdateLotInput {
+  name?: string
+  address?: string
+  capacity?: number
+  ratePerHour?: number
+  billingMinutes?: number
+  maxDailyFee?: number | null
+}
+
+async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | null> {
+  const { rows } = await pool.query(
+    `UPDATE lots SET
+      name = COALESCE($2, name),
+      address = COALESCE($3, address),
+      capacity = COALESCE($4, capacity),
+      rate_per_hour = COALESCE($5, rate_per_hour),
+      billing_minutes = COALESCE($6, billing_minutes),
+      max_daily_fee = COALESCE($7, max_daily_fee)
+     WHERE id = $1
+     RETURNING *`,
+    [
+      lotId,
+      updates.name,
+      updates.address,
+      updates.capacity,
+      updates.ratePerHour,
+      updates.billingMinutes,
+      updates.maxDailyFee,
+    ],
+  )
+  return rows[0] ? mapLot(rows[0]) : null
+}
+
 // ---- Row Mappers ----
 
 function mapDriver(row: any): DriverRecord {
@@ -156,6 +197,7 @@ function mapLot(row: any): Lot {
 export const db = {
   createDriver,
   getDriverByPlate,
+  getDriverByWallet,
   updateDriver,
   deactivateDriver,
   createSession,
@@ -164,4 +206,5 @@ export const db = {
   endSession,
   getSessionHistory,
   getLot,
+  updateLot,
 }
