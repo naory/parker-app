@@ -31,10 +31,14 @@ export default function Settings() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
-          setForm((prev) => ({
-            ...prev,
+          setForm({
             name: data.name || '',
-          }))
+            address: data.address || '',
+            capacity: data.capacity?.toString() || '',
+            ratePerHour: data.ratePerHour?.toString() || '',
+            billingMinutes: data.billingMinutes?.toString() || '15',
+            maxDailyFee: data.maxDailyFee?.toString() || '',
+          })
         }
       })
       .catch(() => {})
@@ -51,11 +55,27 @@ export default function Settings() {
     setMessage(null)
 
     try {
-      // For MVP, log to console — full save requires a lot update API endpoint
-      console.log('Saving lot settings:', { lotId, ...form })
-      setMessage({ type: 'success', text: 'Settings saved (locally for now)' })
+      const res = await fetch(`${API_URL}/api/gate/lot/${encodeURIComponent(lotId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name || undefined,
+          address: form.address || undefined,
+          capacity: form.capacity || undefined,
+          ratePerHour: form.ratePerHour || undefined,
+          billingMinutes: form.billingMinutes || undefined,
+          maxDailyFee: form.maxDailyFee || undefined,
+        }),
+      })
+
+      if (res.ok) {
+        setMessage({ type: 'success', text: 'Settings saved successfully' })
+      } else {
+        const data = await res.json()
+        setMessage({ type: 'error', text: data.error || 'Failed to save settings' })
+      }
     } catch {
-      setMessage({ type: 'error', text: 'Failed to save settings' })
+      setMessage({ type: 'error', text: 'Network error — failed to save' })
     } finally {
       setSaving(false)
     }

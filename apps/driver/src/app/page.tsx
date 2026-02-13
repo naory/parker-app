@@ -1,15 +1,27 @@
 'use client'
 
+import { useState, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import Link from 'next/link'
 
 import { WalletButton } from '@/components/WalletButton'
 import { SessionCard } from '@/components/SessionCard'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
+import { useParkerSocket } from '@/hooks/useParkerSocket'
 
 export default function Dashboard() {
   const { isConnected } = useAccount()
   const { plate, isRegistered } = useDriverProfile()
+  const [sessionKey, setSessionKey] = useState(0)
+
+  // Listen for real-time session events — force SessionCard to re-fetch
+  const handleSocketEvent = useCallback((event: { type: string }) => {
+    if (event.type === 'session_started' || event.type === 'session_ended') {
+      setSessionKey((k) => k + 1)
+    }
+  }, [])
+
+  useParkerSocket(plate, handleSocketEvent)
 
   if (!isConnected) {
     return (
@@ -42,7 +54,7 @@ export default function Dashboard() {
       )}
 
       {/* Active Session */}
-      <SessionCard plate={plate} />
+      <SessionCard key={sessionKey} plate={plate} />
 
       {/* Quick Actions */}
       <nav className="mt-6 space-y-3">

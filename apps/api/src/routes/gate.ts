@@ -218,9 +218,14 @@ gateRouter.get('/lot/:lotId/status', async (req, res) => {
     res.json({
       lotId: lot.id,
       name: lot.name,
+      address: lot.address,
       currentOccupancy: activeSessions.length,
       capacity: lot.capacity,
       activeSessions: activeSessions.length,
+      ratePerHour: lot.ratePerHour,
+      billingMinutes: lot.billingMinutes,
+      maxDailyFee: lot.maxDailyFee,
+      operatorWallet: lot.operatorWallet,
     })
   } catch (error) {
     console.error('Failed to get lot status:', error)
@@ -236,5 +241,30 @@ gateRouter.get('/lot/:lotId/sessions', async (req, res) => {
   } catch (error) {
     console.error('Failed to get lot sessions:', error)
     res.status(500).json({ error: 'Failed to get lot sessions' })
+  }
+})
+
+// PUT /api/gate/lot/:lotId — Update lot settings
+gateRouter.put('/lot/:lotId', async (req, res) => {
+  try {
+    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee } = req.body
+
+    const lot = await db.updateLot(req.params.lotId, {
+      name,
+      address,
+      capacity: capacity ? parseInt(capacity) : undefined,
+      ratePerHour: ratePerHour ? parseFloat(ratePerHour) : undefined,
+      billingMinutes: billingMinutes ? parseInt(billingMinutes) : undefined,
+      maxDailyFee: maxDailyFee ? parseFloat(maxDailyFee) : undefined,
+    })
+
+    if (!lot) {
+      return res.status(404).json({ error: 'Lot not found' })
+    }
+
+    res.json(lot)
+  } catch (error) {
+    console.error('Failed to update lot:', error)
+    res.status(500).json({ error: 'Failed to update lot' })
   }
 })

@@ -31,6 +31,20 @@ driversRouter.post('/register', async (req, res) => {
   }
 })
 
+// GET /api/drivers/wallet/:address — Get driver by wallet address
+driversRouter.get('/wallet/:address', async (req, res) => {
+  try {
+    const driver = await db.getDriverByWallet(req.params.address)
+    if (!driver) {
+      return res.status(404).json({ error: 'Driver not found for this wallet' })
+    }
+    res.json(driver)
+  } catch (error) {
+    console.error('Failed to get driver by wallet:', error)
+    res.status(500).json({ error: 'Failed to get driver' })
+  }
+})
+
 // GET /api/drivers/:plate — Get driver profile
 driversRouter.get('/:plate', async (req, res) => {
   try {

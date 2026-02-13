@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { useAccount } from 'wagmi'
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRouter } from 'next/navigation'
+import { DRIVER_REGISTRY_ABI, CONTRACT_ADDRESSES } from '@parker/core'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
 
 export default function Register() {
@@ -10,6 +11,7 @@ export default function Register() {
   const router = useRouter()
   const { setPlate } = useDriverProfile()
   const [loading, setLoading] = useState(false)
+  const [step, setStep] = useState<'form' | 'onchain' | 'api'>('form')
   const [form, setForm] = useState({
     plateNumber: '',
     countryCode: 'IL',
@@ -17,11 +19,34 @@ export default function Register() {
     carModel: '',
   })
 
+  const { writeContractAsync } = useWriteContract()
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
 
     try {
+      // Step 1: Register on-chain (if contract is deployed)
+      const contractAddress = CONTRACT_ADDRESSES.driverRegistry
+      const isContractDeployed = contractAddress !== '0x0000000000000000000000000000000000000000'
+
+      if (isContractDeployed) {
+        setStep('onchain')
+        try {
+          await writeContractAsync({
+            address: contractAddress,
+            abi: DRIVER_REGISTRY_ABI,
+            functionName: 'register',
+            args: [form.plateNumber, form.countryCode, form.carMake, form.carModel],
+          })
+        } catch (err: any) {
+          // If user rejected the tx or it failed, still allow API-only registration
+          console.warn('On-chain registration failed (continuing with off-chain):', err?.message)
+        }
+      }
+
+      // Step 2: Register off-chain via API
+      setStep('api')
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/drivers/register`, {
         method: 'POST',
         headers: {
@@ -43,6 +68,7 @@ export default function Register() {
       alert('Network error')
     } finally {
       setLoading(false)
+      setStep('form')
     }
   }
 
@@ -103,7 +129,13 @@ export default function Register() {
           disabled={loading}
           className="w-full rounded-lg bg-parker-600 px-4 py-3 font-medium text-white transition hover:bg-parker-700 disabled:opacity-50"
         >
-          {loading ? 'Registering...' : 'Register'}
+          {!loading
+            ? 'Register'
+            : step === 'onchain'
+              ? 'Confirm in wallet...'
+              : step === 'api'
+                ? 'Saving profile...'
+                : 'Registering...'}
         </button>
       </form>
     </div>

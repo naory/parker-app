@@ -5,11 +5,13 @@ import { useAccount } from 'wagmi'
 import type { DriverRecord } from '@parker/core'
 
 const STORAGE_KEY = 'parker_driver_plate'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
 /**
  * Hook to manage the driver's profile.
- * Stores the plate number in localStorage after registration,
- * and fetches the full profile from the API.
+ * 1. Checks localStorage for a saved plate number
+ * 2. If not found, looks up the driver by wallet address via API
+ * 3. Fetches the full profile from the API
  */
 export function useDriverProfile() {
   const { address, isConnected } = useAccount()
@@ -17,7 +19,7 @@ export function useDriverProfile() {
   const [profile, setProfile] = useState<DriverRecord | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Load plate from localStorage
+  // Load plate from localStorage, or look up by wallet
   useEffect(() => {
     if (!isConnected || !address) {
       setPlateState(null)
@@ -29,24 +31,39 @@ export function useDriverProfile() {
     const storedPlate = localStorage.getItem(`${STORAGE_KEY}_${address}`)
     if (storedPlate) {
       setPlateState(storedPlate)
+      setLoading(false)
+      return
     }
-    setLoading(false)
+
+    // No stored plate — try to look up by wallet address
+    fetch(`${API_URL}/api/drivers/wallet/${address}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: DriverRecord | null) => {
+        if (data?.plateNumber) {
+          localStorage.setItem(`${STORAGE_KEY}_${address}`, data.plateNumber)
+          setPlateState(data.plateNumber)
+          setProfile(data)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [address, isConnected])
 
-  // Fetch profile when plate is known
+  // Fetch profile when plate is known (and not already loaded from wallet lookup)
   useEffect(() => {
     if (!plate) {
       setProfile(null)
       return
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    // Skip if we already have the profile from the wallet lookup
+    if (profile?.plateNumber === plate) return
 
-    fetch(`${apiUrl}/api/drivers/${encodeURIComponent(plate)}`)
+    fetch(`${API_URL}/api/drivers/${encodeURIComponent(plate)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setProfile(data))
       .catch(() => setProfile(null))
-  }, [plate])
+  }, [plate, profile?.plateNumber])
 
   const setPlate = useCallback(
     (plateNumber: string) => {
