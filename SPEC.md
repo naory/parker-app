@@ -23,6 +23,20 @@ A decentralized parking system where:
 - Verification happens directly against the blockchain — no central server dependency
 - Drivers maintain a digital wallet linked to their vehicle identity
 
+## 2.1 Deployment Model
+
+Parker is a multi-country, currency-agnostic **platform** designed to be white-labeled by country or regional operators. Each deployment is scoped to a single country or region:
+
+- **Single-country** — e.g., an operator in Israel deploys with `DEPLOYMENT_COUNTRIES=IL`. All lots use ILS, ALPR validates Israeli plates, and the driver app shows only Israel in registration.
+- **Regional** — e.g., a pan-European operator deploys with `DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB`. Lots may use EUR or GBP (per-lot config), ALPR tries EU plate formats, and the driver app shows the relevant countries.
+
+This `DEPLOYMENT_COUNTRIES` env var is the single config knob that scopes:
+1. Driver registration (country picker visibility and options)
+2. ALPR plate format detection (which country normalizers to apply)
+3. Seed data and demo configuration
+
+Currency, pricing, and payment methods remain per-lot settings — a regional deployment may have lots in different currencies (e.g., EUR lots in Germany and GBP lots in the UK).
+
 ## 3. System Architecture
 
 ### 3.1 High-Level Components
@@ -82,8 +96,8 @@ pragma solidity ^0.8.20;
 
 struct DriverProfile {
     address wallet;
-    string plateNumber;      // e.g., "12-345-67"
-    string countryCode;      // ISO 3166-1 alpha-2, e.g., "IL"
+    string plateNumber;      // e.g., "ABC-1234"
+    string countryCode;      // ISO 3166-1 alpha-2, e.g., "US"
     string carMake;          // e.g., "Toyota"
     string carModel;         // e.g., "Corolla"
     bool active;
@@ -163,14 +177,15 @@ contract ParkingNFT is ERC721 {
 ```
 fee = ceil(duration_minutes / billing_increment) × rate_per_increment
 
-Example:
-- Rate: 12 ILS/hour (≈ 3.30 USDC) → 0.055 USDC/min
+Example (lot configured with EUR):
+- Rate: 8 EUR/hour
 - Billing increment: 15 minutes
 - Duration: 2h 10m (130 min) → ceil(130/15) = 9 increments
-- Fee: 9 × (0.055 × 15) = 9 × 0.825 = 7.43 USDC
+- Fee: 9 × (8/60 × 15) = 9 × 2.00 = 18.00 EUR
+- x402 stablecoin equivalent: 18.00 × 1.08 (FX_RATE_EUR_USD) = 19.44 USDC
 ```
 
-Rates are set per-lot by the operator and stored on-chain or in a rate oracle.
+Fees are calculated in the lot's configured currency (ISO 4217). Each lot defines its own currency, rate, and billing settings. For the x402 crypto rail, fees are converted to stablecoin using configurable FX rates.
 
 ## 5. ALPR (License Plate Recognition)
 
@@ -178,7 +193,7 @@ Rates are set per-lot by the operator and stored on-chain or in a rate oracle.
 - **Phone camera** simulates gate camera (MVP)
 - Capture image → send to backend → OCR pipeline
 - Use Google Cloud Vision API or OpenALPR for plate detection
-- Support Israeli plates (format: `XX-XXX-XX` or `XXX-XX-XXX`)
+- Country-aware plate normalization (IL, US, EU formats supported)
 
 ### 5.2 Pipeline
 ```
@@ -193,45 +208,43 @@ Camera Frame → Preprocessing (crop, contrast) → OCR API → Plate String →
 ## 6. x402 Payment Integration
 
 ### 6.1 Overview
-x402 is Coinbase's open payment protocol built on HTTP 402 (Payment Required).
-- Repo: https://github.com/coinbase/x402
-- Zero protocol fees
-- USDC on Base (L2) — near-zero gas costs
-- One line of middleware on the server
+Parker supports two parallel payment rails per lot, both optional:
+- **x402 (stablecoin)** — Coinbase's HTTP 402 protocol. Fee converted from lot currency to stablecoin via FX rate. Near-zero gas on Base L2.
+- **Stripe (credit card)** — Stripe Checkout in the lot's native currency. Webhook-driven session closure.
+
+Both rails result in the same outcome: session closed in DB, NFT burned on Hedera, gate opened.
 
 ### 6.2 Payment Flow
 ```
-1. Gate app calls: POST /api/sessions/{plate}/end
-2. Backend calculates fee
-3. Backend responds with HTTP 402 + payment details
-4. Driver wallet (auto or manual) signs payment
-5. x402 facilitator verifies & settles on-chain
-6. Backend receives confirmation → opens gate
+1. Gate app calls: POST /api/gate/exit
+2. Backend calculates fee in the lot's local currency
+3. Backend returns payment options based on lot config:
+   a. x402: stablecoin amount (FX-converted), token, network, receiver
+   b. Stripe: checkout URL in local currency
+4a. x402 path: driver wallet signs payment, request retried with X-PAYMENT header
+4b. Stripe path: driver redirected to Stripe Checkout; webhook confirms payment
+5. On confirmation (either rail): NFT burned on Hedera, session closed
+6. Gate opens, driver app notified via WebSocket
 ```
 
 ### 6.3 Server Integration
 ```typescript
-import { paymentMiddleware } from "@x402/express";
-
-app.use(paymentMiddleware({
-  "POST /api/sessions/:plate/end": {
-    accepts: [
-      {
-        network: "base",
-        token: "USDC",
-        maxAmountRequired: "$50.00", // Max parking fee
-      }
-    ],
-    description: "Parking fee payment",
-  },
+// x402 middleware intercepts exit route
+app.use('/api/gate/exit', createPaymentMiddleware({
+  network: process.env.X402_NETWORK || 'base-sepolia',
+  token: process.env.X402_STABLECOIN || 'USDC',
+  receiverWallet: process.env.LOT_OPERATOR_WALLET,
 }));
+
+// Stripe webhook (raw body for signature verification)
+app.use('/api/webhooks', webhooksRouter);
 ```
 
-### 6.4 Fiat Fallback
-For drivers without crypto wallets:
-- Coinbase Onramp for card → USDC conversion
-- Or traditional Stripe integration as fallback
-- Driver app supports both payment rails
+### 6.4 Multi-Currency Design
+- Each lot defines its own `currency` (ISO 4217) and `paymentMethods` array
+- Stripe charges in the lot's native currency directly (USD, EUR, GBP, etc.)
+- x402 converts local currency fees to stablecoin via `FX_RATE_{FROM}_{TO}` env vars
+- Pricing service supports bidirectional FX lookup (direct or inverse rate)
 
 ## 7. Driver App — Detailed Spec
 
@@ -267,7 +280,7 @@ For drivers without crypto wallets:
 ### 7.2 Notifications
 - Entry detected: "You parked at [Lot Name] at [Time]"
 - Approaching max time (if lot has limits): "You've been parked for 4h"
-- Payment charged: "₪12.00 charged for 2h 15m at [Lot Name]"
+- Payment charged: "12.00 EUR charged for 2h 15m at [Lot Name]"
 
 ## 8. Gate App — Detailed Spec
 
@@ -321,16 +334,18 @@ CREATE TABLE drivers (
 
 -- Session index (mirrors on-chain ParkingNFT)
 CREATE TABLE sessions (
-    id            UUID PRIMARY KEY,
-    token_id      BIGINT UNIQUE,          -- NFT token ID
-    plate_number  VARCHAR(20) NOT NULL,
-    lot_id        VARCHAR(50) NOT NULL,
-    entry_time    TIMESTAMPTZ NOT NULL,
-    exit_time     TIMESTAMPTZ,
-    fee_usdc      DECIMAL(10, 6),
-    tx_hash       VARCHAR(66),            -- payment tx
-    status        VARCHAR(20) DEFAULT 'active',  -- active | completed | disputed
-    created_at    TIMESTAMPTZ DEFAULT NOW()
+    id                UUID PRIMARY KEY,
+    token_id          BIGINT UNIQUE,          -- Hedera NFT serial number
+    plate_number      VARCHAR(20) NOT NULL,
+    lot_id            VARCHAR(50) NOT NULL,
+    entry_time        TIMESTAMPTZ NOT NULL,
+    exit_time         TIMESTAMPTZ,
+    fee_amount        DECIMAL(10, 6),         -- in the lot's currency
+    fee_currency      VARCHAR(10),            -- ISO 4217 (e.g. "USD", "EUR")
+    stripe_payment_id VARCHAR(255),           -- Stripe Checkout session ID (if card)
+    tx_hash           VARCHAR(66),            -- payment tx (if x402)
+    status            VARCHAR(20) DEFAULT 'active',  -- active | completed | cancelled
+    created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Parking lot configuration
@@ -341,9 +356,11 @@ CREATE TABLE lots (
     lat             DECIMAL(10, 7),
     lng             DECIMAL(10, 7),
     capacity        INT,
-    rate_per_hour   DECIMAL(10, 2),       -- in USDC
-    billing_minutes INT DEFAULT 15,        -- billing increment
+    rate_per_hour   DECIMAL(10, 2) NOT NULL, -- in the lot's currency
+    billing_minutes INT DEFAULT 15,           -- billing increment
     max_daily_fee   DECIMAL(10, 2),
+    currency        VARCHAR(10) NOT NULL DEFAULT 'USD',  -- ISO 4217
+    payment_methods TEXT[] DEFAULT '{stripe,x402}',
     operator_wallet VARCHAR(42) NOT NULL,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -365,14 +382,21 @@ GET    /api/sessions/history/:plate  — Get session history
 ### Gate API
 ```
 POST   /api/gate/entry               — Process vehicle entry (plate image or string)
-POST   /api/gate/exit                 — Process vehicle exit + trigger payment
+POST   /api/gate/exit                 — Process vehicle exit + return payment options
 POST   /api/gate/scan                 — ALPR: upload image, get plate string
-GET    /api/gate/lot/:lotId/status    — Lot occupancy & stats
+GET    /api/gate/lot/:lotId/status    — Lot occupancy, config, currency, payment methods
+GET    /api/gate/lot/:lotId/sessions  — Active sessions list
+PUT    /api/gate/lot/:lotId           — Update lot settings (rates, currency, payment methods)
 ```
 
-### Webhook / Events
+### Webhooks
 ```
-WS     /ws/gate/:lotId               — Real-time gate events
+POST   /api/webhooks/stripe           — Stripe payment confirmation (closes session + burns NFT)
+```
+
+### WebSocket Events
+```
+WS     /ws/gate/:lotId               — Real-time gate events (entry, exit with payment method)
 WS     /ws/driver/:plate             — Real-time session updates for driver
 ```
 
@@ -382,7 +406,7 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 - **Wallet signatures:** All state changes require wallet signature from authorized parties
 - **Lot authorization:** Only whitelisted lot operator wallets can mint/close sessions
 - **Rate limiting:** ALPR endpoint rate-limited to prevent abuse
-- **Data retention:** Session data retained per local regulations (Israel: check GDPR-equivalent)
+- **Data retention:** Session data retained per local regulations (GDPR, CCPA, or equivalent)
 
 ## 12. MVP Scope (Phase 1)
 
@@ -404,7 +428,7 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 - Dynamic pricing (demand-based)
 - Integration with municipal systems
 - Native mobile app (iOS/Android)
-- Multi-chain support (Hedera, etc.)
+- Live FX rate feeds (CoinGecko / Circle API)
 
 ## 13. Development Plan
 
@@ -418,9 +442,10 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 
 ## 14. Open Questions
 
-1. **Which chain?** Base (x402 native) vs Hedera (original inspiration) — starting with Base for x402 compatibility
-2. **ILS conversion:** Display fees in ILS but settle in USDC? Need a price oracle
+1. ~~**Which chain?**~~ Resolved: dual-chain — Hedera (parking NFTs via HTS) + Base Sepolia (driver registry + x402 payments)
+2. ~~**Currency conversion:**~~ Resolved: each lot sets its own currency; Stripe charges natively, x402 converts via FX rates
 3. **Unregistered cars:** Refuse entry? Allow with traditional ticket fallback?
-4. **Insurance verification:** API to check valid insurance by plate? (Israel Misrad HaRishui)
+4. **Insurance verification:** API to check valid insurance by plate? (country-specific registries)
 5. **Multi-plate:** Drivers with multiple vehicles?
 6. **Disputes:** What happens if driver claims wrong charge? On-chain evidence helps but need a process
+7. **Live FX rates:** Replace static env var rates with CoinGecko / Circle API / oracle?

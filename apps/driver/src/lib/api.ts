@@ -1,4 +1,4 @@
-import type { SessionRecord, DriverRecord } from '@parker/core'
+import type { SessionRecord, DriverRecord, LotStatus } from '@parker/core'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
@@ -44,6 +44,16 @@ export async function getDriverByWallet(wallet: string): Promise<DriverRecord | 
   // The API doesn't have a get-by-wallet endpoint, so we'll use sessions API
   // For now, we store the plate locally after registration
   return null
+}
+
+// ---- Lot API ----
+
+export async function getLotStatus(lotId: string): Promise<LotStatus | null> {
+  try {
+    return await apiFetch<LotStatus>(`/api/gate/lot/${encodeURIComponent(lotId)}/status`)
+  } catch {
+    return null
+  }
 }
 
 // ---- Session API ----

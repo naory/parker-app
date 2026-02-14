@@ -1,6 +1,6 @@
 import vision from '@google-cloud/vision'
 
-import { normalizeIsraeliPlate } from './normalize'
+import { normalizePlate } from './normalize'
 
 const client = new vision.ImageAnnotatorClient()
 
@@ -12,9 +12,13 @@ export interface RecognitionResult {
 
 /**
  * Recognize a license plate from an image buffer using Google Cloud Vision API.
- * Returns the best plate candidate found in the image.
+ * Optionally pass a `countryCode` (ISO 3166-1 alpha-2) to restrict normalization
+ * to that country's plate format. Without it, all known formats are tried.
  */
-export async function recognizePlate(imageBuffer: Buffer): Promise<RecognitionResult | null> {
+export async function recognizePlate(
+  imageBuffer: Buffer,
+  countryCode?: string,
+): Promise<RecognitionResult | null> {
   const [result] = await client.textDetection({
     image: { content: imageBuffer.toString('base64') },
   })
@@ -30,7 +34,7 @@ export async function recognizePlate(imageBuffer: Buffer): Promise<RecognitionRe
     const text = detection.description?.trim()
     if (!text) continue
 
-    const normalized = normalizeIsraeliPlate(text)
+    const normalized = normalizePlate(text, countryCode)
     if (normalized) {
       return {
         raw: text,
@@ -44,7 +48,7 @@ export async function recognizePlate(imageBuffer: Buffer): Promise<RecognitionRe
   const fullText = detections[0]?.description?.trim() || ''
   return {
     raw: fullText,
-    normalized: normalizeIsraeliPlate(fullText),
+    normalized: normalizePlate(fullText, countryCode),
     confidence: 0,
   }
 }

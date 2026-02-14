@@ -5,7 +5,7 @@ import Link from 'next/link'
 import type { SessionRecord } from '@parker/core'
 import { calculateFee } from '@parker/core'
 
-import { getActiveSession } from '@/lib/api'
+import { getActiveSession, getLotStatus } from '@/lib/api'
 
 interface SessionCardProps {
   plate: string | null
@@ -15,6 +15,12 @@ export function SessionCard({ plate }: SessionCardProps) {
   const [session, setSession] = useState<SessionRecord | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [loading, setLoading] = useState(true)
+
+  // Lot pricing config (fetched when session is available)
+  const [lotRate, setLotRate] = useState(0)
+  const [lotBilling, setLotBilling] = useState(15)
+  const [lotMaxFee, setLotMaxFee] = useState<number | undefined>(undefined)
+  const [lotCurrency, setLotCurrency] = useState('')
 
   // Fetch active session
   useEffect(() => {
@@ -37,6 +43,19 @@ export function SessionCard({ plate }: SessionCardProps) {
 
     return () => clearInterval(interval)
   }, [plate])
+
+  // Fetch lot config when session is available
+  useEffect(() => {
+    if (!session) return
+    getLotStatus(session.lotId).then((lot) => {
+      if (lot) {
+        setLotRate(lot.ratePerHour)
+        setLotBilling(lot.billingMinutes)
+        if (lot.maxDailyFee) setLotMaxFee(lot.maxDailyFee)
+        setLotCurrency(lot.currency)
+      }
+    })
+  }, [session?.lotId])
 
   // Live elapsed timer
   useEffect(() => {
@@ -74,9 +93,11 @@ export function SessionCard({ plate }: SessionCardProps) {
   const minutes = Math.floor((elapsed % 3600) / 60)
   const seconds = elapsed % 60
 
-  // Estimate cost (default rate if lot info not available)
+  // Estimate cost using lot pricing
   const durationMinutes = elapsed / 60
-  const estimatedCost = calculateFee(durationMinutes, 3.3, 15)
+  const estimatedCost = lotRate > 0
+    ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee)
+    : 0
 
   return (
     <Link href={`/session/${session.id}`}>
@@ -88,7 +109,9 @@ export function SessionCard({ plate }: SessionCardProps) {
           {String(seconds).padStart(2, '0')}
         </div>
         <p className="mt-2 text-sm opacity-80">
-          Estimated cost: ${estimatedCost.toFixed(2)}
+          {lotRate > 0
+            ? `Estimated cost: ${estimatedCost.toFixed(2)} ${lotCurrency}`
+            : 'Calculating...'}
         </p>
       </div>
     </Link>

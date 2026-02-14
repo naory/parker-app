@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import type { SessionRecord } from '@parker/core'
 import { formatPlate, calculateFee } from '@parker/core'
-import { getActiveSessionsByLot } from '@/lib/api'
+import { getActiveSessionsByLot, getLotStatus } from '@/lib/api'
 
 export default function Sessions() {
   const lotId = process.env.NEXT_PUBLIC_LOT_ID || ''
@@ -12,12 +12,28 @@ export default function Sessions() {
   const [search, setSearch] = useState('')
   const [now, setNow] = useState(Date.now())
 
-  // Fetch sessions
+  // Lot pricing config
+  const [lotRate, setLotRate] = useState(12.0)
+  const [lotBilling, setLotBilling] = useState(15)
+  const [lotMaxFee, setLotMaxFee] = useState<number | undefined>(undefined)
+  const [lotCurrency, setLotCurrency] = useState('')
+
+  // Fetch lot config + sessions
   useEffect(() => {
     if (!lotId) {
       setLoading(false)
       return
     }
+
+    // Fetch lot config for pricing
+    getLotStatus(lotId)
+      .then((lot) => {
+        if (lot.ratePerHour) setLotRate(lot.ratePerHour)
+        if (lot.billingMinutes) setLotBilling(lot.billingMinutes)
+        if (lot.maxDailyFee) setLotMaxFee(lot.maxDailyFee)
+        if (lot.currency) setLotCurrency(lot.currency)
+      })
+      .catch(() => {})
 
     getActiveSessionsByLot(lotId)
       .then(setSessions)
@@ -95,7 +111,7 @@ export default function Sessions() {
                 const durationMin = Math.round(durationMs / 60_000)
                 const h = Math.floor(durationMin / 60)
                 const m = durationMin % 60
-                const fee = calculateFee(durationMin, 3.3, 15) // Default rate
+                const fee = calculateFee(durationMin, lotRate, lotBilling, lotMaxFee)
 
                 return (
                   <tr key={session.id} className="border-t border-gray-100 hover:bg-gray-50">
@@ -109,7 +125,7 @@ export default function Sessions() {
                       {h > 0 ? `${h}h ` : ''}{m}m
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-800">
-                      ${fee.toFixed(2)}
+                      {fee.toFixed(2)} {lotCurrency}
                     </td>
                     <td className="px-4 py-3 text-gray-400">
                       {session.tokenId ? `#${session.tokenId}` : '--'}

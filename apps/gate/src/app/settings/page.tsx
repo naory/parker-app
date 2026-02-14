@@ -11,6 +11,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [currency, setCurrency] = useState('USD')
   const [form, setForm] = useState({
     name: '',
     address: '',
@@ -18,6 +19,8 @@ export default function Settings() {
     ratePerHour: '',
     billingMinutes: '15',
     maxDailyFee: '',
+    currency: 'USD',
+    paymentMethods: 'stripe,x402',
   })
 
   // Load lot settings
@@ -31,6 +34,8 @@ export default function Settings() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
+          const cur = data.currency || 'USD'
+          setCurrency(cur)
           setForm({
             name: data.name || '',
             address: data.address || '',
@@ -38,6 +43,8 @@ export default function Settings() {
             ratePerHour: data.ratePerHour?.toString() || '',
             billingMinutes: data.billingMinutes?.toString() || '15',
             maxDailyFee: data.maxDailyFee?.toString() || '',
+            currency: cur,
+            paymentMethods: (data.paymentMethods || ['stripe', 'x402']).join(','),
           })
         }
       })
@@ -65,6 +72,10 @@ export default function Settings() {
           ratePerHour: form.ratePerHour || undefined,
           billingMinutes: form.billingMinutes || undefined,
           maxDailyFee: form.maxDailyFee || undefined,
+          currency: form.currency || undefined,
+          paymentMethods: form.paymentMethods
+            ? form.paymentMethods.split(',').map((m) => m.trim()).filter(Boolean)
+            : undefined,
         }),
       })
 
@@ -100,7 +111,7 @@ export default function Settings() {
             <Field
               label="Address"
               value={form.address}
-              placeholder="123 Main St, Tel Aviv"
+              placeholder="123 Main St, City"
               onChange={(v) => updateField('address', v)}
             />
             <Field
@@ -118,9 +129,18 @@ export default function Settings() {
           <h2 className="mb-3 font-semibold text-gray-700">Pricing</h2>
           <div className="space-y-3">
             <Field
-              label="Rate per Hour (USDC)"
+              label="Currency (ISO 4217)"
+              value={form.currency}
+              placeholder="USD"
+              onChange={(v) => {
+                updateField('currency', v.toUpperCase())
+                setCurrency(v.toUpperCase() || 'USD')
+              }}
+            />
+            <Field
+              label={`Rate per Hour (${currency})`}
               value={form.ratePerHour}
-              placeholder="3.30"
+              placeholder="12.00"
               type="number"
               onChange={(v) => updateField('ratePerHour', v)}
             />
@@ -131,11 +151,24 @@ export default function Settings() {
               onChange={(v) => updateField('billingMinutes', v)}
             />
             <Field
-              label="Max Daily Fee (USDC)"
+              label={`Max Daily Fee (${currency})`}
               value={form.maxDailyFee}
-              placeholder="25.00"
+              placeholder="90.00"
               type="number"
               onChange={(v) => updateField('maxDailyFee', v)}
+            />
+          </div>
+        </section>
+
+        {/* Payment Methods */}
+        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 font-semibold text-gray-700">Payment Methods</h2>
+          <div className="space-y-3">
+            <Field
+              label="Accepted methods (comma-separated: stripe, x402)"
+              value={form.paymentMethods}
+              placeholder="stripe,x402"
+              onChange={(v) => updateField('paymentMethods', v)}
             />
           </div>
         </section>

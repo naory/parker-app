@@ -1,6 +1,6 @@
 # Parker 🅿️
 
-Decentralized parking management powered by blockchain and the x402 payment protocol.
+Decentralized parking management powered by blockchain, the x402 payment protocol, and multi-currency Stripe checkout.
 
 ## Motivation
 
@@ -8,32 +8,66 @@ Most parking lots today are fully automated: they scan license plates at entry a
 
 ## Overview
 
-Parker replaces broken centralized parking apps (like Tango) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen on-chain via x402, and verification is instant — no more "communication errors" at the gate.
+Parker replaces broken centralized parking apps (like Tango) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (stablecoin) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
+
+### White-Label Deployment Model
+
+Parker is a multi-country, currency-agnostic platform — but each deployment is operated by a **country or regional entity** that white-labels it for their market. A single deployment is scoped to one country (e.g., Israel, US) or one region (e.g., EU).
+
+The `DEPLOYMENT_COUNTRIES` environment variable controls:
+- **Driver registration** — only countries in the deployment are shown; single-country deployments auto-select and hide the picker
+- **ALPR** — plate format validation is restricted to the deployment's country patterns
+- **Currency & payments** — each lot configures its own currency, but all lots in a deployment typically share the same local currency and FX rate
+
+```
+# Single-country deployment (Israel)
+DEPLOYMENT_COUNTRIES=IL
+
+# Regional deployment (EU)
+DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
+```
 
 ## How It Works
 
 ```
-┌─────────────┐         ┌──────────────┐         ┌────────────┐
-│  Driver App  │◄───────►│  Blockchain  │◄───────►│  Gate App  │
-│  (Mobile)    │         │  (NFTs/x402) │         │  (Lot Ops) │
-└─────────────┘         └──────────────┘         └────────────┘
+                         ┌───────────────────┐
+                         │   Hedera (NFTs)   │
+                         │   HTS Token Svc   │
+                         └────────▲──────────┘
+                                  │
+┌─────────────┐         ┌────────┴─────────┐         ┌────────────┐
+│  Driver App  │◄───────►│   Parker API     │◄───────►│  Gate App  │
+│  (Wallet)    │         │  (Express.js)    │         │  (Lot Ops) │
+└──────┬──────┘         └───────┬──────────┘         └────────────┘
+       │                        │
+       ▼                        ▼
+┌──────────────┐        ┌──────────────┐
+│  Base Sepolia │        │    Stripe    │
+│ (x402/USDC)  │        │ (Card/local) │
+└──────────────┘        └──────────────┘
 ```
+
+**Dual-chain + dual-rail architecture:**
+- **Hedera** — Parking session NFTs via native Token Service (mint on entry, burn on exit)
+- **Base Sepolia** — Driver registration (DriverRegistry contract), x402 stablecoin payments
+- **Stripe** — Credit card payments in the lot's local currency (any Stripe-supported currency)
 
 ### Entry Flow
 1. Car arrives at gate
 2. Gate camera captures plate image, ALPR extracts plate number via Google Vision API
 3. API checks if plate belongs to a registered driver
-4. Parking NFT minted on-chain (entry time, plate, lot ID)
+4. Parking NFT minted on **Hedera** via HTS (metadata: plate, lot ID, entry time)
 5. Session created in DB, WebSocket notifies driver app in real-time
 6. Gate opens
 
 ### Exit Flow
 1. Car approaches exit, plate scanned again
-2. System finds active parking session and calculates fee (duration x rate, with billing increments and daily cap)
-3. API responds with HTTP 402 + x402 payment details (USDC amount, receiver wallet)
-4. Driver wallet signs and sends payment, request retried with proof
-5. NFT marked as completed on-chain, session closed in DB
-6. Gate opens, driver app notified via WebSocket
+2. System finds active parking session and calculates fee in the lot's local currency
+3. API returns **payment options** based on lot config:
+   - **x402 (crypto)** — fee converted to stablecoin (e.g. USDC) via FX rate; driver wallet signs and sends payment, request retried with proof
+   - **Stripe (card)** — Stripe Checkout session created in the lot's currency; driver redirected to Stripe-hosted page; webhook confirms payment
+4. On payment confirmation (either rail): parking NFT burned on **Hedera**, session closed in DB
+5. Gate opens automatically, driver app notified via WebSocket
 
 ## Architecture
 
@@ -59,8 +93,12 @@ The app has three main components:
 ### 🔧 API Server
 - Express.js with PostgreSQL for off-chain indexing
 - ALPR pipeline via `@parker/alpr` (Google Cloud Vision)
-- On-chain integration via viem — mints parking NFTs on entry, ends sessions on exit (gracefully disabled when env vars not set)
-- x402 payment middleware — returns HTTP 402 with payment instructions on exit, verifies payment proof on retry
+- **Hedera integration** via `@parker/hedera` (`@hashgraph/sdk`) — mints parking NFTs on entry, burns on exit
+- **Base integration** via viem — DriverRegistry reads on Base Sepolia
+- **Multi-currency payment** — each lot defines its own currency (USD, EUR, GBP, etc.) and accepted payment methods
+- **x402 payment middleware** — returns HTTP 402 with stablecoin amount (FX-converted from local currency); verifies payment proof on retry
+- **Stripe Checkout** — creates payment sessions in the lot's local currency; webhook-driven session closure
+- **Pricing service** — currency-agnostic FX conversion via configurable rates (`FX_RATE_{FROM}_{TO}` env vars)
 - WebSocket server for real-time gate and driver events
 - Full CRUD for drivers, sessions, and lots
 
@@ -71,14 +109,15 @@ The app has three main components:
 | Monorepo | pnpm workspaces + Turborepo |
 | Frontend | Next.js 14 (PWA, mobile-first, Tailwind CSS) |
 | Driver Wallet | Coinbase Smart Wallet via wagmi |
-| Payments | x402 protocol (USDC on Base Sepolia) |
-| Smart Contracts | Solidity 0.8.20 + Hardhat (Base L2) |
+| Payments (crypto) | x402 protocol (stablecoin on Base Sepolia) |
+| Payments (card) | Stripe Checkout (any Stripe-supported currency) |
+| Parking NFTs | Hedera Token Service (native HTS, `@hashgraph/sdk`) |
+| Driver Registry | Solidity 0.8.20 + Hardhat (Base Sepolia) |
 | ALPR | Google Cloud Vision API |
 | Backend | Node.js + Express + TypeScript |
 | Database | PostgreSQL 16 (Docker) |
 | Real-time | WebSocket (ws) |
-| NFT Standard | ERC-721 (ParkingNFT) |
-| Blockchain Client | viem |
+| Blockchain Clients | `@hashgraph/sdk` (Hedera) + viem (Base) |
 
 ## Quick Start
 
@@ -102,6 +141,12 @@ cp apps/api/.env.example apps/api/.env
 cp apps/driver/.env.example apps/driver/.env
 cp apps/gate/.env.example apps/gate/.env
 
+# Set deployment country (controls ALPR plate format + driver registration)
+# Edit each .env and set DEPLOYMENT_COUNTRIES to your target market, e.g.:
+#   DEPLOYMENT_COUNTRIES=IL          (Israel)
+#   DEPLOYMENT_COUNTRIES=US          (United States)
+#   DEPLOYMENT_COUNTRIES=DE,FR,ES    (EU region)
+
 # Start all apps in dev mode
 pnpm dev
 ```
@@ -113,16 +158,57 @@ This starts:
 
 ### Seed Data
 
-The database is auto-seeded with:
-- **Parker HQ** (lot-01) — 50 spaces, 3.30 USDC/hr, 15min billing, 25 USDC daily cap
-- **Azrieli Center** (lot-02) — 200 spaces, 5.00 USDC/hr, 15min billing, 35 USDC daily cap
-- A test driver (plate `1234567` / `12-345-67`, Toyota Corolla)
+The database is auto-seeded with two demo lots and a test driver. Each lot has its own currency, rates, and payment methods — see `apps/api/src/db/seed.sql` for details.
 
-> Plates are stored in normalized form (digits only, no dashes). The API normalizes
+> The system is fully currency-agnostic — each lot configures its own ISO 4217 currency and rates. Seed data uses sample values for demonstration.
+
+> Plates are stored in normalized form (alphanumeric, no dashes). The API normalizes
 > all incoming plates automatically, so `12-345-67`, `12 345 67`, and `1234567` all
 > resolve to the same driver.
 
-### Smart Contracts
+### Hedera Setup (Parking NFTs)
+
+```bash
+# 1. Create a Hedera testnet account at https://portal.hedera.com/register
+# 2. Add credentials to apps/api/.env:
+#      HEDERA_ACCOUNT_ID=0.0.xxxxx
+#      HEDERA_PRIVATE_KEY=302e...
+#      HEDERA_NETWORK=testnet
+
+# 3. Create the NFT collection on Hedera:
+pnpm --filter @parker/hedera setup
+
+# 4. Copy the output HEDERA_TOKEN_ID into apps/api/.env
+```
+
+### Payment Configuration
+
+Parker supports two payment rails per lot, both optional:
+
+**Stripe (credit card)** — charges in the lot's configured currency (USD, EUR, GBP, etc.):
+```bash
+# Add to apps/api/.env:
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_SUCCESS_URL=http://localhost:3000/payment/success
+STRIPE_CANCEL_URL=http://localhost:3000/payment/cancel
+```
+
+**x402 (stablecoin)** — converts the lot's local currency fee to stablecoin via FX rate:
+```bash
+# Add to apps/api/.env:
+X402_STABLECOIN=USDC
+X402_NETWORK=base-sepolia
+LOT_OPERATOR_WALLET=0x...
+
+# FX rates (only needed when lot currency differs from stablecoin base):
+FX_RATE_EUR_USD=1.08
+FX_RATE_GBP_USD=1.27
+```
+
+Each lot's `currency` and `paymentMethods` are stored in the database and can be updated via `PUT /api/gate/lot/:lotId`.
+
+### Smart Contracts (Base — DriverRegistry)
 
 ```bash
 # Compile contracts
@@ -131,7 +217,7 @@ pnpm contracts:compile
 # Run tests
 pnpm contracts:test
 
-# Deploy to Base Sepolia (requires PRIVATE_KEY in contracts/.env)
+# Deploy DriverRegistry to Base Sepolia (requires PRIVATE_KEY in contracts/.env)
 pnpm contracts:deploy
 ```
 
@@ -143,8 +229,8 @@ parker-app/
 │   ├── api/             # Express API server
 │   │   ├── src/
 │   │   │   ├── db/          # PostgreSQL schema, queries, seed data
-│   │   │   ├── routes/      # drivers, gate, sessions endpoints
-│   │   │   ├── services/    # blockchain integration (viem)
+│   │   │   ├── routes/      # drivers, gate, sessions, webhooks endpoints
+│   │   │   ├── services/    # hedera.ts, blockchain.ts, stripe.ts, pricing.ts
 │   │   │   ├── middleware/   # wallet auth
 │   │   │   └── ws/          # WebSocket server
 │   │   └── ...
@@ -169,7 +255,8 @@ parker-app/
 │   └── scripts/         # Deploy script
 ├── packages/
 │   ├── core/            # Shared types, utils (calculateFee, formatPlate, hashPlate), contract ABIs
-│   ├── alpr/            # License plate recognition (Google Vision + Israeli plate normalization)
+│   ├── hedera/          # Hedera HTS integration (mint/burn NFTs, mirror node queries, setup script)
+│   ├── alpr/            # License plate recognition (Google Vision + country-aware plate normalization)
 │   ├── x402/            # x402 payment middleware (server) + payment client (browser)
 │   ├── tsconfig/        # Shared TypeScript configs
 │   └── eslint-config/   # Shared ESLint config
@@ -199,11 +286,16 @@ parker-app/
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/gate/entry` | Process vehicle entry (plate string or image) |
-| POST | `/api/gate/exit` | Process vehicle exit + trigger x402 payment |
+| POST | `/api/gate/exit` | Process vehicle exit + return payment options (x402 + Stripe) |
 | POST | `/api/gate/scan` | ALPR: upload image, get plate number |
-| GET | `/api/gate/lot/:lotId/status` | Lot occupancy and config |
+| GET | `/api/gate/lot/:lotId/status` | Lot occupancy, config, currency, payment methods |
 | GET | `/api/gate/lot/:lotId/sessions` | Active sessions list |
-| PUT | `/api/gate/lot/:lotId` | Update lot settings |
+| PUT | `/api/gate/lot/:lotId` | Update lot settings (rates, currency, payment methods) |
+
+### Webhooks
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/webhooks/stripe` | Stripe payment confirmation (closes session + burns NFT) |
 
 ### WebSocket
 | Path | Description |
@@ -215,12 +307,14 @@ parker-app/
 
 The API enforces the following invariants:
 
-- **Plate normalization** — all plates are stripped of dashes/spaces before storage and lookup, so format differences never cause mismatches
+- **Plate normalization** — all plates are stripped of dashes/spaces before storage and lookup, so format differences never cause mismatches. ALPR plate detection is scoped to the deployment's configured countries (`DEPLOYMENT_COUNTRIES`) for higher accuracy
 - **Lot validation on entry** — entry is rejected if the lot doesn't exist, if it's full (capacity check), or if the driver is unregistered
 - **Lot mismatch on exit** — a car can only exit from the lot it entered; mismatched `lotId` returns `400`
 - **One active session per plate** — enforced at both application level and via a PostgreSQL partial unique index (`WHERE status = 'active'`)
-- **Fee guardrails** — `calculateFee` handles zero/negative duration (minimum 1 billing increment), zero rate (fee = 0), and division-by-zero on billing interval (defaults to 15 min). Fees are rounded to 6 decimal places (USDC precision) and capped by `maxDailyFee`
-- **Payment-before-close** — the exit route returns `402 Payment Required` without closing the session; the session is only closed after payment proof is provided
+- **Fee guardrails** — `calculateFee` handles zero/negative duration (minimum 1 billing increment), zero rate (fee = 0), and division-by-zero on billing interval (defaults to 15 min). Fees are rounded to 6 decimal places and capped by `maxDailyFee`
+- **Multi-currency** — each lot defines its own currency (ISO 4217); the pricing service converts to stablecoin via configurable FX rates for the x402 rail, while Stripe charges in the lot's native currency directly
+- **Payment-before-close** — the exit route returns payment options without closing the session; the session is only closed after payment confirmation (x402 proof header or Stripe webhook)
+- **Idempotent webhooks** — Stripe webhook handler checks if the session is still active before closing, preventing duplicate closures on retry
 - **Input validation** — required fields are checked on all mutation endpoints; numeric lot settings reject `NaN`; session history `limit`/`offset` are sanitized and capped
 - **Duplicate registration** — returns `409` with a clear error message instead of a generic 500
 - **Status constraints** — `sessions.status` is enforced via `CHECK` constraint (`active`, `completed`, `cancelled`)
@@ -229,17 +323,24 @@ The API enforces the following invariants:
 
 🚧 **MVP in active development**
 
-- [x] Smart contracts (DriverRegistry + ParkingNFT) with tests
+- [x] Smart contracts (DriverRegistry on Base + ParkingNFT on Hedera HTS)
+- [x] Dual-chain architecture: Hedera (NFTs) + Base Sepolia (payments/registry)
 - [x] API server with full CRUD, ALPR, blockchain integration
 - [x] Driver app: registration, wallet connect, session view, history, profile
 - [x] Gate app: camera feed, ALPR scan, dashboard, sessions, settings
 - [x] x402 payment flow (middleware + client)
-- [x] Real-time WebSocket events
+- [x] Multi-currency support: per-lot currency config, FX conversion for x402 rail
+- [x] Stripe Checkout integration: credit card payments in any local currency
+- [x] Dual payment rails: Stripe (card) + x402 (stablecoin) per lot config
+- [x] Stripe webhook with idempotent session closure
+- [x] Real-time WebSocket events (gate auto-opens on payment from any rail)
 - [x] Database schema + seed data
 - [x] Input validation, fee guardrails, race-condition guards
 - [x] End-to-end smoke testing
-- [ ] Deploy contracts to Base Sepolia
+- [ ] Deploy DriverRegistry to Base Sepolia
+- [ ] Create Hedera NFT collection on testnet
 - [ ] On-chain payment verification (x402 signature check)
+- [ ] Live FX rate feed (CoinGecko / Circle API) to replace static env var rates
 - [ ] Wallet authentication (SIWE / EIP-4361)
 - [ ] Push notifications
 - [ ] Physical gate hardware integration (Phase 2)

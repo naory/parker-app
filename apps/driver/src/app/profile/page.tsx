@@ -41,7 +41,7 @@ export default function Profile() {
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-medium text-gray-500">License Plate</p>
               <p className="mt-1 text-lg font-bold tracking-wider text-parker-800">
-                {plate ? formatPlate(plate) : '--'}
+                {plate ? formatPlate(plate, profile?.countryCode) : '--'}
               </p>
             </div>
 

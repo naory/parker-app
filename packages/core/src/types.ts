@@ -28,9 +28,13 @@ export interface Lot {
   lat?: number
   lng?: number
   capacity?: number
-  ratePerHour: number // USDC
+  ratePerHour: number
   billingMinutes: number
   maxDailyFee?: number
+  /** ISO 4217 currency code (e.g. "USD", "EUR", "GBP") */
+  currency: string
+  /** Accepted payment methods for this lot */
+  paymentMethods: string[]
   operatorWallet: string
 }
 
@@ -41,9 +45,34 @@ export interface SessionRecord {
   lotId: string
   entryTime: Date
   exitTime?: Date
-  feeUsdc?: number
+  feeAmount?: number
+  feeCurrency?: string
+  stripePaymentId?: string
   txHash?: string
-  status: 'active' | 'completed' | 'disputed'
+  status: 'active' | 'completed' | 'cancelled'
+}
+
+// ---- Payment types ----
+
+export interface X402PaymentOption {
+  /** Stablecoin amount after FX conversion */
+  amount: string
+  /** Token symbol (e.g. "USDC") */
+  token: string
+  /** Settlement network (e.g. "base-sepolia") */
+  network: string
+  /** Operator wallet to receive payment */
+  receiver: string
+}
+
+export interface StripePaymentOption {
+  /** Stripe-hosted checkout URL */
+  checkoutUrl: string
+}
+
+export interface PaymentOptions {
+  x402?: X402PaymentOption
+  stripe?: StripePaymentOption
 }
 
 export interface DriverRecord {
@@ -81,7 +110,14 @@ export interface GateExitRequest {
 export interface LotStatus {
   lotId: string
   name: string
+  address?: string
   currentOccupancy: number
-  capacity: number
+  capacity?: number
   activeSessions: number
+  ratePerHour: number
+  billingMinutes: number
+  maxDailyFee?: number
+  currency: string
+  paymentMethods: string[]
+  operatorWallet: string
 }
