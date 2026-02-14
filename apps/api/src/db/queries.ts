@@ -44,7 +44,7 @@ async function updateDriver(
 
 async function getDriverByWallet(wallet: string): Promise<DriverRecord | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM drivers WHERE wallet = $1 AND active = true`,
+    `SELECT * FROM drivers WHERE LOWER(wallet) = LOWER($1) AND active = true`,
     [wallet],
   )
   return rows[0] ? mapDriver(rows[0]) : null

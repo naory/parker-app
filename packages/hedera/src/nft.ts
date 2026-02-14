@@ -40,7 +40,10 @@ export async function mintParkingNFT(
   tokenId: string,
   metadata: ParkingNFTMetadata,
 ): Promise<MintResult> {
-  const metadataBytes = Buffer.from(JSON.stringify(metadata), 'utf-8')
+  // Hedera NFT metadata is limited to 100 bytes.
+  // Compact format: strip 0x prefix from plateHash, use short keys.
+  const compact = `${metadata.plateHash.replace('0x', '')}|${metadata.lotId}|${metadata.entryTime}`
+  const metadataBytes = Buffer.from(compact, 'utf-8')
 
   const tx = new TokenMintTransaction()
     .setTokenId(TokenId.fromString(tokenId))
@@ -134,7 +137,7 @@ export async function getNftInfo(
 
     const metadata = data.metadata
       ? Buffer.from(data.metadata, 'base64').toString('utf-8')
-      : undefined
+      : undefined // Compact format: "plateHash|lotId|entryTime"
 
     return {
       exists: !data.deleted,
@@ -198,15 +201,19 @@ export async function findActiveNftByPlateHash(
         if (nft.deleted) continue
 
         // Decode metadata and check plateHash
+        // Compact format: "plateHash|lotId|entryTime" (no 0x prefix)
         try {
           const metadataStr = Buffer.from(nft.metadata, 'base64').toString('utf-8')
-          const meta = JSON.parse(metadataStr) as ParkingNFTMetadata
-          if (meta.plateHash === plateHash) {
-            return {
-              serial: nft.serial_number,
-              plateHash: meta.plateHash,
-              lotId: meta.lotId,
-              entryTime: meta.entryTime,
+          const parts = metadataStr.split('|')
+          if (parts.length === 3) {
+            const nftPlateHash = `0x${parts[0]}`
+            if (nftPlateHash === plateHash) {
+              return {
+                serial: nft.serial_number,
+                plateHash: nftPlateHash,
+                lotId: parts[1],
+                entryTime: parseInt(parts[2], 10),
+              }
             }
           }
         } catch {

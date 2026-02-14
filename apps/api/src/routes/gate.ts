@@ -289,6 +289,21 @@ gateRouter.post('/exit', async (req, res) => {
         } satisfies PaymentRequired
       }
 
+      // Notify driver that payment is required (so the driver app shows a payment prompt)
+      try {
+        notifyDriver(plate, {
+          type: 'payment_required',
+          fee,
+          currency,
+          durationMinutes: Math.round(durationMinutes),
+          paymentOptions,
+          sessionId,
+          lotId,
+        })
+      } catch {
+        // WS notification is best-effort
+      }
+
       return res.json({
         session: session || { id: sessionId, plateNumber: plate, lotId, entryTime: new Date((fallbackSerial ? Date.now() - durationMinutes * 60000 : Date.now())), status: 'active' as const },
         fee,

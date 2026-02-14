@@ -82,7 +82,7 @@ export default function GateView() {
             success: true,
             message: 'Vehicle entered — session started',
           })
-        } else if (data.paymentOptions) {
+        } else if (data.paymentOptions && Object.keys(data.paymentOptions).length > 0) {
           // Exit with pending payment — waiting for driver to pay
           setLastResult({
             success: true,
@@ -102,6 +102,15 @@ export default function GateView() {
             currency: data.currency,
           })
         }
+      } else if (res.status === 402 && data.fee !== undefined) {
+        // HTTP 402 Payment Required — x402 middleware returned payment details
+        setLastResult({
+          success: true,
+          message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} (${data.durationMinutes}min) — waiting for payment...`,
+          fee: data.fee,
+          currency: data.currency,
+          waitingForPayment: true,
+        })
       } else {
         setLastResult({ success: false, message: data.error || 'Operation failed' })
       }
