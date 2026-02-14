@@ -51,6 +51,16 @@ export async function getDriverByWallet(wallet: string): Promise<DriverRecord | 
   return null
 }
 
+export async function updateDriver(
+  plate: string,
+  updates: { carMake?: string; carModel?: string },
+): Promise<DriverRecord> {
+  return apiFetch<DriverRecord>(`/api/drivers/${encodeURIComponent(plate)}`, {
+    method: 'PUT',
+    body: updates,
+  })
+}
+
 // ---- Lot API ----
 
 export async function getLotStatus(lotId: string): Promise<LotStatus | null> {

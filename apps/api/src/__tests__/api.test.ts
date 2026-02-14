@@ -454,6 +454,8 @@ describe('Gate', () => {
       const res = await request(app).get(`/api/gate/lot/${TEST_LOT_ID}/status`)
       expect(res.status).toBe(200)
       expect(res.body.lotId).toBe(TEST_LOT_ID)
+      expect(res.body.name).toBe('Test Lot')
+      expect(res.body.address).toBe('123 Main St')
       expect(res.body.currentOccupancy).toBe(1)
       expect(res.body.capacity).toBe(100)
       expect(res.body.ratePerHour).toBe(12)

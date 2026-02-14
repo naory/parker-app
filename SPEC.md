@@ -257,12 +257,12 @@ app.use('/api/webhooks', webhooksRouter);
 4. Link payment method (wallet already connected + optional card)
 
 **Main Dashboard:**
-- Active session card (if parked): lot name, duration timer, estimated cost
+- Active session card (if parked): lot name, address (linked to Google Maps), duration timer, estimated cost
 - "Not parked" state when idle
 - Quick actions: view history, edit profile
 
 **Session Detail:**
-- Map showing lot location
+- Lot name and address with Google Maps link
 - Entry time, current duration
 - Real-time cost estimate
 - NFT token ID
@@ -278,7 +278,7 @@ app.use('/api/webhooks', webhooksRouter);
 - Settings (notifications, currency display)
 
 ### 7.2 Notifications
-- Entry detected: "You parked at [Lot Name] at [Time]"
+- Entry detected: "You parked at [Lot Name], [Address] at [Time]"
 - Approaching max time (if lot has limits): "You've been parked for 4h"
 - Payment charged: "12.00 EUR charged for 2h 15m at [Lot Name]"
 
@@ -288,6 +288,7 @@ app.use('/api/webhooks', webhooksRouter);
 
 **Live Gate View:**
 - Camera feed with ALPR overlay
+- Lot name and address in header (fetched from lot status API on mount)
 - Last detected plate + driver status
 - Entry/exit mode toggle
 - Manual plate entry (fallback)

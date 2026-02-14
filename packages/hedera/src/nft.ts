@@ -5,6 +5,7 @@ import {
   TokenBurnTransaction,
   Status,
 } from '@hashgraph/sdk'
+import { encryptMetadata, parseMetadata } from './crypto'
 
 // ---- Types ----
 
@@ -32,15 +33,18 @@ export interface BurnResult {
 
 /**
  * Mint a parking session NFT on Hedera via HTS.
- * The metadata is encoded as a JSON string in the NFT's metadata bytes.
+ * Metadata is AES-256-GCM encrypted before going on-chain.
  * Returns the serial number assigned by HTS.
  */
 export async function mintParkingNFT(
   client: Client,
   tokenId: string,
   metadata: ParkingNFTMetadata,
+  encryptionKey: Buffer,
 ): Promise<MintResult> {
-  const metadataBytes = Buffer.from(JSON.stringify(metadata), 'utf-8')
+  // Hedera NFT metadata is limited to 100 bytes.
+  // Encrypted binary format: [version][IV][ciphertext][tag] (~72 bytes)
+  const metadataBytes = encryptMetadata(metadata, encryptionKey)
 
   const tx = new TokenMintTransaction()
     .setTokenId(TokenId.fromString(tokenId))
@@ -168,6 +172,7 @@ export async function findActiveNftByPlateHash(
   tokenId: string,
   plateHash: string,
   network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
+  encryptionKey?: Buffer,
 ): Promise<ActiveNftSession | null> {
   const baseUrl = getMirrorNodeBaseUrl(network)
 
@@ -197,21 +202,15 @@ export async function findActiveNftByPlateHash(
         // Skip burned NFTs
         if (nft.deleted) continue
 
-        // Decode metadata and check plateHash
-        try {
-          const metadataStr = Buffer.from(nft.metadata, 'base64').toString('utf-8')
-          const meta = JSON.parse(metadataStr) as ParkingNFTMetadata
-          if (meta.plateHash === plateHash) {
-            return {
-              serial: nft.serial_number,
-              plateHash: meta.plateHash,
-              lotId: meta.lotId,
-              entryTime: meta.entryTime,
-            }
+        if (!encryptionKey) continue
+        const parsed = parseMetadata(nft.metadata, encryptionKey)
+        if (parsed && parsed.plateHash === plateHash) {
+          return {
+            serial: nft.serial_number,
+            plateHash: parsed.plateHash,
+            lotId: parsed.lotId,
+            entryTime: parsed.entryTime,
           }
-        } catch {
-          // Skip NFTs with unparseable metadata
-          continue
         }
       }
 

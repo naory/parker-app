@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useAccount } from 'wagmi'
+import { normalizePlate } from '@parker/core'
 import type { DriverRecord } from '@parker/core'
 
 const STORAGE_KEY = 'parker_driver_plate'
@@ -30,7 +31,7 @@ export function useDriverProfile() {
 
     const storedPlate = localStorage.getItem(`${STORAGE_KEY}_${address}`)
     if (storedPlate) {
-      setPlateState(storedPlate)
+      setPlateState(normalizePlate(storedPlate))
       setLoading(false)
       return
     }
@@ -67,13 +68,25 @@ export function useDriverProfile() {
 
   const setPlate = useCallback(
     (plateNumber: string) => {
+      const normalized = normalizePlate(plateNumber)
       if (address) {
-        localStorage.setItem(`${STORAGE_KEY}_${address}`, plateNumber)
+        localStorage.setItem(`${STORAGE_KEY}_${address}`, normalized)
       }
-      setPlateState(plateNumber)
+      setPlateState(normalized)
     },
     [address],
   )
 
-  return { plate, profile, loading, setPlate, isRegistered: !!plate }
+  const refreshProfile = useCallback(async () => {
+    if (!plate) return
+    try {
+      const res = await fetch(`${API_URL}/api/drivers/${encodeURIComponent(plate)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setProfile(data)
+      }
+    } catch {}
+  }, [plate])
+
+  return { plate, profile, loading, setPlate, refreshProfile, isRegistered: !!plate }
 }

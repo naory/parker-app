@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+
+import { QRCodeSVG } from 'qrcode.react'
 
 import { CameraFeed } from '@/components/CameraFeed'
 import { PlateResult } from '@/components/PlateResult'
@@ -8,12 +10,30 @@ import { GateStatus } from '@/components/GateStatus'
 import { useGateSocket } from '@/hooks/useGateSocket'
 import { useSessionCache } from '@/hooks/useSessionCache'
 
+const DRIVER_APP_URL = process.env.NEXT_PUBLIC_DRIVER_URL || 'http://localhost:3000'
+
 export default function GateView() {
   const [mode, setMode] = useState<'entry' | 'exit'>('entry')
   const [lastPlate, setLastPlate] = useState<string | null>(null)
   const [gateOpen, setGateOpen] = useState(false)
 
   const lotId = process.env.NEXT_PUBLIC_LOT_ID || null
+
+  // Lot info for header display
+  const [lotName, setLotName] = useState<string | null>(null)
+  const [lotAddress, setLotAddress] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!lotId) return
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    fetch(`${apiUrl}/api/gate/lot/${lotId}/status`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.name) setLotName(data.name)
+        if (data.address) setLotAddress(data.address)
+      })
+      .catch(() => {})
+  }, [lotId])
 
   // Layer 3 resilience: local session cache from WebSocket events
   const { addEntry, removeExit, getSession, sessionCount } = useSessionCache()
@@ -55,6 +75,8 @@ export default function GateView() {
     fee?: number
     currency?: string
     waitingForPayment?: boolean
+    plate?: string
+    lotId?: string
   } | null>(null)
 
   async function handlePlateDetected(plate: string) {
@@ -82,7 +104,7 @@ export default function GateView() {
             success: true,
             message: 'Vehicle entered — session started',
           })
-        } else if (data.paymentOptions) {
+        } else if (data.paymentOptions && Object.keys(data.paymentOptions).length > 0) {
           // Exit with pending payment — waiting for driver to pay
           setLastResult({
             success: true,
@@ -90,6 +112,8 @@ export default function GateView() {
             fee: data.fee,
             currency: data.currency,
             waitingForPayment: true,
+            plate,
+            lotId,
           })
         } else {
           // Exit with payment already completed
@@ -102,6 +126,17 @@ export default function GateView() {
             currency: data.currency,
           })
         }
+      } else if (res.status === 402 && data.fee !== undefined) {
+        // HTTP 402 Payment Required — x402 middleware returned payment details
+        setLastResult({
+          success: true,
+          message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} (${data.durationMinutes}min) — waiting for payment...`,
+          fee: data.fee,
+          currency: data.currency,
+          waitingForPayment: true,
+          plate,
+          lotId,
+        })
       } else {
         setLastResult({ success: false, message: data.error || 'Operation failed' })
       }
@@ -139,7 +174,12 @@ export default function GateView() {
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold text-parker-800">Live Gate</h1>
+          <div>
+            <h1 className="text-2xl font-light text-gray-400">Parking Lot Gate</h1>
+            {lotAddress && (
+              <p className="text-sm text-gray-500">{lotAddress}</p>
+            )}
+          </div>
           <span
             className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-gray-300'}`}
             title={wsConnected ? 'Connected' : 'Disconnected'}
@@ -203,10 +243,23 @@ export default function GateView() {
             >
               {lastResult.message}
               {lastResult.waitingForPayment && (
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
-                  <span className="text-xs">Gate will open automatically when payment is confirmed</span>
-                </div>
+                <>
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
+                    <span className="text-xs">Gate will open automatically when payment is confirmed</span>
+                  </div>
+                  {lastResult.plate && (
+                    <div className="mt-4 flex flex-col items-center gap-2">
+                      <p className="text-xs text-yellow-600">Driver can scan to pay:</p>
+                      <div className="rounded-lg bg-white p-3">
+                        <QRCodeSVG
+                          value={`${DRIVER_APP_URL}/pay?plate=${encodeURIComponent(lastResult.plate)}&fee=${lastResult.fee ?? 0}&currency=${encodeURIComponent(lastResult.currency || '')}&lotId=${encodeURIComponent(lastResult.lotId || '')}`}
+                          size={160}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

@@ -205,7 +205,7 @@ gateRouter.post('/exit', async (req, res) => {
 
       const durationMs = Date.now() - session.entryTime.getTime()
       durationMinutes = durationMs / (1000 * 60)
-      fee = calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined)
+      fee = calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined, lot.gracePeriodMinutes ?? 0)
     } catch (dbError) {
       // DB unreachable — try Mirror Node fallback
       console.warn('[exit] DB lookup failed, attempting Mirror Node fallback:', (dbError as Error).message)
@@ -241,7 +241,7 @@ gateRouter.post('/exit', async (req, res) => {
       const entryTimeMs = nftSession.entryTime * 1000
       durationMinutes = (Date.now() - entryTimeMs) / (1000 * 60)
       fee = lot
-        ? calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined)
+        ? calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined, lot.gracePeriodMinutes ?? 0)
         : 0 // Can't calculate fee without lot config — let payment handle it
 
       usingFallback = true
@@ -287,6 +287,21 @@ gateRouter.post('/exit', async (req, res) => {
           plateNumber: plate,
           sessionId,
         } satisfies PaymentRequired
+      }
+
+      // Notify driver that payment is required (so the driver app shows a payment prompt)
+      try {
+        notifyDriver(plate, {
+          type: 'payment_required',
+          fee,
+          currency,
+          durationMinutes: Math.round(durationMinutes),
+          paymentOptions,
+          sessionId,
+          lotId,
+        })
+      } catch {
+        // WS notification is best-effort
       }
 
       return res.json({
@@ -418,6 +433,7 @@ gateRouter.get('/lot/:lotId/status', async (req, res) => {
       ratePerHour: lot.ratePerHour,
       billingMinutes: lot.billingMinutes,
       maxDailyFee: lot.maxDailyFee,
+      gracePeriodMinutes: lot.gracePeriodMinutes,
       currency: lot.currency,
       paymentMethods: lot.paymentMethods,
       operatorWallet: lot.operatorWallet,
@@ -442,7 +458,7 @@ gateRouter.get('/lot/:lotId/sessions', async (req, res) => {
 // PUT /api/gate/lot/:lotId — Update lot settings
 gateRouter.put('/lot/:lotId', async (req, res) => {
   try {
-    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee, currency, paymentMethods } = req.body
+    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee, gracePeriodMinutes, currency, paymentMethods } = req.body
 
     // Parse numeric fields — allow 0 as a valid value (only skip if not provided)
     const parseOptionalInt = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseInt(String(v)) : undefined
@@ -452,6 +468,7 @@ gateRouter.put('/lot/:lotId', async (req, res) => {
     const parsedRate = parseOptionalFloat(ratePerHour)
     const parsedBilling = parseOptionalInt(billingMinutes)
     const parsedMaxFee = parseOptionalFloat(maxDailyFee)
+    const parsedGracePeriod = parseOptionalFloat(gracePeriodMinutes)
 
     // Reject NaN values
     if (parsedCapacity !== undefined && isNaN(parsedCapacity)) {
@@ -466,6 +483,9 @@ gateRouter.put('/lot/:lotId', async (req, res) => {
     if (parsedMaxFee !== undefined && isNaN(parsedMaxFee)) {
       return res.status(400).json({ error: 'maxDailyFee must be a valid number' })
     }
+    if (parsedGracePeriod !== undefined && isNaN(parsedGracePeriod)) {
+      return res.status(400).json({ error: 'gracePeriodMinutes must be a valid number' })
+    }
 
     const lot = await db.updateLot(req.params.lotId, {
       name,
@@ -474,6 +494,7 @@ gateRouter.put('/lot/:lotId', async (req, res) => {
       ratePerHour: parsedRate,
       billingMinutes: parsedBilling,
       maxDailyFee: parsedMaxFee,
+      gracePeriodMinutes: parsedGracePeriod,
       currency,
       paymentMethods,
     })
