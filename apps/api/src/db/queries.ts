@@ -50,8 +50,12 @@ async function getDriverByWallet(wallet: string): Promise<DriverRecord | null> {
   return rows[0] ? mapDriver(rows[0]) : null
 }
 
-async function deactivateDriver(plate: string): Promise<void> {
-  await pool.query(`UPDATE drivers SET active = false WHERE plate_number = $1`, [plate])
+async function deactivateDriver(plate: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE drivers SET active = false WHERE plate_number = $1 AND active = true`,
+    [plate],
+  )
+  return (rowCount ?? 0) > 0
 }
 
 // ---- Session Queries ----

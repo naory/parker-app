@@ -30,8 +30,8 @@ export default function GateView() {
     setLastPlate(plate)
     setLastResult(null)
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL
-    const lotId = process.env.NEXT_PUBLIC_LOT_ID
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    const lotId = process.env.NEXT_PUBLIC_LOT_ID || ''
 
     try {
       const endpoint = mode === 'entry' ? '/api/gate/entry' : '/api/gate/exit'

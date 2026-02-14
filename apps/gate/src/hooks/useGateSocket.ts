@@ -20,7 +20,11 @@ export function useGateSocket(
   onEvent?: (event: GateEvent) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [connected, setConnected] = useState(false)
+  // Store the latest onEvent in a ref to avoid stale closures
+  const onEventRef = useRef(onEvent)
+  onEventRef.current = onEvent
 
   const connect = useCallback(() => {
     if (!lotId) return
@@ -39,7 +43,7 @@ export function useGateSocket(
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as GateEvent
-        onEvent?.(data)
+        onEventRef.current?.(data)
       } catch {
         // ignore non-JSON messages
       }
@@ -47,18 +51,23 @@ export function useGateSocket(
 
     ws.onclose = () => {
       setConnected(false)
-      // Auto-reconnect after 5s
-      setTimeout(connect, 5000)
+      // Auto-reconnect after 5s (cleared on unmount)
+      reconnectTimer.current = setTimeout(connect, 5000)
     }
 
     ws.onerror = () => {
       ws.close()
     }
-  }, [lotId, onEvent])
+  }, [lotId])
 
   useEffect(() => {
     connect()
     return () => {
+      // Clear any pending reconnect timer
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = null
+      }
       wsRef.current?.close()
     }
   }, [connect])
