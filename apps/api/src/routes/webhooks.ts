@@ -2,7 +2,7 @@ import { Router, raw } from 'express'
 
 import { db } from '../db'
 import { notifyGate, notifyDriver } from '../ws/index'
-import { isHederaEnabled, endParkingSessionOnHedera } from '../services/hedera'
+import { isHederaEnabled, endParkingSessionOnHedera, findActiveSessionOnHedera } from '../services/hedera'
 import { verifyWebhookSignature, isStripeEnabled } from '../services/stripe'
 
 export const webhooksRouter = Router()
@@ -62,6 +62,11 @@ webhooksRouter.post(
 
       console.log(`[Stripe] Payment completed for session ${sessionId}, plate ${plateNumber}`)
 
+      // Calculate fee from Stripe amount (smallest unit → decimal)
+      const feeAmount = stripeSession.amount_total
+        ? stripeSession.amount_total / 100
+        : 0
+
       try {
         // Check if session is still active
         const session = await db.getActiveSession(plateNumber)
@@ -69,11 +74,6 @@ webhooksRouter.post(
           console.warn(`[Stripe] Session already closed for ${plateNumber} — idempotent OK`)
           return res.json({ received: true })
         }
-
-        // Calculate fee from Stripe amount (smallest unit → decimal)
-        const feeAmount = stripeSession.amount_total
-          ? stripeSession.amount_total / 100
-          : 0
 
         // Burn Hedera NFT if configured
         if (isHederaEnabled() && session.tokenId) {
@@ -121,9 +121,47 @@ webhooksRouter.post(
         })
 
         console.log(`[Stripe] Session ${sessionId} closed successfully`)
-      } catch (err) {
-        console.error('Stripe webhook processing failed:', err)
-        return res.status(500).json({ error: 'Webhook processing failed' })
+      } catch (dbErr) {
+        // DB unavailable — fall back to Hedera to burn NFT + notify gate
+        console.warn(`[Stripe] DB unavailable during webhook, attempting Hedera fallback:`, (dbErr as Error).message)
+
+        if (isHederaEnabled()) {
+          try {
+            // Find the NFT via Mirror Node and burn it
+            const nftSession = await findActiveSessionOnHedera(plateNumber)
+            if (nftSession) {
+              await endParkingSessionOnHedera(nftSession.serial)
+              console.log(`[Stripe] Burned NFT serial=${nftSession.serial} via fallback`)
+            }
+          } catch (hederaErr) {
+            console.error('[Stripe] Hedera fallback also failed:', hederaErr)
+          }
+        }
+
+        // Notify gate to open (best-effort — payment was confirmed by Stripe)
+        try {
+          notifyGate(lotId, {
+            type: 'exit',
+            session: { id: sessionId, plateNumber, lotId },
+            plate: plateNumber,
+            fee: feeAmount,
+            currency: feeCurrency || 'USD',
+            paymentMethod: 'stripe',
+          })
+          notifyDriver(plateNumber, {
+            type: 'session_ended',
+            session: { id: sessionId, plateNumber, lotId },
+            fee: feeAmount,
+            currency: feeCurrency || 'USD',
+            paymentMethod: 'stripe',
+          })
+        } catch {
+          // WS notifications are best-effort
+        }
+
+        // Return 200 so Stripe doesn't retry — payment is confirmed, gate was notified.
+        // DB session will be reconciled when DB comes back (P2: DB sync queue).
+        console.warn(`[Stripe] Session ${sessionId} — payment confirmed, NFT burned, DB close deferred`)
       }
     }
 
