@@ -92,12 +92,18 @@ async function getActiveSessionsByLot(lotId: string): Promise<SessionRecord[]> {
   return rows.map(mapSession)
 }
 
-async function endSession(plate: string, feeUsdc: number): Promise<SessionRecord | null> {
+interface EndSessionInput {
+  feeAmount: number
+  feeCurrency: string
+  stripePaymentId?: string
+}
+
+async function endSession(plate: string, input: EndSessionInput): Promise<SessionRecord | null> {
   const { rows } = await pool.query(
-    `UPDATE sessions SET exit_time = NOW(), fee_usdc = $2, status = 'completed'
+    `UPDATE sessions SET exit_time = NOW(), fee_amount = $2, fee_currency = $3, stripe_payment_id = $4, status = 'completed'
      WHERE plate_number = $1 AND status = 'active'
      RETURNING *`,
-    [plate, feeUsdc],
+    [plate, input.feeAmount, input.feeCurrency, input.stripePaymentId ?? null],
   )
   return rows[0] ? mapSession(rows[0]) : null
 }
@@ -128,6 +134,8 @@ interface UpdateLotInput {
   ratePerHour?: number
   billingMinutes?: number
   maxDailyFee?: number | null
+  currency?: string
+  paymentMethods?: string[]
 }
 
 async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | null> {
@@ -138,7 +146,9 @@ async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | 
       capacity = COALESCE($4, capacity),
       rate_per_hour = COALESCE($5, rate_per_hour),
       billing_minutes = COALESCE($6, billing_minutes),
-      max_daily_fee = COALESCE($7, max_daily_fee)
+      max_daily_fee = COALESCE($7, max_daily_fee),
+      currency = COALESCE($8, currency),
+      payment_methods = COALESCE($9, payment_methods)
      WHERE id = $1
      RETURNING *`,
     [
@@ -149,6 +159,8 @@ async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | 
       updates.ratePerHour,
       updates.billingMinutes,
       updates.maxDailyFee,
+      updates.currency,
+      updates.paymentMethods,
     ],
   )
   return rows[0] ? mapLot(rows[0]) : null
@@ -177,7 +189,9 @@ function mapSession(row: any): SessionRecord {
     lotId: row.lot_id,
     entryTime: row.entry_time,
     exitTime: row.exit_time,
-    feeUsdc: row.fee_usdc ? parseFloat(row.fee_usdc) : undefined,
+    feeAmount: row.fee_amount ? parseFloat(row.fee_amount) : undefined,
+    feeCurrency: row.fee_currency ?? undefined,
+    stripePaymentId: row.stripe_payment_id ?? undefined,
     txHash: row.tx_hash,
     status: row.status,
   }
@@ -194,6 +208,8 @@ function mapLot(row: any): Lot {
     ratePerHour: parseFloat(row.rate_per_hour),
     billingMinutes: row.billing_minutes,
     maxDailyFee: row.max_daily_fee ? parseFloat(row.max_daily_fee) : undefined,
+    currency: row.currency,
+    paymentMethods: row.payment_methods ?? ['stripe', 'x402'],
     operatorWallet: row.operator_wallet,
   }
 }

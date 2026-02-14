@@ -26,7 +26,9 @@ CREATE TABLE sessions (
     lot_id        VARCHAR(50) NOT NULL,
     entry_time    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     exit_time     TIMESTAMPTZ,
-    fee_usdc      DECIMAL(10, 6),
+    fee_amount    DECIMAL(10, 6),
+    fee_currency  VARCHAR(10),
+    stripe_payment_id VARCHAR(255),
     tx_hash       VARCHAR(66),
     status        VARCHAR(20) DEFAULT 'active',
     created_at    TIMESTAMPTZ DEFAULT NOW()
@@ -55,6 +57,8 @@ CREATE TABLE lots (
     rate_per_hour   DECIMAL(10, 2) NOT NULL,
     billing_minutes INT DEFAULT 15,
     max_daily_fee   DECIMAL(10, 2),
+    currency        VARCHAR(10) NOT NULL DEFAULT 'USD',
+    payment_methods TEXT[] DEFAULT '{stripe,x402}',
     operator_wallet VARCHAR(42) NOT NULL,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );

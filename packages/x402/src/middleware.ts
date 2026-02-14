@@ -16,15 +16,11 @@ import type { RequestHandler, Request, Response, NextFunction } from 'express'
  */
 
 export interface PaymentMiddlewareOptions {
-  /** Maximum payment amount in USD (e.g., "50.00") */
-  maxAmount?: string
-  /** Payment description shown to the driver */
-  description?: string
-  /** Network to accept payment on */
+  /** Default network to accept payment on (can be overridden per-request via res.locals) */
   network?: string
-  /** Token to accept */
+  /** Default token to accept (can be overridden per-request via res.locals) */
   token?: string
-  /** Operator wallet to receive payment */
+  /** Default operator wallet to receive payment */
   receiverWallet?: string
 }
 
@@ -33,15 +29,17 @@ export interface PaymentRequired {
   description: string
   plateNumber: string
   sessionId: string
+  /** Override defaults per-request (set by route handler) */
+  network?: string
+  token?: string
+  receiver?: string
 }
 
 export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}): RequestHandler {
   const {
-    maxAmount = '50.00',
-    description = 'Parking fee payment',
-    network = 'base-sepolia',
-    token = 'USDC',
-    receiverWallet = process.env.LOT_OPERATOR_WALLET || '0x0',
+    network: defaultNetwork = 'base-sepolia',
+    token: defaultToken = 'USDC',
+    receiverWallet: defaultReceiver = process.env.LOT_OPERATOR_WALLET || '0x0',
   } = options
 
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
@@ -62,6 +60,10 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
 
       // If route requested payment and client hasn't paid yet
       if (paymentInfo && !(req as any).paymentVerified) {
+        const network = paymentInfo.network || defaultNetwork
+        const token = paymentInfo.token || defaultToken
+        const receiver = paymentInfo.receiver || defaultReceiver
+
         res.status(402)
         return originalJson({
           error: 'Payment Required',
@@ -70,14 +72,18 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
             network,
             token,
             amount: paymentInfo.amount,
-            maxAmount,
-            receiver: receiverWallet,
-            description: paymentInfo.description || description,
+            receiver,
+            description: paymentInfo.description,
             metadata: {
               plateNumber: paymentInfo.plateNumber,
               sessionId: paymentInfo.sessionId,
             },
           },
+          // Also include the full payment options from the route (for non-x402 clients)
+          ...(body?.paymentOptions && { paymentOptions: body.paymentOptions }),
+          ...(body?.fee !== undefined && { fee: body.fee }),
+          ...(body?.currency && { currency: body.currency }),
+          ...(body?.durationMinutes !== undefined && { durationMinutes: body.durationMinutes }),
         })
       }
 

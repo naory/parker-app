@@ -1,10 +1,26 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { DRIVER_REGISTRY_ABI, CONTRACT_ADDRESSES } from '@parker/core'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
+
+/** All known countries — filtered by NEXT_PUBLIC_DEPLOYMENT_COUNTRIES at runtime */
+const ALL_COUNTRIES: Record<string, string> = {
+  US: 'United States',
+  GB: 'United Kingdom',
+  DE: 'Germany',
+  FR: 'France',
+  ES: 'Spain',
+  IT: 'Italy',
+  NL: 'Netherlands',
+  IL: 'Israel',
+  CA: 'Canada',
+  AU: 'Australia',
+  JP: 'Japan',
+  BR: 'Brazil',
+}
 
 export default function Register() {
   const { address } = useAccount()
@@ -12,9 +28,19 @@ export default function Register() {
   const { setPlate } = useDriverProfile()
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<'form' | 'onchain' | 'api'>('form')
+
+  // White-label: restrict country list to deployment config
+  const deploymentCountries = useMemo(() => {
+    const raw = process.env.NEXT_PUBLIC_DEPLOYMENT_COUNTRIES || ''
+    const codes = raw.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean)
+    if (codes.length === 0) return Object.keys(ALL_COUNTRIES) // no restriction → show all
+    return codes.filter((c) => c in ALL_COUNTRIES)
+  }, [])
+
   const [form, setForm] = useState({
     plateNumber: '',
-    countryCode: 'IL',
+    // Auto-select if single-country deployment
+    countryCode: deploymentCountries.length === 1 ? deploymentCountries[0] : '',
     carMake: '',
     carModel: '',
   })
@@ -82,7 +108,7 @@ export default function Register() {
           <label className="mb-1 block text-sm font-medium text-gray-700">License Plate</label>
           <input
             type="text"
-            placeholder="12-345-67"
+            placeholder="ABC-1234"
             value={form.plateNumber}
             onChange={(e) => setForm({ ...form, plateNumber: e.target.value })}
             className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-parker-500 focus:outline-none focus:ring-1 focus:ring-parker-500"
@@ -90,16 +116,25 @@ export default function Register() {
           />
         </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Country</label>
-          <select
-            value={form.countryCode}
-            onChange={(e) => setForm({ ...form, countryCode: e.target.value })}
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-parker-500 focus:outline-none focus:ring-1 focus:ring-parker-500"
-          >
-            <option value="IL">Israel</option>
-          </select>
-        </div>
+        {/* Hidden when single-country deployment; shown as dropdown for multi-country */}
+        {deploymentCountries.length === 1 ? (
+          <input type="hidden" value={form.countryCode} />
+        ) : (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Country</label>
+            <select
+              value={form.countryCode}
+              onChange={(e) => setForm({ ...form, countryCode: e.target.value })}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-parker-500 focus:outline-none focus:ring-1 focus:ring-parker-500"
+              required
+            >
+              <option value="" disabled>Select country</option>
+              {deploymentCountries.map((code) => (
+                <option key={code} value={code}>{ALL_COUNTRIES[code] || code}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Car Make</label>

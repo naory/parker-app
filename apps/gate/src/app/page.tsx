@@ -16,15 +16,38 @@ export default function GateView() {
 
   // Real-time gate events via WebSocket
   const handleGateEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
-    if (event.type === 'entry' || event.type === 'exit') {
+    if (event.type === 'entry') {
       const plate = event.plate as string
       if (plate) setLastPlate(plate)
+    }
+    if (event.type === 'exit') {
+      const plate = event.plate as string
+      if (plate) setLastPlate(plate)
+      // Payment confirmed (from Stripe webhook or x402) — open the gate
+      setGateOpen(true)
+      setTimeout(() => setGateOpen(false), 5000)
+      const fee = event.fee as number | undefined
+      const currency = (event.currency as string) || ''
+      const method = (event.paymentMethod as string) || ''
+      setLastResult({
+        success: true,
+        message: `Payment received${method ? ` (${method})` : ''} — ${fee?.toFixed(2)} ${currency}. Gate open.`,
+        fee,
+        currency,
+        waitingForPayment: false,
+      })
     }
   }, [])
 
   const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent)
 
-  const [lastResult, setLastResult] = useState<{ success: boolean; message: string; fee?: number } | null>(null)
+  const [lastResult, setLastResult] = useState<{
+    success: boolean
+    message: string
+    fee?: number
+    currency?: string
+    waitingForPayment?: boolean
+  } | null>(null)
 
   async function handlePlateDetected(plate: string) {
     setLastPlate(plate)
@@ -44,15 +67,33 @@ export default function GateView() {
       const data = await res.json()
 
       if (res.ok) {
-        setGateOpen(true)
-        setTimeout(() => setGateOpen(false), 5000)
-        setLastResult({
-          success: true,
-          message: mode === 'entry'
-            ? `Vehicle entered — session started`
-            : `Vehicle exited — ${data.durationMinutes}min, $${data.fee?.toFixed(2)}`,
-          fee: data.fee,
-        })
+        if (mode === 'entry') {
+          setGateOpen(true)
+          setTimeout(() => setGateOpen(false), 5000)
+          setLastResult({
+            success: true,
+            message: 'Vehicle entered — session started',
+          })
+        } else if (data.paymentOptions) {
+          // Exit with pending payment — waiting for driver to pay
+          setLastResult({
+            success: true,
+            message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} — waiting for payment...`,
+            fee: data.fee,
+            currency: data.currency,
+            waitingForPayment: true,
+          })
+        } else {
+          // Exit with payment already completed
+          setGateOpen(true)
+          setTimeout(() => setGateOpen(false), 5000)
+          setLastResult({
+            success: true,
+            message: `Vehicle exited — ${data.durationMinutes}min, ${data.fee?.toFixed(2)} ${data.currency || ''}`,
+            fee: data.fee,
+            currency: data.currency,
+          })
+        }
       } else {
         setLastResult({ success: false, message: data.error || 'Operation failed' })
       }
@@ -113,12 +154,20 @@ export default function GateView() {
           {lastResult && (
             <div
               className={`rounded-lg p-4 text-sm font-medium ${
-                lastResult.success
-                  ? 'bg-green-50 text-green-700 border border-green-200'
-                  : 'bg-red-50 text-red-700 border border-red-200'
+                lastResult.waitingForPayment
+                  ? 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                  : lastResult.success
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
               }`}
             >
               {lastResult.message}
+              {lastResult.waitingForPayment && (
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
+                  <span className="text-xs">Gate will open automatically when payment is confirmed</span>
+                </div>
+              )}
             </div>
           )}
 

@@ -71,7 +71,9 @@ export default function History() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-bold text-parker-800">
-                        {session.feeUsdc !== undefined ? `$${session.feeUsdc.toFixed(2)}` : '--'}
+                        {session.feeAmount !== undefined
+                          ? `${session.feeAmount.toFixed(2)} ${session.feeCurrency || ''}`
+                          : '--'}
                       </p>
                       <p className="text-xs text-gray-400">
                         {hours > 0 ? `${hours}h ` : ''}{mins}m

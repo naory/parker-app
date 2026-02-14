@@ -1,18 +1,30 @@
 import { Router } from 'express'
-import type { GateEntryRequest, GateExitRequest } from '@parker/core'
+import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
 import { calculateFee, normalizePlate } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
 
 import { db } from '../db'
-import { notifyGate, notifyDriver } from '../ws'
+import { notifyGate, notifyDriver } from '../ws/index'
 import {
-  isBlockchainEnabled,
-  mintParkingNFT,
-  endParkingSession,
-} from '../services/blockchain'
+  isHederaEnabled,
+  mintParkingNFTOnHedera,
+  endParkingSessionOnHedera,
+} from '../services/hedera'
+import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
+import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
 import type { PaymentRequired } from '@parker/x402'
 
 export const gateRouter = Router()
+
+/**
+ * Deployment country codes from env — used for ALPR plate format hints.
+ * Single-country deployments (e.g. "IL") restrict ALPR to that format.
+ * Multi-country (e.g. "DE,FR,ES") tries all listed formats.
+ */
+const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
+  .split(',')
+  .map((c) => c.trim().toUpperCase())
+  .filter(Boolean)
 
 /**
  * Resolve a plate number from either the provided string or an image via ALPR.
@@ -28,7 +40,9 @@ async function resolvePlate(
 
   if (image) {
     const imageBuffer = Buffer.from(image, 'base64')
-    const result = await recognizePlate(imageBuffer)
+    // Use the first deployment country as the ALPR hint (single-country deployment)
+    const countryHint = DEPLOYMENT_COUNTRIES.length === 1 ? DEPLOYMENT_COUNTRIES[0] : undefined
+    const result = await recognizePlate(imageBuffer, countryHint)
     if (result?.normalized) {
       return {
         plate: result.normalized,
@@ -87,16 +101,16 @@ gateRouter.post('/entry', async (req, res) => {
       })
     }
 
-    // Mint NFT on-chain (if blockchain is configured)
+    // Mint parking NFT on Hedera (if configured)
     let tokenId: number | undefined
     let txHash: string | undefined
-    if (isBlockchainEnabled()) {
+    if (isHederaEnabled()) {
       try {
-        const result = await mintParkingNFT(plate, lotId)
+        const result = await mintParkingNFTOnHedera(plate, lotId)
         tokenId = result.tokenId
         txHash = result.txHash
       } catch (err) {
-        console.error('On-chain NFT minting failed (continuing with off-chain):', err)
+        console.error('Hedera NFT minting failed (continuing with off-chain):', err)
       }
     }
 
@@ -157,7 +171,7 @@ gateRouter.post('/exit', async (req, res) => {
       return res.status(404).json({ error: 'Lot not found' })
     }
 
-    // Calculate fee
+    // Calculate fee in the lot's local currency
     const durationMs = Date.now() - session.entryTime.getTime()
     const durationMinutes = durationMs / (1000 * 60)
     const fee = calculateFee(
@@ -167,50 +181,99 @@ gateRouter.post('/exit', async (req, res) => {
       lot.maxDailyFee ?? undefined,
     )
 
-    // If client hasn't paid yet, return 402 with payment details
+    // If client hasn't paid yet, build payment options and return them
     if (!(req as any).paymentVerified) {
-      res.locals.paymentRequired = {
-        amount: fee.toFixed(6),
-        description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot.name}`,
-        plateNumber: plate,
-        sessionId: session.id,
-      } satisfies PaymentRequired
+      // Build payment options based on lot's accepted methods
+      const paymentOptions: PaymentOptions = {}
 
-      // Return fee info without closing the session — session stays active until paid
+      // x402 crypto rail
+      if (lot.paymentMethods.includes('x402')) {
+        try {
+          const stablecoinAmount = convertToStablecoin(fee, lot.currency)
+          paymentOptions.x402 = {
+            amount: stablecoinAmount.toFixed(6),
+            token: X402_STABLECOIN,
+            network: X402_NETWORK,
+            receiver: lot.operatorWallet,
+          }
+        } catch (err) {
+          console.warn(`[x402] FX conversion failed for ${lot.currency}:`, err)
+        }
+      }
+
+      // Stripe credit card rail
+      if (lot.paymentMethods.includes('stripe') && isStripeEnabled()) {
+        try {
+          const { checkoutUrl } = await createParkingCheckout(session, lot, fee)
+          paymentOptions.stripe = { checkoutUrl }
+        } catch (err) {
+          console.warn('[Stripe] Checkout creation failed:', err)
+        }
+      }
+
+      // Set x402 payment info for the middleware (if x402 is available)
+      if (paymentOptions.x402) {
+        res.locals.paymentRequired = {
+          amount: paymentOptions.x402.amount,
+          description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot.name}`,
+          plateNumber: plate,
+          sessionId: session.id,
+        } satisfies PaymentRequired
+      }
+
+      // Return fee info + payment options without closing the session
       return res.json({
         session,
         fee,
+        currency: lot.currency,
         durationMinutes: Math.round(durationMinutes),
+        paymentOptions,
         ...(alprResult && { alpr: alprResult }),
       })
     }
 
-    // Payment verified — end the session
+    // Payment verified (x402 path) — end the session
 
-    // End NFT session on-chain (if blockchain is configured)
-    let txHash: string | undefined
-    if (isBlockchainEnabled()) {
+    // Burn parking NFT on Hedera (if configured and session has a token)
+    if (isHederaEnabled() && session.tokenId) {
       try {
-        const result = await endParkingSession(plate, fee)
-        txHash = result.txHash
+        await endParkingSessionOnHedera(session.tokenId)
       } catch (err) {
-        console.error('On-chain session end failed (continuing with off-chain):', err)
+        console.error('Hedera NFT burn failed (continuing with off-chain):', err)
       }
     }
 
     // End session in DB
-    const closedSession = await db.endSession(plate, fee)
+    const closedSession = await db.endSession(plate, {
+      feeAmount: fee,
+      feeCurrency: lot.currency,
+    })
     if (!closedSession) {
       return res.status(409).json({ error: 'Session already closed or not found', plateNumber: plate })
     }
 
     // Notify via WebSocket
-    notifyGate(lotId, { type: 'exit', session: closedSession, plate, fee })
-    notifyDriver(plate, { type: 'session_ended', session: closedSession, fee, durationMinutes: Math.round(durationMinutes) })
+    notifyGate(lotId, {
+      type: 'exit',
+      session: closedSession,
+      plate,
+      fee,
+      currency: lot.currency,
+      paymentMethod: 'x402',
+    })
+    notifyDriver(plate, {
+      type: 'session_ended',
+      session: closedSession,
+      fee,
+      currency: lot.currency,
+      durationMinutes: Math.round(durationMinutes),
+      paymentMethod: 'x402',
+    })
 
     res.json({
       session: closedSession,
       fee,
+      currency: lot.currency,
       durationMinutes: Math.round(durationMinutes),
       ...(alprResult && { alpr: alprResult }),
     })
@@ -229,7 +292,8 @@ gateRouter.post('/scan', async (req, res) => {
     }
 
     const imageBuffer = Buffer.from(image, 'base64')
-    const result = await recognizePlate(imageBuffer)
+    const countryHint = DEPLOYMENT_COUNTRIES.length === 1 ? DEPLOYMENT_COUNTRIES[0] : undefined
+    const result = await recognizePlate(imageBuffer, countryHint)
 
     if (!result) {
       return res.status(422).json({ error: 'No text detected in image' })
@@ -267,6 +331,8 @@ gateRouter.get('/lot/:lotId/status', async (req, res) => {
       ratePerHour: lot.ratePerHour,
       billingMinutes: lot.billingMinutes,
       maxDailyFee: lot.maxDailyFee,
+      currency: lot.currency,
+      paymentMethods: lot.paymentMethods,
       operatorWallet: lot.operatorWallet,
     })
   } catch (error) {
@@ -289,7 +355,7 @@ gateRouter.get('/lot/:lotId/sessions', async (req, res) => {
 // PUT /api/gate/lot/:lotId — Update lot settings
 gateRouter.put('/lot/:lotId', async (req, res) => {
   try {
-    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee } = req.body
+    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee, currency, paymentMethods } = req.body
 
     // Parse numeric fields — allow 0 as a valid value (only skip if not provided)
     const parseOptionalInt = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseInt(String(v)) : undefined
@@ -321,6 +387,8 @@ gateRouter.put('/lot/:lotId', async (req, res) => {
       ratePerHour: parsedRate,
       billingMinutes: parsedBilling,
       maxDailyFee: parsedMaxFee,
+      currency,
+      paymentMethods,
     })
 
     if (!lot) {

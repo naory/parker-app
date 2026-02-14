@@ -12,7 +12,7 @@ export interface X402PaymentDetails {
   network: string
   token: string
   amount: string
-  maxAmount: string
+  maxAmount?: string
   receiver: string
   description: string
   metadata: {
@@ -31,7 +31,7 @@ export interface PaymentClient {
 
 export interface PaymentClientOptions {
   /**
-   * Sign and send a USDC transfer transaction.
+   * Sign and send a stablecoin transfer transaction.
    * Should return the transaction hash.
    */
   sendPayment?: (params: {

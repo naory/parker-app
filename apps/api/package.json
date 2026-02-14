@@ -11,11 +11,13 @@
   "dependencies": {
     "@parker/alpr": "workspace:*",
     "@parker/core": "workspace:*",
+    "@parker/hedera": "workspace:*",
     "@parker/x402": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.0",
     "pg": "^8.12.0",
+    "stripe": "^20.3.1",
     "viem": "^2.21.0",
     "ws": "^8.17.0"
   },

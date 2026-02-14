@@ -6,7 +6,7 @@ import Link from 'next/link'
 import type { SessionRecord } from '@parker/core'
 import { calculateFee } from '@parker/core'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
-import { getSessionHistory } from '@/lib/api'
+import { getSessionHistory, getLotStatus } from '@/lib/api'
 
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>()
@@ -14,6 +14,12 @@ export default function SessionDetail() {
   const [session, setSession] = useState<SessionRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [elapsed, setElapsed] = useState(0)
+
+  // Lot pricing config
+  const [lotRate, setLotRate] = useState(0)
+  const [lotBilling, setLotBilling] = useState(15)
+  const [lotMaxFee, setLotMaxFee] = useState<number | undefined>(undefined)
+  const [lotCurrency, setLotCurrency] = useState('')
 
   // Find session by ID from history
   useEffect(() => {
@@ -30,6 +36,19 @@ export default function SessionDetail() {
       .catch(() => setSession(null))
       .finally(() => setLoading(false))
   }, [plate, id])
+
+  // Fetch lot config when session is available
+  useEffect(() => {
+    if (!session) return
+    getLotStatus(session.lotId).then((lot) => {
+      if (lot) {
+        setLotRate(lot.ratePerHour)
+        setLotBilling(lot.billingMinutes)
+        if (lot.maxDailyFee) setLotMaxFee(lot.maxDailyFee)
+        setLotCurrency(lot.currency)
+      }
+    })
+  }, [session?.lotId])
 
   // Live timer for active sessions
   useEffect(() => {
@@ -68,7 +87,8 @@ export default function SessionDetail() {
   const hours = Math.floor(durationMinutes / 60)
   const mins = durationMinutes % 60
 
-  const estimatedCost = session?.feeUsdc ?? calculateFee(durationMinutes, 3.3, 15)
+  const estimatedCost = session?.feeAmount ?? (lotRate > 0 ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee) : 0)
+  const currency = session?.feeCurrency || lotCurrency
 
   return (
     <div className="mx-auto max-w-md p-6">
@@ -94,7 +114,7 @@ export default function SessionDetail() {
                 {String(elapsed % 60).padStart(2, '0')}
               </div>
               <p className="mt-2 text-sm opacity-80">
-                Est. cost: ${estimatedCost.toFixed(2)}
+                Est. cost: {estimatedCost.toFixed(2)} {currency}
               </p>
             </div>
           )}
@@ -123,7 +143,7 @@ export default function SessionDetail() {
             />
             <InfoRow
               label={session.status === 'completed' ? 'Fee Paid' : 'Est. Fee'}
-              value={`$${estimatedCost.toFixed(2)} USDC`}
+              value={`${estimatedCost.toFixed(2)} ${currency}`}
             />
             <InfoRow
               label="Status"

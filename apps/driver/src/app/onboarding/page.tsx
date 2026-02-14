@@ -25,7 +25,7 @@ export default function Onboarding() {
           <li>No more communication errors at the gate</li>
           <li>Transparent fee calculation on-chain</li>
           <li>Your parking receipts as NFTs</li>
-          <li>Pay with USDC — near-zero fees</li>
+          <li>Pay with crypto or card — your choice</li>
         </ul>
 
         <WalletButton />
