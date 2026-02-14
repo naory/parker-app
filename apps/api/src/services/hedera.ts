@@ -4,6 +4,7 @@ import {
   burnParkingNFT as htsBurn,
   getNftInfo,
   findActiveNftByPlateHash as htsFindByPlate,
+  parseEncryptionKey,
   type HederaNetwork,
   type ActiveNftSession,
 } from '@parker/hedera'
@@ -16,6 +17,14 @@ const HEDERA_ACCOUNT_ID = process.env.HEDERA_ACCOUNT_ID
 const HEDERA_PRIVATE_KEY = process.env.HEDERA_PRIVATE_KEY
 const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || 'testnet') as HederaNetwork
 const HEDERA_TOKEN_ID = process.env.HEDERA_TOKEN_ID
+
+// ---- NFT Metadata Encryption (required) ----
+
+if (!process.env.NFT_ENCRYPTION_KEY) {
+  throw new Error('NFT_ENCRYPTION_KEY is required. Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"')
+}
+const _encryptionKey = parseEncryptionKey(process.env.NFT_ENCRYPTION_KEY)
+console.log('[hedera] NFT metadata encryption enabled (AES-256-GCM)')
 
 // ---- Client (lazy singleton) ----
 
@@ -62,7 +71,7 @@ export async function mintParkingNFTOnHedera(
     plateHash: hashPlate(plateNumber),
     lotId,
     entryTime: Math.floor(Date.now() / 1000),
-  })
+  }, _encryptionKey)
 
   return {
     tokenId: result.serial,
@@ -110,7 +119,7 @@ export async function findActiveSessionOnHedera(
   if (!HEDERA_TOKEN_ID) return null
 
   const plate_hash = hashPlate(plateNumber)
-  return htsFindByPlate(HEDERA_TOKEN_ID, plate_hash, HEDERA_NETWORK)
+  return htsFindByPlate(HEDERA_TOKEN_ID, plate_hash, HEDERA_NETWORK, _encryptionKey)
 }
 
 export { type ActiveNftSession }

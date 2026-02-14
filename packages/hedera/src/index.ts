@@ -9,3 +9,12 @@ export {
   type BurnResult,
   type ActiveNftSession,
 } from './nft'
+export {
+  encryptMetadata,
+  decryptMetadata,
+  parseMetadata,
+  parseEncryptionKey,
+  encodePlaintext,
+  decodePlaintext,
+  type NftPlaintext,
+} from './crypto'

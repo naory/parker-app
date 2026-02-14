@@ -5,6 +5,7 @@ import {
   TokenBurnTransaction,
   Status,
 } from '@hashgraph/sdk'
+import { encryptMetadata, parseMetadata } from './crypto'
 
 // ---- Types ----
 
@@ -32,18 +33,18 @@ export interface BurnResult {
 
 /**
  * Mint a parking session NFT on Hedera via HTS.
- * The metadata is encoded as a JSON string in the NFT's metadata bytes.
+ * Metadata is AES-256-GCM encrypted before going on-chain.
  * Returns the serial number assigned by HTS.
  */
 export async function mintParkingNFT(
   client: Client,
   tokenId: string,
   metadata: ParkingNFTMetadata,
+  encryptionKey: Buffer,
 ): Promise<MintResult> {
   // Hedera NFT metadata is limited to 100 bytes.
-  // Compact format: strip 0x prefix from plateHash, use short keys.
-  const compact = `${metadata.plateHash.replace('0x', '')}|${metadata.lotId}|${metadata.entryTime}`
-  const metadataBytes = Buffer.from(compact, 'utf-8')
+  // Encrypted binary format: [version][IV][ciphertext][tag] (~72 bytes)
+  const metadataBytes = encryptMetadata(metadata, encryptionKey)
 
   const tx = new TokenMintTransaction()
     .setTokenId(TokenId.fromString(tokenId))
@@ -137,7 +138,7 @@ export async function getNftInfo(
 
     const metadata = data.metadata
       ? Buffer.from(data.metadata, 'base64').toString('utf-8')
-      : undefined // Compact format: "plateHash|lotId|entryTime"
+      : undefined
 
     return {
       exists: !data.deleted,
@@ -171,6 +172,7 @@ export async function findActiveNftByPlateHash(
   tokenId: string,
   plateHash: string,
   network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
+  encryptionKey?: Buffer,
 ): Promise<ActiveNftSession | null> {
   const baseUrl = getMirrorNodeBaseUrl(network)
 
@@ -200,25 +202,15 @@ export async function findActiveNftByPlateHash(
         // Skip burned NFTs
         if (nft.deleted) continue
 
-        // Decode metadata and check plateHash
-        // Compact format: "plateHash|lotId|entryTime" (no 0x prefix)
-        try {
-          const metadataStr = Buffer.from(nft.metadata, 'base64').toString('utf-8')
-          const parts = metadataStr.split('|')
-          if (parts.length === 3) {
-            const nftPlateHash = `0x${parts[0]}`
-            if (nftPlateHash === plateHash) {
-              return {
-                serial: nft.serial_number,
-                plateHash: nftPlateHash,
-                lotId: parts[1],
-                entryTime: parseInt(parts[2], 10),
-              }
-            }
+        if (!encryptionKey) continue
+        const parsed = parseMetadata(nft.metadata, encryptionKey)
+        if (parsed && parsed.plateHash === plateHash) {
+          return {
+            serial: nft.serial_number,
+            plateHash: parsed.plateHash,
+            lotId: parsed.lotId,
+            entryTime: parsed.entryTime,
           }
-        } catch {
-          // Skip NFTs with unparseable metadata
-          continue
         }
       }
 
