@@ -9,6 +9,7 @@ export default function Sessions() {
   const lotId = process.env.NEXT_PUBLIC_LOT_ID || ''
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [apiError, setApiError] = useState(false)
   const [search, setSearch] = useState('')
   const [now, setNow] = useState(Date.now())
 
@@ -36,13 +37,15 @@ export default function Sessions() {
       .catch(() => {})
 
     getActiveSessionsByLot(lotId)
-      .then(setSessions)
-      .catch(() => setSessions([]))
+      .then((data) => { setSessions(data); setApiError(false) })
+      .catch(() => { setSessions([]); setApiError(true) })
       .finally(() => setLoading(false))
 
     // Poll every 15s
     const interval = setInterval(() => {
-      getActiveSessionsByLot(lotId).then(setSessions).catch(() => {})
+      getActiveSessionsByLot(lotId)
+        .then((data) => { setSessions(data); setApiError(false) })
+        .catch(() => setApiError(true))
     }, 15_000)
 
     return () => clearInterval(interval)
@@ -67,6 +70,12 @@ export default function Sessions() {
     <div className="p-6">
       <h1 className="mb-6 text-2xl font-bold text-parker-800">Active Sessions</h1>
       <p className="mb-4 text-sm text-gray-500">Lot: {lotId}</p>
+
+      {apiError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          API unavailable — showing last known data. Retrying automatically...
+        </div>
+      )}
 
       {/* Search */}
       <div className="mb-6">

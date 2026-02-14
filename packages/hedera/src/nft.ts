@@ -8,8 +8,13 @@ import {
 
 // ---- Types ----
 
+/**
+ * On-chain NFT metadata — stored publicly on Hedera.
+ * PRIVACY: plate is stored as a keccak256 hash, never in plaintext.
+ * The API correlates NFTs to sessions by matching hashPlate(plate) against plateHash.
+ */
 export interface ParkingNFTMetadata {
-  plateNumber: string
+  plateHash: string // keccak256 hash of the normalized plate number
   lotId: string
   entryTime: number // unix timestamp (seconds)
 }
@@ -89,7 +94,17 @@ export async function burnParkingNFT(
   return { transactionId }
 }
 
-// ---- Mirror Node Query ----
+// ---- Mirror Node Helpers ----
+
+function getMirrorNodeBaseUrl(network: 'testnet' | 'mainnet' | 'previewnet'): string {
+  switch (network) {
+    case 'mainnet': return 'https://mainnet-public.mirrornode.hedera.com'
+    case 'previewnet': return 'https://previewnet.mirrornode.hedera.com'
+    default: return 'https://testnet.mirrornode.hedera.com'
+  }
+}
+
+// ---- Mirror Node Query: Single NFT ----
 
 /**
  * Check if a specific NFT serial exists (not burned) via the Hedera Mirror Node REST API.
@@ -100,13 +115,7 @@ export async function getNftInfo(
   serial: number,
   network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
 ): Promise<{ exists: boolean; metadata?: string; deleted: boolean }> {
-  const baseUrl =
-    network === 'mainnet'
-      ? 'https://mainnet-public.mirrornode.hedera.com'
-      : network === 'previewnet'
-        ? 'https://previewnet.mirrornode.hedera.com'
-        : 'https://testnet.mirrornode.hedera.com'
-
+  const baseUrl = getMirrorNodeBaseUrl(network)
   const url = `${baseUrl}/api/v1/tokens/${tokenId}/nfts/${serial}`
 
   try {
@@ -136,4 +145,84 @@ export async function getNftInfo(
     console.error(`[hedera] Mirror node query failed for ${tokenId}/${serial}:`, error)
     return { exists: false, deleted: false }
   }
+}
+
+// ---- Mirror Node Query: Find Active NFT by Plate Hash ----
+
+/** Parsed NFT with decoded metadata */
+export interface ActiveNftSession {
+  serial: number
+  plateHash: string
+  lotId: string
+  entryTime: number // unix seconds
+}
+
+/**
+ * Search the Mirror Node for an active (not burned) parking NFT matching a given plateHash.
+ * Used as a DB fallback when PostgreSQL is unreachable.
+ *
+ * Scans the most recent NFTs in the collection (paginated, newest first).
+ * Returns the first active NFT whose metadata.plateHash matches the target.
+ */
+export async function findActiveNftByPlateHash(
+  tokenId: string,
+  plateHash: string,
+  network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
+): Promise<ActiveNftSession | null> {
+  const baseUrl = getMirrorNodeBaseUrl(network)
+
+  // Paginate through NFTs (newest first, up to 3 pages of 100)
+  let nextUrl: string | null = `${baseUrl}/api/v1/tokens/${tokenId}/nfts?order=desc&limit=100`
+  let pagesChecked = 0
+  const maxPages = 3 // Safety limit — don't scan the entire collection
+
+  while (nextUrl && pagesChecked < maxPages) {
+    try {
+      const res = await fetch(nextUrl)
+      if (!res.ok) {
+        console.error(`[hedera] Mirror node list error: ${res.status}`)
+        return null
+      }
+
+      const data = (await res.json()) as {
+        nfts: Array<{
+          serial_number: number
+          deleted: boolean
+          metadata: string // base64-encoded
+        }>
+        links?: { next?: string }
+      }
+
+      for (const nft of data.nfts) {
+        // Skip burned NFTs
+        if (nft.deleted) continue
+
+        // Decode metadata and check plateHash
+        try {
+          const metadataStr = Buffer.from(nft.metadata, 'base64').toString('utf-8')
+          const meta = JSON.parse(metadataStr) as ParkingNFTMetadata
+          if (meta.plateHash === plateHash) {
+            return {
+              serial: nft.serial_number,
+              plateHash: meta.plateHash,
+              lotId: meta.lotId,
+              entryTime: meta.entryTime,
+            }
+          }
+        } catch {
+          // Skip NFTs with unparseable metadata
+          continue
+        }
+      }
+
+      // Follow pagination link (if any)
+      nextUrl = data.links?.next ? `${baseUrl}${data.links.next}` : null
+      pagesChecked++
+    } catch (error) {
+      console.error('[hedera] Mirror node scan failed:', error)
+      return null
+    }
+  }
+
+  return null
 }

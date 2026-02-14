@@ -33,10 +33,12 @@ export function createHederaClient(config: HederaConfig): Client {
       break
   }
 
-  client.setOperator(
-    AccountId.fromString(accountId),
-    PrivateKey.fromStringDer(privateKey),
-  )
+  // Auto-detect key format: DER (302e...) vs hex (0x... or raw hex)
+  const key = privateKey.startsWith('302')
+    ? PrivateKey.fromStringDer(privateKey)
+    : PrivateKey.fromStringECDSA(privateKey.replace(/^0x/, ''))
+
+  client.setOperator(AccountId.fromString(accountId), key)
 
   return client
 }

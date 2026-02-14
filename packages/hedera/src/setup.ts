@@ -33,7 +33,9 @@ async function main() {
   console.log(`  Operator: ${accountId}`)
 
   const client = createHederaClient({ accountId, privateKey, network })
-  const supplyKey = PrivateKey.fromStringDer(privateKey)
+  const supplyKey = privateKey.startsWith('302')
+    ? PrivateKey.fromStringDer(privateKey)
+    : PrivateKey.fromStringECDSA(privateKey.replace(/^0x/, ''))
 
   const tx = new TokenCreateTransaction()
     .setTokenName('Parker Parking Sessions')

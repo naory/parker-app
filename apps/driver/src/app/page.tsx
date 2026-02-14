@@ -8,10 +8,12 @@ import { WalletButton } from '@/components/WalletButton'
 import { SessionCard } from '@/components/SessionCard'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
 import { useParkerSocket } from '@/hooks/useParkerSocket'
+import { useAuth } from '@/providers/AuthProvider'
 
 export default function Dashboard() {
   const { isConnected } = useAccount()
   const { plate, isRegistered } = useDriverProfile()
+  const { isAuthenticated, signIn, signing } = useAuth()
   const [sessionKey, setSessionKey] = useState(0)
 
   // Listen for real-time session events — force SessionCard to re-fetch
@@ -42,6 +44,17 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold text-parker-800">Parker</h1>
         <WalletButton />
       </header>
+
+      {/* Sign-in prompt */}
+      {!isAuthenticated && (
+        <button
+          onClick={signIn}
+          disabled={signing}
+          className="mb-4 w-full rounded-lg bg-parker-600 px-4 py-3 font-medium text-white transition hover:bg-parker-700 disabled:opacity-50"
+        >
+          {signing ? 'Sign message in wallet...' : 'Sign in with Ethereum'}
+        </button>
+      )}
 
       {/* Registration prompt */}
       {!isRegistered && (

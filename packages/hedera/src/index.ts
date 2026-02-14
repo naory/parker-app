@@ -3,7 +3,9 @@ export {
   mintParkingNFT,
   burnParkingNFT,
   getNftInfo,
+  findActiveNftByPlateHash,
   type ParkingNFTMetadata,
   type MintResult,
   type BurnResult,
+  type ActiveNftSession,
 } from './nft'
