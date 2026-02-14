@@ -77,5 +77,16 @@ export function useDriverProfile() {
     [address],
   )
 
-  return { plate, profile, loading, setPlate, isRegistered: !!plate }
+  const refreshProfile = useCallback(async () => {
+    if (!plate) return
+    try {
+      const res = await fetch(`${API_URL}/api/drivers/${encodeURIComponent(plate)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setProfile(data)
+      }
+    } catch {}
+  }, [plate])
+
+  return { plate, profile, loading, setPlate, refreshProfile, isRegistered: !!plate }
 }

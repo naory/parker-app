@@ -57,7 +57,10 @@ export default function Dashboard() {
   if (!isConnected) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-6">
-        <h1 className="mb-2 text-3xl font-bold text-parker-800">Parker</h1>
+        <h1 className="mb-2 text-3xl text-parker-800">
+          <span className="font-bold">Parker</span>{' '}
+          <span className="font-light text-parker-400">Driver</span>
+        </h1>
         <p className="mb-8 text-gray-500">Smart Parking, Decentralized</p>
         <WalletButton />
         <Link href="/onboarding" className="mt-4 text-sm text-parker-600 underline">
@@ -70,7 +73,10 @@ export default function Dashboard() {
   return (
     <div className="mx-auto max-w-md p-6">
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-parker-800">Parker</h1>
+        <h1 className="text-2xl text-parker-800">
+          <span className="font-bold">Parker</span>{' '}
+          <span className="font-light text-parker-400">Driver</span>
+        </h1>
         <WalletButton />
       </header>
 

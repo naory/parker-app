@@ -57,6 +57,7 @@ CREATE TABLE lots (
     rate_per_hour   DECIMAL(10, 2) NOT NULL,
     billing_minutes INT DEFAULT 15,
     max_daily_fee   DECIMAL(10, 2),
+    grace_period_minutes DECIMAL(10, 2) DEFAULT 0.5,
     currency        VARCHAR(10) NOT NULL DEFAULT 'USD',
     payment_methods TEXT[] DEFAULT '{stripe,x402}',
     operator_wallet VARCHAR(42) NOT NULL,

@@ -134,6 +134,7 @@ interface UpdateLotInput {
   ratePerHour?: number
   billingMinutes?: number
   maxDailyFee?: number | null
+  gracePeriodMinutes?: number
   currency?: string
   paymentMethods?: string[]
 }
@@ -147,8 +148,9 @@ async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | 
       rate_per_hour = COALESCE($5, rate_per_hour),
       billing_minutes = COALESCE($6, billing_minutes),
       max_daily_fee = COALESCE($7, max_daily_fee),
-      currency = COALESCE($8, currency),
-      payment_methods = COALESCE($9, payment_methods)
+      grace_period_minutes = COALESCE($8, grace_period_minutes),
+      currency = COALESCE($9, currency),
+      payment_methods = COALESCE($10, payment_methods)
      WHERE id = $1
      RETURNING *`,
     [
@@ -159,6 +161,7 @@ async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | 
       updates.ratePerHour,
       updates.billingMinutes,
       updates.maxDailyFee,
+      updates.gracePeriodMinutes,
       updates.currency,
       updates.paymentMethods,
     ],
@@ -208,6 +211,7 @@ function mapLot(row: any): Lot {
     ratePerHour: parseFloat(row.rate_per_hour),
     billingMinutes: row.billing_minutes,
     maxDailyFee: row.max_daily_fee ? parseFloat(row.max_daily_fee) : undefined,
+    gracePeriodMinutes: row.grace_period_minutes != null ? parseFloat(row.grace_period_minutes) : 0,
     currency: row.currency,
     paymentMethods: row.payment_methods ?? ['stripe', 'x402'],
     operatorWallet: row.operator_wallet,

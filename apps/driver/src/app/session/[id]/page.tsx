@@ -4,7 +4,10 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import type { SessionRecord } from '@parker/core'
-import { calculateFee } from '@parker/core'
+import { calculateFee, getHashscanNftUrl } from '@parker/core'
+
+const HEDERA_TOKEN_ID = process.env.NEXT_PUBLIC_HEDERA_TOKEN_ID || ''
+const HEDERA_NETWORK = process.env.NEXT_PUBLIC_HEDERA_NETWORK || 'testnet'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
 import { getSessionHistory, getLotStatus } from '@/lib/api'
 
@@ -20,6 +23,9 @@ export default function SessionDetail() {
   const [lotBilling, setLotBilling] = useState(15)
   const [lotMaxFee, setLotMaxFee] = useState<number | undefined>(undefined)
   const [lotCurrency, setLotCurrency] = useState('')
+  const [lotName, setLotName] = useState<string | null>(null)
+  const [lotAddress, setLotAddress] = useState<string | null>(null)
+  const [lotGracePeriod, setLotGracePeriod] = useState(0)
 
   // Find session by ID from history
   useEffect(() => {
@@ -46,6 +52,9 @@ export default function SessionDetail() {
         setLotBilling(lot.billingMinutes)
         if (lot.maxDailyFee) setLotMaxFee(lot.maxDailyFee)
         setLotCurrency(lot.currency)
+        if (lot.name) setLotName(lot.name)
+        if (lot.address) setLotAddress(lot.address)
+        setLotGracePeriod(lot.gracePeriodMinutes ?? 0)
       }
     })
   }, [session?.lotId])
@@ -87,7 +96,10 @@ export default function SessionDetail() {
   const hours = Math.floor(durationMinutes / 60)
   const mins = durationMinutes % 60
 
-  const estimatedCost = session?.feeAmount ?? (lotRate > 0 ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee) : 0)
+  const estimatedCost = session?.feeAmount ?? (lotRate > 0 ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod) : 0)
+  const gracePeriodSeconds = lotGracePeriod * 60
+  const inGracePeriod = session?.status === 'active' && gracePeriodSeconds > 0 && elapsed < gracePeriodSeconds
+  const graceRemaining = Math.max(0, Math.ceil(gracePeriodSeconds - elapsed))
   const currency = session?.feeCurrency || lotCurrency
 
   return (
@@ -107,22 +119,49 @@ export default function SessionDetail() {
           {/* Status banner */}
           {session.status === 'active' && (
             <div className="rounded-xl bg-parker-600 p-6 text-white shadow-lg">
-              <p className="text-sm font-medium uppercase tracking-wide opacity-80">Active Session</p>
-              <div className="mt-3 font-mono text-3xl font-bold">
-                {String(Math.floor(elapsed / 3600)).padStart(2, '0')}:
-                {String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:
-                {String(elapsed % 60).padStart(2, '0')}
-              </div>
-              <p className="mt-2 text-sm opacity-80">
-                Est. cost: {estimatedCost.toFixed(2)} {currency}
+              <p className="text-sm font-medium uppercase tracking-wide opacity-80">
+                {inGracePeriod ? 'Grace Period' : 'Active Session'}
               </p>
+              {inGracePeriod ? (
+                <>
+                  <div className="mt-3 font-mono text-3xl font-bold">
+                    {String(Math.floor(graceRemaining / 60)).padStart(2, '0')}:
+                    {String(graceRemaining % 60).padStart(2, '0')}
+                  </div>
+                  <p className="mt-2 text-sm opacity-80">Free exit remaining</p>
+                </>
+              ) : (
+                <>
+                  <div className="mt-3 font-mono text-3xl font-bold">
+                    {String(Math.floor(elapsed / 3600)).padStart(2, '0')}:
+                    {String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:
+                    {String(elapsed % 60).padStart(2, '0')}
+                  </div>
+                  <p className="mt-2 text-sm opacity-80">
+                    Est. cost: {estimatedCost.toFixed(2)} {currency}
+                  </p>
+                </>
+              )}
             </div>
           )}
 
           {/* Session info */}
           <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
             <InfoRow label="Session ID" value={session.id} mono />
-            <InfoRow label="Lot" value={session.lotId} />
+            <InfoRow label="Lot" value={lotName || session.lotId} />
+            {lotAddress && (
+              <div className="flex items-center justify-between border-b border-gray-50 py-2 last:border-0">
+                <p className="text-sm text-gray-500">Address</p>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lotAddress)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-parker-600 hover:text-parker-800 underline"
+                >
+                  {lotAddress}
+                </a>
+              </div>
+            )}
             <InfoRow
               label="Entry"
               value={
@@ -162,7 +201,23 @@ export default function SessionDetail() {
           {(session.tokenId || session.txHash) && (
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
               <p className="mb-2 text-sm font-medium text-gray-500">On-chain</p>
-              {session.tokenId && <InfoRow label="NFT Token ID" value={`#${session.tokenId}`} />}
+              {session.tokenId && (
+                HEDERA_TOKEN_ID ? (
+                  <div className="flex items-center justify-between border-b border-gray-50 py-2 last:border-0">
+                    <p className="text-sm text-gray-500">NFT Token ID</p>
+                    <a
+                      href={getHashscanNftUrl(session.tokenId, HEDERA_TOKEN_ID, HEDERA_NETWORK)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-parker-600 hover:text-parker-800 underline"
+                    >
+                      #{session.tokenId}
+                    </a>
+                  </div>
+                ) : (
+                  <InfoRow label="NFT Token ID" value={`#${session.tokenId}`} />
+                )
+              )}
               {session.txHash && <InfoRow label="Tx Hash" value={session.txHash} mono />}
             </div>
           )}

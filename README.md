@@ -90,13 +90,14 @@ The app has three main components:
 ### 🚗 Driver App (PWA)
 - Register with license plate, country, car make/model — on-chain via DriverRegistry contract + off-chain via API
 - Coinbase Smart Wallet integration (passkey-based, no seed phrase)
-- Live dashboard with active parking session card (real-time duration timer + estimated cost)
+- Live dashboard with active parking session card (lot name, address with Google Maps link, real-time duration timer + estimated cost)
 - Full parking history with date, lot, duration, fee, NFT token ID
 - Profile page with vehicle details and wallet address
 - Real-time WebSocket updates when sessions start/end
 
 ### 🚧 Gate App (PWA)
 - Camera feed with ALPR overlay — captures frame, sends to scan API, gets plate back
+- Lot name and address displayed in header (fetched from lot status API)
 - Entry/exit mode toggle with manual plate input fallback
 - Live gate status indicator (open/closed) with operation result feedback
 - Session manager — searchable table of active sessions with live duration and estimated fees

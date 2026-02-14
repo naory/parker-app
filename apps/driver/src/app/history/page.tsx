@@ -3,15 +3,19 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import type { SessionRecord } from '@parker/core'
-import { formatPlate } from '@parker/core'
+import { formatPlate, getHashscanNftUrl } from '@parker/core'
+
+const HEDERA_TOKEN_ID = process.env.NEXT_PUBLIC_HEDERA_TOKEN_ID || ''
+const HEDERA_NETWORK = process.env.NEXT_PUBLIC_HEDERA_NETWORK || 'testnet'
 
 import { useDriverProfile } from '@/hooks/useDriverProfile'
-import { getSessionHistory } from '@/lib/api'
+import { getSessionHistory, getLotStatus } from '@/lib/api'
 
 export default function History() {
   const { plate } = useDriverProfile()
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [lotMap, setLotMap] = useState<Record<string, { name: string; address?: string }>>({})
 
   useEffect(() => {
     if (!plate) {
@@ -24,6 +28,23 @@ export default function History() {
       .catch(() => setSessions([]))
       .finally(() => setLoading(false))
   }, [plate])
+
+  // Fetch lot info for all unique lot IDs
+  useEffect(() => {
+    if (sessions.length === 0) return
+    const uniqueLotIds = [...new Set(sessions.map((s) => s.lotId))]
+    Promise.all(
+      uniqueLotIds.map((id) =>
+        getLotStatus(id).then((lot) => [id, lot] as const),
+      ),
+    ).then((results) => {
+      const map: Record<string, { name: string; address?: string }> = {}
+      for (const [id, lot] of results) {
+        if (lot) map[id] = { name: lot.name, address: lot.address }
+      }
+      setLotMap(map)
+    })
+  }, [sessions])
 
   return (
     <div className="mx-auto max-w-md p-6">
@@ -55,6 +76,7 @@ export default function History() {
             const durationMinutes = Math.round(durationMs / 60_000)
             const hours = Math.floor(durationMinutes / 60)
             const mins = durationMinutes % 60
+            const lot = lotMap[session.lotId]
 
             return (
               <Link key={session.id} href={`/session/${session.id}`}>
@@ -62,8 +84,19 @@ export default function History() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-800">
-                        Lot {session.lotId}
+                        {lot?.name || `Lot ${session.lotId}`}
                       </p>
+                      {lot?.address && (
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lot.address)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-parker-500 underline hover:text-parker-700"
+                        >
+                          {lot.address}
+                        </a>
+                      )}
                       <p className="text-xs text-gray-400">
                         {entryDate.toLocaleDateString()} at{' '}
                         {entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -93,7 +126,19 @@ export default function History() {
                       {session.status}
                     </span>
                     {session.tokenId && (
-                      <span className="text-xs text-gray-300">NFT #{session.tokenId}</span>
+                      HEDERA_TOKEN_ID ? (
+                        <a
+                          href={getHashscanNftUrl(session.tokenId, HEDERA_TOKEN_ID, HEDERA_NETWORK)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-parker-500 hover:text-parker-700 underline"
+                        >
+                          NFT #{session.tokenId}
+                        </a>
+                      ) : (
+                        <span className="text-xs text-gray-300">NFT #{session.tokenId}</span>
+                      )
                     )}
                   </div>
                 </div>

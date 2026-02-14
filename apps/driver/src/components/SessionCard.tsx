@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { SessionRecord } from '@parker/core'
 import { calculateFee } from '@parker/core'
 
@@ -12,6 +12,7 @@ interface SessionCardProps {
 }
 
 export function SessionCard({ plate }: SessionCardProps) {
+  const router = useRouter()
   const [session, setSession] = useState<SessionRecord | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -21,6 +22,9 @@ export function SessionCard({ plate }: SessionCardProps) {
   const [lotBilling, setLotBilling] = useState(15)
   const [lotMaxFee, setLotMaxFee] = useState<number | undefined>(undefined)
   const [lotCurrency, setLotCurrency] = useState('')
+  const [lotName, setLotName] = useState<string | null>(null)
+  const [lotAddress, setLotAddress] = useState<string | null>(null)
+  const [lotGracePeriod, setLotGracePeriod] = useState(0)
 
   // Fetch active session
   useEffect(() => {
@@ -53,6 +57,9 @@ export function SessionCard({ plate }: SessionCardProps) {
         setLotBilling(lot.billingMinutes)
         if (lot.maxDailyFee) setLotMaxFee(lot.maxDailyFee)
         setLotCurrency(lot.currency)
+        if (lot.name) setLotName(lot.name)
+        if (lot.address) setLotAddress(lot.address)
+        setLotGracePeriod(lot.gracePeriodMinutes ?? 0)
       }
     })
   }, [session?.lotId])
@@ -89,6 +96,14 @@ export function SessionCard({ plate }: SessionCardProps) {
     )
   }
 
+  // Grace period logic
+  const gracePeriodSeconds = lotGracePeriod * 60
+  const inGracePeriod = gracePeriodSeconds > 0 && elapsed < gracePeriodSeconds
+  const graceRemaining = Math.max(0, Math.ceil(gracePeriodSeconds - elapsed))
+  const graceMin = Math.floor(graceRemaining / 60)
+  const graceSec = graceRemaining % 60
+
+  // Timer display
   const hours = Math.floor(elapsed / 3600)
   const minutes = Math.floor((elapsed % 3600) / 60)
   const seconds = elapsed % 60
@@ -96,24 +111,50 @@ export function SessionCard({ plate }: SessionCardProps) {
   // Estimate cost using lot pricing
   const durationMinutes = elapsed / 60
   const estimatedCost = lotRate > 0
-    ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee)
+    ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod)
     : 0
 
   return (
-    <Link href={`/session/${session.id}`}>
-      <div className="rounded-xl bg-parker-600 p-6 text-white shadow-lg transition hover:bg-parker-700">
-        <p className="text-sm font-medium uppercase tracking-wide opacity-80">Currently Parked</p>
-        <p className="mt-1 text-xl font-bold">Lot {session.lotId}</p>
-        <div className="mt-4 font-mono text-3xl font-bold">
-          {String(hours).padStart(2, '0')}:{String(minutes).padStart(2, '0')}:
-          {String(seconds).padStart(2, '0')}
-        </div>
-        <p className="mt-2 text-sm opacity-80">
-          {lotRate > 0
-            ? `Estimated cost: ${estimatedCost.toFixed(2)} ${lotCurrency}`
-            : 'Calculating...'}
-        </p>
-      </div>
-    </Link>
+    <div
+      onClick={() => router.push(`/session/${session.id}`)}
+      className="cursor-pointer rounded-xl bg-parker-600 p-6 text-white shadow-lg transition hover:bg-parker-700"
+    >
+      <p className="text-sm font-medium uppercase tracking-wide opacity-80">
+        {inGracePeriod ? 'Grace Period' : 'Currently Parked'}
+      </p>
+      <p className="mt-1 text-xl font-bold">{lotName || `Lot ${session.lotId}`}</p>
+      {lotAddress && (
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lotAddress)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="mt-0.5 inline-block text-sm underline opacity-80 hover:opacity-100"
+        >
+          {lotAddress}
+        </a>
+      )}
+
+      {inGracePeriod ? (
+        <>
+          <div className="mt-4 font-mono text-3xl font-bold">
+            {String(graceMin).padStart(2, '0')}:{String(graceSec).padStart(2, '0')}
+          </div>
+          <p className="mt-2 text-sm opacity-80">Free exit remaining</p>
+        </>
+      ) : (
+        <>
+          <div className="mt-4 font-mono text-3xl font-bold">
+            {String(hours).padStart(2, '0')}:{String(minutes).padStart(2, '0')}:
+            {String(seconds).padStart(2, '0')}
+          </div>
+          <p className="mt-2 text-sm opacity-80">
+            {lotRate > 0
+              ? `Estimated cost: ${estimatedCost.toFixed(2)} ${lotCurrency}`
+              : 'Calculating...'}
+          </p>
+        </>
+      )}
+    </div>
   )
 }

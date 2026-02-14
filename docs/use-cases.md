@@ -146,7 +146,17 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 
 ---
 
-## 15. Plate Normalization
+## 15. Lot Name & Address Display
+
+**Problem:** Both apps previously showed only the internal lot ID (e.g., "lot-01"), which is meaningless to drivers and operators.
+
+**Behavior:** The gate app fetches lot name and address from `GET /api/gate/lot/:lotId/status` on mount and displays them in the page header (replacing "Live Gate"). The sidebar shows the lot ID as a subtitle. In the driver app, the active session card and session detail page show the lot name instead of the raw ID, and the address is rendered as a clickable Google Maps link (`https://www.google.com/maps/search/?api=1&query=...`).
+
+**Primary files:** `apps/gate/src/app/page.tsx`, `apps/gate/src/app/layout.tsx`, `apps/driver/src/components/SessionCard.tsx`, `apps/driver/src/app/session/[id]/page.tsx`
+
+---
+
+## 16. Plate Normalization
 
 **Problem:** Plate numbers can be entered inconsistently (dashes, spaces, mixed case).
 

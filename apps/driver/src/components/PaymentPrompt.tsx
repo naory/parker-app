@@ -190,10 +190,10 @@ export function PaymentPrompt({
             {process.env.NODE_ENV === 'development' && (
               <button
                 onClick={handleSimulatePayment}
-                disabled={isProcessing}
+                disabled={status === 'settling'}
                 className="block w-full rounded-lg bg-gray-100 px-4 py-2 text-center text-xs font-medium text-gray-500 transition hover:bg-gray-200 disabled:opacity-50"
               >
-                Simulate Payment (dev)
+                {status === 'settling' ? 'Opening gate...' : 'Simulate Payment (dev)'}
               </button>
             )}
           </div>
@@ -201,8 +201,7 @@ export function PaymentPrompt({
 
         <button
           onClick={onDismiss}
-          disabled={isProcessing}
-          className="mt-3 w-full py-2 text-center text-sm text-gray-400 hover:text-gray-600 disabled:opacity-30"
+          className="mt-3 w-full py-2 text-center text-sm text-gray-400 hover:text-gray-600"
         >
           Dismiss
         </button>
