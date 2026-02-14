@@ -11,10 +11,9 @@ driversRouter.post('/register', async (req, res) => {
   try {
     const { plateNumber, countryCode, carMake, carModel } = req.body as RegisterDriverRequest
 
-    // TODO: Verify wallet signature from request headers
-    const wallet = req.headers['x-wallet-address'] as string
+    const wallet = (req as any).wallet as string
     if (!wallet) {
-      return res.status(400).json({ error: 'Wallet address required' })
+      return res.status(401).json({ error: 'Authentication required — sign in with your wallet' })
     }
 
     // Validate required fields

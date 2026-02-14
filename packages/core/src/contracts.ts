@@ -2,13 +2,13 @@
 
 // Base Sepolia: DriverRegistry (EVM)
 export const CONTRACT_ADDRESSES = {
-  driverRegistry: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+  driverRegistry: '0x3Af58082dac96034a3D23cf9370b8763FEff62Ab' as `0x${string}`,
 } as const
 
 // Hedera: ParkingNFT collection via HTS (native token service)
 // Set via HEDERA_TOKEN_ID env var; placeholder here for reference
 export const HEDERA_CONFIG = {
-  parkingNftTokenId: '0.0.0', // Update after running: pnpm --filter @parker/hedera setup
+  parkingNftTokenId: '0.0.7933460',
 } as const
 
 // ABIs will be imported from typechain-types after contract compilation.

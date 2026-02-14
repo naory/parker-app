@@ -9,6 +9,7 @@ import {
   isHederaEnabled,
   mintParkingNFTOnHedera,
   endParkingSessionOnHedera,
+  findActiveSessionOnHedera,
 } from '../services/hedera'
 import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
@@ -101,7 +102,8 @@ gateRouter.post('/entry', async (req, res) => {
       })
     }
 
-    // Mint parking NFT on Hedera (if configured)
+    // WRITE-AHEAD: Mint parking NFT on Hedera FIRST (authoritative proof of entry)
+    // The on-chain NFT is the leading indicator — if DB write fails, the NFT proves the car is parked.
     let tokenId: number | undefined
     let txHash: string | undefined
     if (isHederaEnabled()) {
@@ -109,17 +111,37 @@ gateRouter.post('/entry', async (req, res) => {
         const result = await mintParkingNFTOnHedera(plate, lotId)
         tokenId = result.tokenId
         txHash = result.txHash
+        console.log(`[entry] NFT minted on Hedera: serial=${tokenId}, tx=${txHash}`)
       } catch (err) {
         console.error('Hedera NFT minting failed (continuing with off-chain):', err)
       }
     }
 
-    // Create session in DB
-    const session = await db.createSession({
-      plateNumber: plate,
-      lotId,
-      tokenId,
-    })
+    // Create session in DB (includes Hedera serial if minted)
+    let session
+    try {
+      session = await db.createSession({
+        plateNumber: plate,
+        lotId,
+        tokenId,
+      })
+    } catch (dbErr) {
+      // DB write failed but NFT was minted — session exists on-chain and can be recovered.
+      // Log a warning and still open the gate (the NFT is the proof of entry).
+      console.error('[entry] DB write failed after NFT mint:', dbErr)
+      if (tokenId) {
+        console.warn(`[entry] Session recoverable via Hedera NFT serial=${tokenId}`)
+        return res.status(201).json({
+          warning: 'Session recorded on-chain only — DB temporarily unavailable',
+          hederaSerial: tokenId,
+          txHash,
+          plate,
+          lotId,
+          ...(alprResult && { alpr: alprResult }),
+        })
+      }
+      throw dbErr // No NFT either — nothing to recover from, propagate error
+    }
 
     // Notify via WebSocket
     notifyGate(lotId, { type: 'entry', session, plate })
@@ -133,6 +155,7 @@ gateRouter.post('/entry', async (req, res) => {
 })
 
 // POST /api/gate/exit — Process vehicle exit + trigger payment
+// Resilience: if DB is unreachable, falls back to Hedera Mirror Node for session lookup.
 gateRouter.post('/exit', async (req, res) => {
   try {
     const { plateNumber, image, lotId } = req.body as GateExitRequest
@@ -150,59 +173,105 @@ gateRouter.post('/exit', async (req, res) => {
 
     const { plate, alprResult } = resolved
 
-    // Find active session
-    const session = await db.getActiveSession(plate)
-    if (!session) {
-      return res.status(404).json({ error: 'No active session found', plateNumber: plate })
+    // ---- Phase 1: Find session + lot + calculate fee ----
+    // Try DB first (fast path), fall back to Mirror Node if DB is down.
+
+    let session: import('@parker/core').SessionRecord | null = null
+    let lot: import('@parker/core').Lot | null = null
+    let durationMinutes: number
+    let fee: number
+    let usingFallback = false
+    let fallbackSerial: number | undefined
+
+    try {
+      // Fast path: DB lookup
+      session = await db.getActiveSession(plate)
+      if (!session) {
+        return res.status(404).json({ error: 'No active session found', plateNumber: plate })
+      }
+
+      if (session.lotId !== lotId) {
+        return res.status(400).json({
+          error: 'Lot mismatch: vehicle is parked in a different lot',
+          parkedInLot: session.lotId,
+          requestedLot: lotId,
+        })
+      }
+
+      lot = await db.getLot(lotId)
+      if (!lot) {
+        return res.status(404).json({ error: 'Lot not found' })
+      }
+
+      const durationMs = Date.now() - session.entryTime.getTime()
+      durationMinutes = durationMs / (1000 * 60)
+      fee = calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined)
+    } catch (dbError) {
+      // DB unreachable — try Mirror Node fallback
+      console.warn('[exit] DB lookup failed, attempting Mirror Node fallback:', (dbError as Error).message)
+
+      if (!isHederaEnabled()) {
+        return res.status(503).json({ error: 'Database unavailable and Hedera fallback not configured' })
+      }
+
+      const nftSession = await findActiveSessionOnHedera(plate)
+      if (!nftSession) {
+        return res.status(404).json({
+          error: 'No active session found (checked Mirror Node fallback)',
+          plateNumber: plate,
+        })
+      }
+
+      if (nftSession.lotId !== lotId) {
+        return res.status(400).json({
+          error: 'Lot mismatch: vehicle is parked in a different lot',
+          parkedInLot: nftSession.lotId,
+          requestedLot: lotId,
+        })
+      }
+
+      // Try to get lot config from DB (might work for lot reads even if session reads failed)
+      try {
+        lot = await db.getLot(lotId)
+      } catch {
+        // Lot config also unavailable — use minimal defaults
+        console.warn('[exit] Lot config unavailable, using fallback defaults')
+      }
+
+      const entryTimeMs = nftSession.entryTime * 1000
+      durationMinutes = (Date.now() - entryTimeMs) / (1000 * 60)
+      fee = lot
+        ? calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined)
+        : 0 // Can't calculate fee without lot config — let payment handle it
+
+      usingFallback = true
+      fallbackSerial = nftSession.serial
+      console.log(`[exit] Mirror Node fallback: found NFT serial=${nftSession.serial}, duration=${Math.round(durationMinutes)}m`)
     }
 
-    // Validate the exit lot matches the session's lot
-    if (session.lotId !== lotId) {
-      return res.status(400).json({
-        error: 'Lot mismatch: vehicle is parked in a different lot',
-        parkedInLot: session.lotId,
-        requestedLot: lotId,
-      })
-    }
+    const currency = lot?.currency || 'USD'
+    const sessionId = session?.id || `hedera-${fallbackSerial}`
 
-    // Get lot pricing
-    const lot = await db.getLot(lotId)
-    if (!lot) {
-      return res.status(404).json({ error: 'Lot not found' })
-    }
+    // ---- Phase 2: Payment ----
 
-    // Calculate fee in the lot's local currency
-    const durationMs = Date.now() - session.entryTime.getTime()
-    const durationMinutes = durationMs / (1000 * 60)
-    const fee = calculateFee(
-      durationMinutes,
-      lot.ratePerHour,
-      lot.billingMinutes,
-      lot.maxDailyFee ?? undefined,
-    )
-
-    // If client hasn't paid yet, build payment options and return them
     if (!(req as any).paymentVerified) {
-      // Build payment options based on lot's accepted methods
       const paymentOptions: PaymentOptions = {}
 
-      // x402 crypto rail
-      if (lot.paymentMethods.includes('x402')) {
+      if (lot?.paymentMethods.includes('x402') ?? true) {
         try {
-          const stablecoinAmount = convertToStablecoin(fee, lot.currency)
+          const stablecoinAmount = convertToStablecoin(fee, currency)
           paymentOptions.x402 = {
             amount: stablecoinAmount.toFixed(6),
             token: X402_STABLECOIN,
             network: X402_NETWORK,
-            receiver: lot.operatorWallet,
+            receiver: lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || '',
           }
         } catch (err) {
-          console.warn(`[x402] FX conversion failed for ${lot.currency}:`, err)
+          console.warn(`[x402] FX conversion failed for ${currency}:`, err)
         }
       }
 
-      // Stripe credit card rail
-      if (lot.paymentMethods.includes('stripe') && isStripeEnabled()) {
+      if (!usingFallback && lot?.paymentMethods.includes('stripe') && isStripeEnabled() && session) {
         try {
           const { checkoutUrl } = await createParkingCheckout(session, lot, fee)
           paymentOptions.stripe = { checkoutUrl }
@@ -211,70 +280,88 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
 
-      // Set x402 payment info for the middleware (if x402 is available)
       if (paymentOptions.x402) {
         res.locals.paymentRequired = {
           amount: paymentOptions.x402.amount,
-          description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot.name}`,
+          description: `Parking fee: ${Math.round(durationMinutes)} minutes at ${lot?.name || lotId}`,
           plateNumber: plate,
-          sessionId: session.id,
+          sessionId,
         } satisfies PaymentRequired
       }
 
-      // Return fee info + payment options without closing the session
       return res.json({
-        session,
+        session: session || { id: sessionId, plateNumber: plate, lotId, entryTime: new Date((fallbackSerial ? Date.now() - durationMinutes * 60000 : Date.now())), status: 'active' as const },
         fee,
-        currency: lot.currency,
+        currency,
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
+        ...(usingFallback && { fallback: 'hedera-mirror-node', hederaSerial: fallbackSerial }),
         ...(alprResult && { alpr: alprResult }),
       })
     }
 
-    // Payment verified (x402 path) — end the session
+    // ---- Phase 3: Payment verified — close session ----
 
-    // Burn parking NFT on Hedera (if configured and session has a token)
-    if (isHederaEnabled() && session.tokenId) {
+    // Burn parking NFT on Hedera
+    const serialToBurn = session?.tokenId || fallbackSerial
+    if (isHederaEnabled() && serialToBurn) {
       try {
-        await endParkingSessionOnHedera(session.tokenId)
+        await endParkingSessionOnHedera(serialToBurn)
       } catch (err) {
         console.error('Hedera NFT burn failed (continuing with off-chain):', err)
       }
     }
 
-    // End session in DB
-    const closedSession = await db.endSession(plate, {
-      feeAmount: fee,
-      feeCurrency: lot.currency,
-    })
-    if (!closedSession) {
-      return res.status(409).json({ error: 'Session already closed or not found', plateNumber: plate })
+    // End session in DB (skip if using fallback and DB is down)
+    let closedSession = null
+    if (!usingFallback) {
+      closedSession = await db.endSession(plate, {
+        feeAmount: fee,
+        feeCurrency: currency,
+      })
+      if (!closedSession) {
+        return res.status(409).json({ error: 'Session already closed or not found', plateNumber: plate })
+      }
+    } else {
+      // Try DB close, but don't block the gate if it fails
+      try {
+        closedSession = await db.endSession(plate, {
+          feeAmount: fee,
+          feeCurrency: currency,
+        })
+      } catch (dbErr) {
+        console.warn('[exit] DB close failed during fallback — NFT burned, gate will open:', (dbErr as Error).message)
+      }
     }
 
-    // Notify via WebSocket
-    notifyGate(lotId, {
-      type: 'exit',
-      session: closedSession,
-      plate,
-      fee,
-      currency: lot.currency,
-      paymentMethod: 'x402',
-    })
-    notifyDriver(plate, {
-      type: 'session_ended',
-      session: closedSession,
-      fee,
-      currency: lot.currency,
-      durationMinutes: Math.round(durationMinutes),
-      paymentMethod: 'x402',
-    })
+    // Notify via WebSocket (best-effort)
+    try {
+      notifyGate(lotId, {
+        type: 'exit',
+        session: closedSession || { id: sessionId, plateNumber: plate, lotId },
+        plate,
+        fee,
+        currency,
+        paymentMethod: 'x402',
+      })
+      notifyDriver(plate, {
+        type: 'session_ended',
+        session: closedSession || { id: sessionId, plateNumber: plate, lotId },
+        fee,
+        currency,
+        durationMinutes: Math.round(durationMinutes),
+        paymentMethod: 'x402',
+      })
+    } catch {
+      // WS notifications are best-effort
+    }
 
     res.json({
-      session: closedSession,
+      session: closedSession || { id: sessionId, plateNumber: plate, lotId, status: 'completed' },
       fee,
-      currency: lot.currency,
+      currency,
       durationMinutes: Math.round(durationMinutes),
+      ...(usingFallback && { fallback: 'hedera-mirror-node' }),
       ...(alprResult && { alpr: alprResult }),
     })
   } catch (error) {
