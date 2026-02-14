@@ -9,6 +9,7 @@ export default function OperatorDashboard() {
   const [status, setStatus] = useState<LotStatus | null>(null)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [apiError, setApiError] = useState(false)
 
   useEffect(() => {
     if (!lotId) {
@@ -23,6 +24,7 @@ export default function OperatorDashboard() {
       .then(([lotStatus, activeSessions]) => {
         setStatus(lotStatus)
         setSessions(activeSessions)
+        setApiError(!lotStatus && activeSessions.length === 0)
       })
       .finally(() => setLoading(false))
 
@@ -32,8 +34,15 @@ export default function OperatorDashboard() {
         getLotStatus(lotId).catch(() => null),
         getActiveSessionsByLot(lotId).catch(() => []),
       ]).then(([lotStatus, activeSessions]) => {
-        setStatus(lotStatus)
-        setSessions(activeSessions)
+        if (lotStatus) {
+          setStatus(lotStatus)
+          setApiError(false)
+        } else {
+          setApiError(true)
+        }
+        if (activeSessions.length > 0 || lotStatus) {
+          setSessions(activeSessions)
+        }
       })
     }, 15_000)
 
@@ -60,6 +69,12 @@ export default function OperatorDashboard() {
   return (
     <div className="p-6">
       <h1 className="mb-6 text-2xl font-bold text-parker-800">Operator Dashboard</h1>
+
+      {apiError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          API unavailable — showing last known data. Retrying automatically...
+        </div>
+      )}
 
       {loading ? (
         <div className="grid animate-pulse gap-4 sm:grid-cols-2 lg:grid-cols-4">

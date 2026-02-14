@@ -400,15 +400,138 @@ WS     /ws/gate/:lotId               — Real-time gate events (entry, exit with
 WS     /ws/driver/:plate             — Real-time session updates for driver
 ```
 
-## 11. Security Considerations
+## 11. Resilience Architecture: On-Chain vs Off-Chain
 
-- **Plate privacy:** Plate numbers stored as hashes on-chain; plaintext only off-chain with access control
+### 11.1 Problem: Centralized Bottleneck at the Gate
+
+Parker's MVP exit flow depends on the PostgreSQL database as the source of truth for session lookup, fee calculation, and session closure. The Hedera NFT is minted on entry and burned on exit, but both operations are **fire-and-forget side effects** — if Hedera is down, the system continues; if the DB is down, gates stop working.
+
+This mirrors the exact failure mode of today's centralized parking apps: a server outage during peak hours means cars can't exit. The blockchain layer, as currently integrated, doesn't help with this.
+
+### 11.2 Industry Pattern: Hybrid Architecture
+
+Research into Hedera-based ticketing (MINGO Tickets, LimeChain reference implementations) and Hedera's own ["Pragmatic Blockchain Design Patterns"](https://hedera.com/blog/pragmatic-blockchain-design-patterns-integrating-blockchain-into-business-processes/) reveals a consistent pattern:
+
+- **Centralized DB is the fast operational path** — real-time lookups, fee calculation, session management
+- **Blockchain is the trust/verification layer** — immutable proof of ownership, anti-fraud, audit trail
+- **Mirror Node is the fallback read path** — Hedera's Mirror Node REST API provides cost-effective, high-throughput queries of all on-chain state without hitting consensus nodes
+
+MINGO explicitly describes Hedera as an "invisible trust layer operating in the background" while Stripe handles payments and their own platform handles ticket lifecycle. This is the same pattern Parker currently uses.
+
+The key difference between event ticketing and parking: **at a concert, a 30-second scan delay is annoying; at a parking gate, it blocks every car behind you.** Parking demands a higher resilience bar.
+
+### 11.3 Resilience Strategy
+
+Parker's resilience design uses three layers:
+
+```
+Layer 1 (default):   PostgreSQL — fast path for all operations
+Layer 2 (fallback):  Hedera Mirror Node — read-only fallback when DB is unreachable
+Layer 3 (offline):   Gate-side cache — local session cache from WebSocket events
+```
+
+#### Layer 1: DB as Fast Path (current — no change)
+
+The PostgreSQL database remains the primary operational store. It handles session CRUD, fee calculation, lot config, and driver lookup. This is the standard pattern used by MINGO and recommended by Hedera.
+
+#### Layer 2: Mirror Node Fallback
+
+When the DB is unreachable, the exit flow falls back to Hedera's Mirror Node REST API:
+
+```
+Normal exit:
+  DB.getActiveSession(plate) → fee calc → payment → DB.endSession() → Hedera.burn()
+
+DB-down exit:
+  MirrorNode.getNFTByPlate(plate) → verify NFT exists + read metadata
+  → fee calc from NFT metadata (entry time, lot ID) + lot config cache
+  → payment → Hedera.burn() → queue DB sync for when it recovers
+```
+
+The Mirror Node query verifies:
+1. **NFT existence** — proves the car entered and has an active parking session
+2. **NFT metadata** — contains `plateHash` (keccak256), lot ID, and entry timestamp (enough to calculate the fee)
+3. **NFT not burned** — confirms the session hasn't already been closed
+
+**Privacy-compatible lookup:** The gate already knows the plate (from ALPR scan). It computes `hashPlate(plate)` and scans active NFTs for a matching `plateHash`. This works without ever storing the raw plate on-chain (see §12.1).
+
+The entry route mints the Hedera NFT **before writing to the DB** (write-ahead), so the on-chain record is always the leading indicator. If the DB write fails after a successful mint, the gate still opens and the session is recoverable from the NFT.
+
+#### Layer 3: Gate-Side Session Cache
+
+The gate app already receives WebSocket events for every entry and exit. By caching these locally:
+
+- The gate knows which plates are currently parked without querying anything
+- Fee calculation can use cached lot config (rate, billing increment, max daily)
+- If both DB and Mirror Node are unreachable, the gate can still validate exits and calculate fees
+- Sessions closed offline are queued and synced when connectivity returns
+
+This gives the gate **offline-capable exit validation** — the strongest resilience guarantee.
+
+### 11.4 Entry Order: Write-Ahead NFT
+
+Entry order (implemented):
+```
+1. Hedera: mint NFT (contains plateHash, lot ID, entry time in metadata)
+2. DB: create session record (includes Hedera serial number)
+3. If DB write fails: session still exists on-chain — gate opens, session is recoverable
+```
+
+With write-ahead, the Hedera NFT is the authoritative proof of entry. The DB is a fast index of on-chain state, not the other way around. If the DB loses a record, the on-chain NFT proves the car is parked.
+
+### 11.5 Implementation Status
+
+| Component | Effort | Impact | Priority | Status |
+|-----------|--------|--------|----------|--------|
+| Write-ahead NFT (entry order swap) | Low | High — enables all fallback paths | P0 | **Done** |
+| Mirror Node fallback in exit route | Medium | High — DB-down resilience | P1 | **Done** |
+| Gate-side session cache | Medium | Very high — offline capability | P1 | **Done** |
+| DB sync queue (reconciliation) | Medium | Medium — data consistency after outage | P2 | Planned |
+| Health-check circuit breaker (auto-switch to fallback) | Low | Medium — smooth degradation | P2 | Planned |
+
+## 12. Security & Privacy
+
+### 12.1 On-Chain Privacy Model
+
+The Hedera Mirror Node is a **public REST API** — anyone can query all NFTs in a token collection and read their metadata. This creates a privacy risk: if plate numbers were stored in plaintext, anyone could build a complete parking location history for any vehicle.
+
+**Design principle: hash on-chain, plaintext off-chain.**
+
+```
+On-chain (Hedera — public):
+  NFT metadata = { "plateHash": "0xa1b2c3...", "lotId": "lot-01", "entryTime": 1707840000 }
+
+Off-chain (PostgreSQL — access-controlled):
+  sessions = { plate_number: "1234567", hedera_serial: 42, lot_id: "lot-01", ... }
+```
+
+The plate number is hashed using `keccak256` (via `hashPlate()` from `@parker/core`) before being written to the NFT metadata. This is a **one-way hash** — a third party scanning the Mirror Node sees only opaque hex strings, not plate numbers. They cannot:
+- Reverse a hash to get a plate number
+- Link two parking sessions to the same vehicle (without already knowing the plate)
+- Build a location history for a driver
+
+The API server correlates NFTs to sessions by computing `hashPlate(plate)` and matching it against the on-chain `plateHash`. This works for the Mirror Node fallback path (§11.3) because the gate already knows the plate (from ALPR) and can hash it to look up the matching NFT.
+
+**What remains public on-chain:**
+- `lotId` — an internal identifier (e.g., "lot-01"), not a street address. An observer can see how many sessions a lot has, but not who parked there.
+- `entryTime` — timestamp of when a session started
+- Mint/burn transaction history — proves a session existed and when it ended
+
+**What is NOT on-chain:**
+- Plate numbers (only hashes)
+- Driver identity, wallet address (not in NFT metadata)
+- Fee amounts, payment details
+- Car make/model, country code
+
+### 12.2 Other Security Considerations
+
 - **Wallet signatures:** All state changes require wallet signature from authorized parties
 - **Lot authorization:** Only whitelisted lot operator wallets can mint/close sessions
 - **Rate limiting:** ALPR endpoint rate-limited to prevent abuse
 - **Data retention:** Session data retained per local regulations (GDPR, CCPA, or equivalent)
+- **Off-chain access control:** PostgreSQL contains PII (plates, wallet addresses); secured via network isolation and authentication
 
-## 12. MVP Scope (Phase 1)
+## 13. MVP Scope (Phase 1)
 
 **In scope:**
 - [ ] Driver registration (web app + wallet connect)
@@ -421,6 +544,7 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 - [ ] Deploy on Base Sepolia (testnet)
 
 **Out of scope (Phase 2+):**
+- Resilience: DB sync queue, health-check circuit breaker (see §11 — layers 1-3 are implemented)
 - Physical gate hardware integration
 - Multi-lot network
 - Insurance verification
@@ -430,7 +554,7 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 - Native mobile app (iOS/Android)
 - Live FX rate feeds (CoinGecko / Circle API)
 
-## 13. Development Plan
+## 14. Development Plan
 
 | Phase | Duration | Deliverables |
 |-------|----------|-------------|
@@ -440,12 +564,13 @@ WS     /ws/driver/:plate             — Real-time session updates for driver
 | 4. Payments | Week 7 | x402 integration, fee calculation, settlement |
 | 5. Polish & Test | Week 8 | E2E testing, UI polish, documentation |
 
-## 14. Open Questions
+## 15. Open Questions
 
 1. ~~**Which chain?**~~ Resolved: dual-chain — Hedera (parking NFTs via HTS) + Base Sepolia (driver registry + x402 payments)
 2. ~~**Currency conversion:**~~ Resolved: each lot sets its own currency; Stripe charges natively, x402 converts via FX rates
-3. **Unregistered cars:** Refuse entry? Allow with traditional ticket fallback?
-4. **Insurance verification:** API to check valid insurance by plate? (country-specific registries)
-5. **Multi-plate:** Drivers with multiple vehicles?
-6. **Disputes:** What happens if driver claims wrong charge? On-chain evidence helps but need a process
-7. **Live FX rates:** Replace static env var rates with CoinGecko / Circle API / oracle?
+3. ~~**DB single point of failure:**~~ Resolved: write-ahead NFT + Mirror Node fallback + gate-side cache implemented (§11). Remaining P2 items: DB sync queue + circuit breaker.
+4. **Unregistered cars:** Refuse entry? Allow with traditional ticket fallback?
+5. **Insurance verification:** API to check valid insurance by plate? (country-specific registries)
+6. **Multi-plate:** Drivers with multiple vehicles?
+7. **Disputes:** What happens if driver claims wrong charge? On-chain evidence helps but need a process
+8. **Live FX rates:** Replace static env var rates with CoinGecko / Circle API / oracle?

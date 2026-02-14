@@ -6,6 +6,7 @@ import { CameraFeed } from '@/components/CameraFeed'
 import { PlateResult } from '@/components/PlateResult'
 import { GateStatus } from '@/components/GateStatus'
 import { useGateSocket } from '@/hooks/useGateSocket'
+import { useSessionCache } from '@/hooks/useSessionCache'
 
 export default function GateView() {
   const [mode, setMode] = useState<'entry' | 'exit'>('entry')
@@ -14,15 +15,22 @@ export default function GateView() {
 
   const lotId = process.env.NEXT_PUBLIC_LOT_ID || null
 
+  // Layer 3 resilience: local session cache from WebSocket events
+  const { addEntry, removeExit, getSession, sessionCount } = useSessionCache()
+
   // Real-time gate events via WebSocket
   const handleGateEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
     if (event.type === 'entry') {
       const plate = event.plate as string
       if (plate) setLastPlate(plate)
+      // Cache the entry for offline resilience
+      addEntry(event)
     }
     if (event.type === 'exit') {
       const plate = event.plate as string
       if (plate) setLastPlate(plate)
+      // Remove from local cache
+      removeExit(event)
       // Payment confirmed (from Stripe webhook or x402) — open the gate
       setGateOpen(true)
       setTimeout(() => setGateOpen(false), 5000)
@@ -37,7 +45,7 @@ export default function GateView() {
         waitingForPayment: false,
       })
     }
-  }, [])
+  }, [addEntry, removeExit])
 
   const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent)
 
@@ -99,7 +107,31 @@ export default function GateView() {
       }
     } catch (error) {
       console.error('Gate operation failed:', error)
-      setLastResult({ success: false, message: 'Network error' })
+
+      // OFFLINE FALLBACK: handle API-unreachable scenarios
+      if (mode === 'exit') {
+        // Exit: use local session cache to validate and open the gate
+        const cached = getSession(plate)
+        if (cached) {
+          const durationMin = Math.round((Date.now() - cached.entryTime) / 60_000)
+          setLastResult({
+            success: true,
+            message: `[Offline] Session found in local cache — ${durationMin}min parked. Gate opening (payment deferred).`,
+            waitingForPayment: false,
+          })
+          setGateOpen(true)
+          setTimeout(() => setGateOpen(false), 5000)
+          removeExit({ plate })
+          return
+        }
+        setLastResult({ success: false, message: 'Network error — no cached session found for this plate' })
+      } else {
+        // Entry: can't validate driver/lot remotely — warn operator
+        setLastResult({
+          success: false,
+          message: 'Network error — cannot verify driver registration. Check connectivity and retry.',
+        })
+      }
     }
   }
 
@@ -112,6 +144,14 @@ export default function GateView() {
             className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-gray-300'}`}
             title={wsConnected ? 'Connected' : 'Disconnected'}
           />
+          {sessionCount > 0 && (
+            <span
+              className="rounded-full bg-parker-100 px-2 py-0.5 text-xs font-medium text-parker-700"
+              title={`${sessionCount} session(s) cached locally for offline resilience`}
+            >
+              {sessionCount} cached
+            </span>
+          )}
         </div>
 
         {/* Mode toggle */}
