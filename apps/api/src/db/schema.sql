@@ -36,6 +36,14 @@ CREATE INDEX idx_sessions_plate ON sessions(plate_number);
 CREATE INDEX idx_sessions_lot ON sessions(lot_id);
 CREATE INDEX idx_sessions_status ON sessions(status);
 
+-- Prevent duplicate active sessions for the same plate (race-condition guard)
+CREATE UNIQUE INDEX idx_sessions_one_active_per_plate
+  ON sessions(plate_number) WHERE status = 'active';
+
+-- Enforce valid session statuses
+ALTER TABLE sessions ADD CONSTRAINT chk_session_status
+  CHECK (status IN ('active', 'completed', 'cancelled'));
+
 -- Parking lot configuration
 CREATE TABLE lots (
     id              VARCHAR(50) PRIMARY KEY,

@@ -37,7 +37,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO drivers (wallet, plate_number, country_code, car_make, car_model)
 VALUES (
     '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-    '12-345-67',
+    '1234567',
     'IL',
     'Toyota',
     'Corolla'

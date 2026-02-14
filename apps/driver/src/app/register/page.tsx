@@ -47,7 +47,8 @@ export default function Register() {
 
       // Step 2: Register off-chain via API
       setStep('api')
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/drivers/register`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+      const res = await fetch(`${apiUrl}/api/drivers/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import type { GateEntryRequest, GateExitRequest } from '@parker/core'
-import { calculateFee } from '@parker/core'
+import { calculateFee, normalizePlate } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
 
 import { db } from '../db'
@@ -23,7 +23,7 @@ async function resolvePlate(
   image?: string,
 ): Promise<{ plate: string; alprResult?: { raw: string; confidence: number } } | null> {
   if (plateNumber) {
-    return { plate: plateNumber }
+    return { plate: normalizePlate(plateNumber) }
   }
 
   if (image) {
@@ -47,6 +47,10 @@ gateRouter.post('/entry', async (req, res) => {
   try {
     const { plateNumber, image, lotId } = req.body as GateEntryRequest
 
+    if (!lotId) {
+      return res.status(400).json({ error: 'lotId is required' })
+    }
+
     const resolved = await resolvePlate(plateNumber, image)
     if (!resolved) {
       return res.status(400).json({
@@ -56,10 +60,22 @@ gateRouter.post('/entry', async (req, res) => {
 
     const { plate, alprResult } = resolved
 
+    // Validate lot exists
+    const lot = await db.getLot(lotId)
+    if (!lot) {
+      return res.status(404).json({ error: 'Lot not found', lotId })
+    }
+
     // Check if driver is registered
     const driver = await db.getDriverByPlate(plate)
     if (!driver) {
       return res.status(404).json({ error: 'Driver not registered', plateNumber: plate })
+    }
+
+    // Check lot capacity
+    const activeSessions = await db.getActiveSessionsByLot(lotId)
+    if (lot.capacity && activeSessions.length >= lot.capacity) {
+      return res.status(409).json({ error: 'Lot is full', lotId, capacity: lot.capacity })
     }
 
     // Check if already parked
@@ -107,6 +123,10 @@ gateRouter.post('/exit', async (req, res) => {
   try {
     const { plateNumber, image, lotId } = req.body as GateExitRequest
 
+    if (!lotId) {
+      return res.status(400).json({ error: 'lotId is required' })
+    }
+
     const resolved = await resolvePlate(plateNumber, image)
     if (!resolved) {
       return res.status(400).json({
@@ -120,6 +140,15 @@ gateRouter.post('/exit', async (req, res) => {
     const session = await db.getActiveSession(plate)
     if (!session) {
       return res.status(404).json({ error: 'No active session found', plateNumber: plate })
+    }
+
+    // Validate the exit lot matches the session's lot
+    if (session.lotId !== lotId) {
+      return res.status(400).json({
+        error: 'Lot mismatch: vehicle is parked in a different lot',
+        parkedInLot: session.lotId,
+        requestedLot: lotId,
+      })
     }
 
     // Get lot pricing
@@ -171,6 +200,9 @@ gateRouter.post('/exit', async (req, res) => {
 
     // End session in DB
     const closedSession = await db.endSession(plate, fee)
+    if (!closedSession) {
+      return res.status(409).json({ error: 'Session already closed or not found', plateNumber: plate })
+    }
 
     // Notify via WebSocket
     notifyGate(lotId, { type: 'exit', session: closedSession, plate, fee })
@@ -259,13 +291,36 @@ gateRouter.put('/lot/:lotId', async (req, res) => {
   try {
     const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee } = req.body
 
+    // Parse numeric fields — allow 0 as a valid value (only skip if not provided)
+    const parseOptionalInt = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseInt(String(v)) : undefined
+    const parseOptionalFloat = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseFloat(String(v)) : undefined
+
+    const parsedCapacity = parseOptionalInt(capacity)
+    const parsedRate = parseOptionalFloat(ratePerHour)
+    const parsedBilling = parseOptionalInt(billingMinutes)
+    const parsedMaxFee = parseOptionalFloat(maxDailyFee)
+
+    // Reject NaN values
+    if (parsedCapacity !== undefined && isNaN(parsedCapacity)) {
+      return res.status(400).json({ error: 'capacity must be a valid number' })
+    }
+    if (parsedRate !== undefined && isNaN(parsedRate)) {
+      return res.status(400).json({ error: 'ratePerHour must be a valid number' })
+    }
+    if (parsedBilling !== undefined && isNaN(parsedBilling)) {
+      return res.status(400).json({ error: 'billingMinutes must be a valid number' })
+    }
+    if (parsedMaxFee !== undefined && isNaN(parsedMaxFee)) {
+      return res.status(400).json({ error: 'maxDailyFee must be a valid number' })
+    }
+
     const lot = await db.updateLot(req.params.lotId, {
       name,
       address,
-      capacity: capacity ? parseInt(capacity) : undefined,
-      ratePerHour: ratePerHour ? parseFloat(ratePerHour) : undefined,
-      billingMinutes: billingMinutes ? parseInt(billingMinutes) : undefined,
-      maxDailyFee: maxDailyFee ? parseFloat(maxDailyFee) : undefined,
+      capacity: parsedCapacity,
+      ratePerHour: parsedRate,
+      billingMinutes: parsedBilling,
+      maxDailyFee: parsedMaxFee,
     })
 
     if (!lot) {

@@ -116,7 +116,11 @@ This starts:
 The database is auto-seeded with:
 - **Parker HQ** (lot-01) — 50 spaces, 3.30 USDC/hr, 15min billing, 25 USDC daily cap
 - **Azrieli Center** (lot-02) — 200 spaces, 5.00 USDC/hr, 15min billing, 35 USDC daily cap
-- A test driver (plate `12-345-67`, Toyota Corolla)
+- A test driver (plate `1234567` / `12-345-67`, Toyota Corolla)
+
+> Plates are stored in normalized form (digits only, no dashes). The API normalizes
+> all incoming plates automatically, so `12-345-67`, `12 345 67`, and `1234567` all
+> resolve to the same driver.
 
 ### Smart Contracts
 
@@ -207,6 +211,20 @@ parker-app/
 | `/ws/gate/:lotId` | Real-time gate events (entry/exit) |
 | `/ws/driver/:plate` | Real-time session updates for driver |
 
+## Validation & Safety
+
+The API enforces the following invariants:
+
+- **Plate normalization** — all plates are stripped of dashes/spaces before storage and lookup, so format differences never cause mismatches
+- **Lot validation on entry** — entry is rejected if the lot doesn't exist, if it's full (capacity check), or if the driver is unregistered
+- **Lot mismatch on exit** — a car can only exit from the lot it entered; mismatched `lotId` returns `400`
+- **One active session per plate** — enforced at both application level and via a PostgreSQL partial unique index (`WHERE status = 'active'`)
+- **Fee guardrails** — `calculateFee` handles zero/negative duration (minimum 1 billing increment), zero rate (fee = 0), and division-by-zero on billing interval (defaults to 15 min). Fees are rounded to 6 decimal places (USDC precision) and capped by `maxDailyFee`
+- **Payment-before-close** — the exit route returns `402 Payment Required` without closing the session; the session is only closed after payment proof is provided
+- **Input validation** — required fields are checked on all mutation endpoints; numeric lot settings reject `NaN`; session history `limit`/`offset` are sanitized and capped
+- **Duplicate registration** — returns `409` with a clear error message instead of a generic 500
+- **Status constraints** — `sessions.status` is enforced via `CHECK` constraint (`active`, `completed`, `cancelled`)
+
 ## Status
 
 🚧 **MVP in active development**
@@ -218,8 +236,11 @@ parker-app/
 - [x] x402 payment flow (middleware + client)
 - [x] Real-time WebSocket events
 - [x] Database schema + seed data
+- [x] Input validation, fee guardrails, race-condition guards
+- [x] End-to-end smoke testing
 - [ ] Deploy contracts to Base Sepolia
-- [ ] End-to-end testing
+- [ ] On-chain payment verification (x402 signature check)
+- [ ] Wallet authentication (SIWE / EIP-4361)
 - [ ] Push notifications
 - [ ] Physical gate hardware integration (Phase 2)
 

@@ -50,7 +50,7 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
         reader.readAsDataURL(blob)
       })
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
       const res = await fetch(`${apiUrl}/api/gate/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

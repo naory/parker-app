@@ -48,6 +48,11 @@ export function formatFee(amountUsdc: bigint): string {
 /**
  * Calculate parking fee.
  * fee = ceil(durationMinutes / billingIncrement) * ratePerIncrement
+ *
+ * Guards:
+ * - Negative or zero duration → minimum 1 increment
+ * - Zero or negative billingIncrement → defaults to 15
+ * - Zero or negative rate → fee = 0
  */
 export function calculateFee(
   durationMinutes: number,
@@ -55,11 +60,15 @@ export function calculateFee(
   billingIncrementMinutes: number = 15,
   maxDailyFeeUsdc?: number,
 ): number {
-  const increments = Math.ceil(durationMinutes / billingIncrementMinutes)
-  const ratePerIncrement = (ratePerHourUsdc / 60) * billingIncrementMinutes
-  const fee = increments * ratePerIncrement
+  if (ratePerHourUsdc <= 0) return 0
+  if (billingIncrementMinutes <= 0) billingIncrementMinutes = 15
 
-  if (maxDailyFeeUsdc !== undefined) {
+  // At least 1 increment (entering and immediately exiting still costs one unit)
+  const increments = Math.max(1, Math.ceil(durationMinutes / billingIncrementMinutes))
+  const ratePerIncrement = (ratePerHourUsdc / 60) * billingIncrementMinutes
+  const fee = Math.round(increments * ratePerIncrement * 1_000_000) / 1_000_000 // round to 6 dp
+
+  if (maxDailyFeeUsdc !== undefined && maxDailyFeeUsdc > 0) {
     return Math.min(fee, maxDailyFeeUsdc)
   }
   return fee
