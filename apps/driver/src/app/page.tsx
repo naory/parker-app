@@ -47,7 +47,7 @@ export default function Dashboard() {
     }
   }, [])
 
-  useParkerSocket(plate, handleSocketEvent, token)
+  const { connected: wsConnected } = useParkerSocket(plate, handleSocketEvent, token)
 
   // Avoid hydration mismatch — wallet state is only available on client
   if (!mounted) {
@@ -73,10 +73,18 @@ export default function Dashboard() {
   return (
     <div className="mx-auto max-w-md p-6">
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl text-parker-800">
-          <span className="font-bold">Parker</span>{' '}
-          <span className="font-light text-parker-400">Driver</span>
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl text-parker-800">
+            <span className="font-bold">Parker</span>{' '}
+            <span className="font-light text-parker-400">Driver</span>
+          </h1>
+          {plate && (
+            <span
+              className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-gray-300'}`}
+              title={wsConnected ? 'Connected' : 'Disconnected'}
+            />
+          )}
+        </div>
         <WalletButton />
       </header>
 

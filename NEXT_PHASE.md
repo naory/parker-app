@@ -35,7 +35,7 @@
 | Lot grace period | ✅ Complete | `grace_period_minutes` setting, cars exiting within window not charged |
 | Rate limiting | ✅ Complete | Three tiers via express-rate-limit (strict/medium/standard), skipped in test env |
 | WebSocket authentication | ✅ Complete | JWT + gate API key auth on upgrade, skipped in dev mode |
-| API tests | ✅ Complete | 69 tests (vitest + supertest) covering auth, drivers, gate, sessions |
+| API tests | ✅ Complete | 84 tests (vitest + supertest) covering auth, drivers, gate, sessions, paymentWatcher |
 | x402 package tests | ✅ Complete | 18 tests for middleware + client + on-chain verify |
 
 ### ❌ Not Yet Implemented
@@ -118,6 +118,7 @@
 - **No real DB integration tests** — Current API tests use mocked DB. Add tests against a real PostgreSQL (testcontainers or in-memory).
 - **No contract integration tests** — Test the API → blockchain flow end-to-end with Hardhat network.
 - **Driver/Gate apps untested** — No component tests for React apps. Add vitest + React Testing Library.
+- ~~**paymentWatcher untested**~~ — ✅ 15 unit tests added (statement coverage 9.5% → 92%).
 
 ### DevOps
 

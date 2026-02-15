@@ -362,9 +362,9 @@ The API enforces the following invariants:
 - [x] Write-ahead NFT minting (mint before DB write on entry)
 - [x] Mirror Node fallback for exit when DB is unreachable
 - [x] Gate-side session cache for offline-capable exit validation
-- [ ] On-chain payment verification (x402 signature check)
+- [x] On-chain payment verification (x402 ERC20 transfer verification via viem)
 - [ ] Live FX rate feed (CoinGecko / Circle API) to replace static env var rates
-- [ ] Wallet authentication (SIWE / EIP-4361)
+- [x] Wallet authentication (SIWE / EIP-4361)
 - [ ] Push notifications
 - [ ] Physical gate hardware integration (Phase 2)
 
