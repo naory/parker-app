@@ -1,6 +1,6 @@
 # Parker — Next Phase Planning
 
-**Last updated:** 2026-02-14
+**Last updated:** 2026-02-15
 **Based on:** Code review of current implementation vs SPEC.md
 
 ---
@@ -16,7 +16,7 @@
 | Parking session management API | ✅ Complete | Entry/exit flow with fee calculation |
 | Gate API (entry, exit, scan, lot CRUD) | ✅ Complete | Full ALPR integration path |
 | ALPR package (normalize + recognize) | ✅ Complete | Google Cloud Vision, IL/US/EU formats |
-| x402 payment middleware | ✅ MVP | 402 flow implemented, but trusts `X-PAYMENT` header without on-chain verification |
+| x402 payment middleware | ✅ Complete | 402 flow with on-chain ERC20 transfer verification via viem |
 | x402 client (driver-side) | ✅ Complete | Auto-retry with payment proof |
 | Stripe payment integration | ✅ Complete | Checkout + webhook flow with NFT burn |
 | Hedera NFT minting/burning | ✅ Complete | HTS-based, with mirror node queries + AES-256-GCM encrypted metadata |
@@ -33,17 +33,16 @@
 | Gate exit QR code fallback | ✅ Complete | QR code with payment details when WebSocket is unreliable |
 | NFT viewer in parking history | ✅ Complete | Links to hashscan.io for each completed session |
 | Lot grace period | ✅ Complete | `grace_period_minutes` setting, cars exiting within window not charged |
+| Rate limiting | ✅ Complete | Three tiers via express-rate-limit (strict/medium/standard), skipped in test env |
+| WebSocket authentication | ✅ Complete | JWT + gate API key auth on upgrade, skipped in dev mode |
 | API tests | ✅ Complete | 69 tests (vitest + supertest) covering auth, drivers, gate, sessions |
-| x402 package tests | ✅ Complete | 10 tests for middleware + client |
+| x402 package tests | ✅ Complete | 18 tests for middleware + client + on-chain verify |
 
 ### ❌ Not Yet Implemented
 
 | Feature | SPEC Reference | Gap |
 |---------|---------------|-----|
 | On-chain driver registration sync | §4.1 | DB-only; register endpoint doesn't call `DriverRegistry.register()` on-chain |
-| Rate limiting | §11 | No rate limiting middleware on any endpoint |
-| WebSocket auth | §11 | Anyone can subscribe to `/ws/driver/:plate` — no token or session required |
-| x402 on-chain payment verification | §5 | Middleware trusts `X-PAYMENT` header without verifying tx on Base |
 
 ---
 
@@ -51,21 +50,13 @@
 
 ### P0 — Must Have (Security & Core Gaps)
 
-1. **On-chain driver registration sync**
+1. ~~**Rate limiting**~~ ✅ Three tiers via express-rate-limit
+2. ~~**x402 on-chain payment verification**~~ ✅ ERC20 transfer verification via viem
+3. ~~**WebSocket authentication**~~ ✅ JWT + gate API key auth on upgrade
+
+4. **On-chain driver registration sync**
    - Wire `POST /api/drivers/register` to also call `DriverRegistry.register()` on Base Sepolia
    - Implement event listener to sync on-chain state → DB
-
-2. **Rate limiting**
-   - Add express-rate-limit to ALPR scan endpoint and registration
-   - Prevent abuse of Google Cloud Vision API calls
-
-3. **x402 on-chain payment verification**
-   - Verify USDC transfer on Base before marking session as paid
-   - Replace current passthrough with actual tx confirmation
-
-4. **WebSocket authentication**
-   - Require signed token or JWT for WS connections
-   - Prevent unauthorized subscription to driver session events
 
 ### P1 — Should Have (Feature Completeness)
 
@@ -141,9 +132,9 @@
 | Risk | Severity | Status |
 |------|----------|--------|
 | ~~No wallet auth~~ | ~~Critical~~ | ✅ Fixed — EIP-4361 SIWE implemented |
-| WebSocket has no auth | **High** | ❌ Open — require signed token or JWT for WS connections |
-| ALPR endpoint has no rate limit | **High** | ❌ Open — add express-rate-limit |
-| x402 payment verification is MVP-only | **Critical** | ❌ Open — must verify tx on Base before closing session |
+| ~~WebSocket has no auth~~ | ~~High~~ | ✅ Fixed — JWT + gate API key auth on WS upgrade |
+| ~~ALPR endpoint has no rate limit~~ | ~~High~~ | ✅ Fixed — three-tier rate limiting via express-rate-limit |
+| ~~x402 payment verification is MVP-only~~ | ~~Critical~~ | ✅ Fixed — on-chain ERC20 transfer verification via viem |
 | Plate numbers in plaintext in DB | **Medium** | Acceptable for off-chain index (per SPEC §11), add access control on query endpoints |
 | NFT metadata encrypted on-chain | **Safe** | ✅ AES-256-GCM encryption prevents on-chain plate tracking |
 | Stripe webhook secret in env | **Low** | ✅ Verified via signature |
