@@ -13,6 +13,7 @@ import {
 } from '../services/hedera'
 import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
+import { addPendingPayment, removePendingPayment } from '../services/paymentWatcher'
 import type { PaymentRequired } from '@parker/x402'
 
 export const gateRouter = Router()
@@ -254,7 +255,7 @@ gateRouter.post('/exit', async (req, res) => {
 
     // ---- Phase 2: Payment ----
 
-    if (!(req as any).paymentVerified) {
+    if (fee > 0 && !(req as any).paymentVerified) {
       const paymentOptions: PaymentOptions = {}
 
       if (lot?.paymentMethods.includes('x402') ?? true) {
@@ -289,6 +290,21 @@ gateRouter.post('/exit', async (req, res) => {
         } satisfies PaymentRequired
       }
 
+      // Register pending payment for on-chain watcher (EIP-681 QR flow)
+      if (paymentOptions.x402) {
+        addPendingPayment({
+          plate,
+          lotId,
+          sessionId,
+          expectedAmount: paymentOptions.x402.amount,
+          receiverWallet: paymentOptions.x402.receiver,
+          fee,
+          feeCurrency: currency,
+          tokenId: session?.tokenId,
+          createdAt: Date.now(),
+        })
+      }
+
       // Notify driver that payment is required (so the driver app shows a payment prompt)
       try {
         notifyDriver(plate, {
@@ -316,6 +332,9 @@ gateRouter.post('/exit', async (req, res) => {
     }
 
     // ---- Phase 3: Payment verified — close session ----
+
+    // Remove from on-chain watcher to prevent double-close
+    removePendingPayment(sessionId)
 
     // Validate on-chain transfer details (when available)
     const transfer = (req as any).paymentTransfer as import('@parker/x402').ERC20TransferResult | undefined

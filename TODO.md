@@ -27,6 +27,9 @@
 - [ ] **On-chain driver registration sync**
   Wire `POST /api/drivers/register` to call `DriverRegistry.register()` on Base Sepolia. Currently DB-only.
 
+- [x] **Gate exit: payment method selection with EIP-681 wallet QR**
+  On exit, the gate screen prompts the driver to choose a payment method (credit card or crypto wallet). If crypto is chosen, generate an EIP-681 `ethereum:` URI QR code encoding the USDC transfer (receiver, amount, token contract). Driver scans with any EIP-681-compatible wallet (Coinbase, MetaMask, etc.) — no driver app or WebSocket required. API watches for the on-chain transfer to auto-close the session and open the gate.
+
 - [ ] **Gate camera integration**
   Connect CameraFeed component to device camera API. Implement real-time ALPR scanning loop.
 

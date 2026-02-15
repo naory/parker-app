@@ -9,8 +9,8 @@ import { PlateResult } from '@/components/PlateResult'
 import { GateStatus } from '@/components/GateStatus'
 import { useGateSocket } from '@/hooks/useGateSocket'
 import { useSessionCache } from '@/hooks/useSessionCache'
-
-const DRIVER_APP_URL = process.env.NEXT_PUBLIC_DRIVER_URL || 'http://localhost:3000'
+import { buildERC20TransferURI, USDC_ADDRESSES } from '@parker/core'
+import type { PaymentOptions } from '@parker/core'
 
 export default function GateView() {
   const [mode, setMode] = useState<'entry' | 'exit'>('entry')
@@ -78,7 +78,10 @@ export default function GateView() {
     waitingForPayment?: boolean
     plate?: string
     lotId?: string
+    paymentOptions?: PaymentOptions
   } | null>(null)
+
+  const [paymentMethod, setPaymentMethod] = useState<'none' | 'card' | 'crypto'>('none')
 
   async function handlePlateDetected(plate: string) {
     setLastPlate(plate)
@@ -107,14 +110,16 @@ export default function GateView() {
           })
         } else if (data.paymentOptions && Object.keys(data.paymentOptions).length > 0) {
           // Exit with pending payment — waiting for driver to pay
+          setPaymentMethod('none')
           setLastResult({
             success: true,
-            message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} — waiting for payment...`,
+            message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} — choose payment method`,
             fee: data.fee,
             currency: data.currency,
             waitingForPayment: true,
             plate,
             lotId,
+            paymentOptions: data.paymentOptions,
           })
         } else {
           // Exit with payment already completed
@@ -129,14 +134,16 @@ export default function GateView() {
         }
       } else if (res.status === 402 && data.fee !== undefined) {
         // HTTP 402 Payment Required — x402 middleware returned payment details
+        setPaymentMethod('none')
         setLastResult({
           success: true,
-          message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} (${data.durationMinutes}min) — waiting for payment...`,
+          message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} (${data.durationMinutes}min) — choose payment method`,
           fee: data.fee,
           currency: data.currency,
           waitingForPayment: true,
           plate,
           lotId,
+          paymentOptions: data.paymentOptions,
         })
       } else {
         setLastResult({ success: false, message: data.error || 'Operation failed' })
@@ -249,15 +256,72 @@ export default function GateView() {
                     <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
                     <span className="text-xs">Gate will open automatically when payment is confirmed</span>
                   </div>
-                  {lastResult.plate && (
+
+                  {/* Payment method selector */}
+                  {paymentMethod === 'none' && lastResult.paymentOptions && (
+                    <div className="mt-4 flex gap-3">
+                      {lastResult.paymentOptions.stripe && (
+                        <button
+                          onClick={() => setPaymentMethod('card')}
+                          className="flex-1 rounded-lg border-2 border-yellow-400 bg-white px-4 py-3 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
+                        >
+                          Pay with Card
+                        </button>
+                      )}
+                      {lastResult.paymentOptions.x402 && (
+                        <button
+                          onClick={() => setPaymentMethod('crypto')}
+                          className="flex-1 rounded-lg border-2 border-yellow-400 bg-white px-4 py-3 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
+                        >
+                          Pay with Crypto
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Card: Stripe checkout QR */}
+                  {paymentMethod === 'card' && lastResult.paymentOptions?.stripe && (
                     <div className="mt-4 flex flex-col items-center gap-2">
-                      <p className="text-xs text-yellow-600">Driver can scan to pay:</p>
+                      <p className="text-xs text-yellow-600">Scan to pay with card:</p>
                       <div className="rounded-lg bg-white p-3">
                         <QRCodeSVG
-                          value={`${DRIVER_APP_URL}/pay?plate=${encodeURIComponent(lastResult.plate)}&fee=${lastResult.fee ?? 0}&currency=${encodeURIComponent(lastResult.currency || '')}&lotId=${encodeURIComponent(lastResult.lotId || '')}`}
-                          size={160}
+                          value={lastResult.paymentOptions.stripe.checkoutUrl}
+                          size={200}
                         />
                       </div>
+                      <button
+                        onClick={() => setPaymentMethod('none')}
+                        className="mt-1 text-xs text-yellow-600 underline hover:text-yellow-800"
+                      >
+                        Back
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Crypto: EIP-681 USDC transfer QR */}
+                  {paymentMethod === 'crypto' && lastResult.paymentOptions?.x402 && (
+                    <div className="mt-4 flex flex-col items-center gap-2">
+                      <p className="text-xs text-yellow-600">Scan with any crypto wallet:</p>
+                      <div className="rounded-lg bg-white p-3">
+                        <QRCodeSVG
+                          value={buildERC20TransferURI({
+                            tokenAddress: USDC_ADDRESSES[lastResult.paymentOptions.x402.network] || '',
+                            to: lastResult.paymentOptions.x402.receiver,
+                            amount: lastResult.paymentOptions.x402.amount,
+                            chainId: lastResult.paymentOptions.x402.network,
+                          })}
+                          size={200}
+                        />
+                      </div>
+                      <p className="text-xs text-yellow-500">
+                        {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token} on {lastResult.paymentOptions.x402.network}
+                      </p>
+                      <button
+                        onClick={() => setPaymentMethod('none')}
+                        className="mt-1 text-xs text-yellow-600 underline hover:text-yellow-800"
+                      >
+                        Back
+                      </button>
                     </div>
                   )}
                 </>
