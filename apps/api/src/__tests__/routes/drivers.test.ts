@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import express from 'express'
 import request from 'supertest'
 import { driversRouter } from '../../routes/drivers'
+import { verifyWallet } from '../../middleware/auth'
 
 // Mock the db module
 vi.mock('../../db', () => ({
@@ -14,11 +15,17 @@ vi.mock('../../db', () => ({
   },
 }))
 
+// Mock auth JWT verification (not needed for these tests)
+vi.mock('../../routes/auth', () => ({
+  verifyJwt: vi.fn().mockResolvedValue(null),
+}))
+
 import { db } from '../../db'
 
 function createApp() {
   const app = express()
   app.use(express.json())
+  app.use(verifyWallet)
   app.use('/api/drivers', driversRouter)
   return app
 }
@@ -56,14 +63,14 @@ describe('drivers routes', () => {
       }))
     })
 
-    it('returns 400 without wallet header', async () => {
+    it('returns 401 without wallet header', async () => {
       const app = createApp()
       const res = await request(app)
         .post('/api/drivers/register')
         .send({ plateNumber: '1234567', countryCode: 'IL' })
 
-      expect(res.status).toBe(400)
-      expect(res.body.error).toMatch(/wallet/i)
+      expect(res.status).toBe(401)
+      expect(res.body.error).toMatch(/wallet|auth/i)
     })
 
     it('returns 400 without required fields', async () => {
