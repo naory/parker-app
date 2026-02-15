@@ -71,5 +71,10 @@ export const DRIVER_REGISTRY_ABI = [
   },
 ] as const
 
+// USDC contract addresses by network (used for EIP-681 QR codes and payment verification)
+export const USDC_ADDRESSES: Record<string, `0x${string}`> = {
+  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+}
+
 // Note: PARKING_NFT_ABI removed — parking NFTs are now managed via Hedera Token Service
 // (native HTS, not EVM). See @parker/hedera package for NFT operations.

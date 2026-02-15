@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { parseUnits, type Address } from 'viem'
+import { USDC_ADDRESSES } from '@parker/core'
 import type { PaymentOptions } from '@parker/core'
 
 const ERC20_TRANSFER_ABI = [
@@ -17,11 +18,6 @@ const ERC20_TRANSFER_ABI = [
     outputs: [{ type: 'bool' }],
   },
 ] as const
-
-// USDC contract addresses by network
-const USDC_ADDRESSES: Record<string, Address> = {
-  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-}
 
 interface PaymentPromptProps {
   fee: number
