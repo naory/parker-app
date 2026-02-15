@@ -5,7 +5,19 @@ const gateClients = new Map<string, Set<WebSocket>>() // lotId => clients
 const driverClients = new Map<string, Set<WebSocket>>() // plate => clients
 
 export function setupWebSocket(server: HttpServer) {
-  const wss = new WebSocketServer({ server, path: '/ws' })
+  const wss = new WebSocketServer({ noServer: true })
+
+  // Handle HTTP upgrade manually — accept any path starting with /ws
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url || '', `http://${req.headers.host}`).pathname
+    if (pathname.startsWith('/ws')) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req)
+      })
+    } else {
+      socket.destroy()
+    }
+  })
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`)

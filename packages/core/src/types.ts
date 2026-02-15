@@ -31,6 +31,7 @@ export interface Lot {
   ratePerHour: number
   billingMinutes: number
   maxDailyFee?: number
+  gracePeriodMinutes?: number
   /** ISO 4217 currency code (e.g. "USD", "EUR", "GBP") */
   currency: string
   /** Accepted payment methods for this lot */
@@ -117,6 +118,7 @@ export interface LotStatus {
   ratePerHour: number
   billingMinutes: number
   maxDailyFee?: number
+  gracePeriodMinutes?: number
   currency: string
   paymentMethods: string[]
   operatorWallet: string

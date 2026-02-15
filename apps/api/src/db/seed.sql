@@ -3,7 +3,7 @@
 -- Demo lots use ILS (Israeli Shekel) since they're in Tel Aviv — currency is per-lot config.
 
 -- Demo parking lot: "Parker HQ" in Tel Aviv (ILS)
-INSERT INTO lots (id, name, address, lat, lng, capacity, rate_per_hour, billing_minutes, max_daily_fee, currency, payment_methods, operator_wallet)
+INSERT INTO lots (id, name, address, lat, lng, capacity, rate_per_hour, billing_minutes, max_daily_fee, grace_period_minutes, currency, payment_methods, operator_wallet)
 VALUES (
     'lot-01',
     'Parker HQ',
@@ -14,6 +14,7 @@ VALUES (
     12.00,
     15,
     90.00,
+    0.5,
     'ILS',
     '{stripe,x402}',
     '0x0000000000000000000000000000000000000001'
@@ -21,7 +22,7 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- Second demo lot: "Azrieli Center" in Tel Aviv (ILS)
-INSERT INTO lots (id, name, address, lat, lng, capacity, rate_per_hour, billing_minutes, max_daily_fee, currency, payment_methods, operator_wallet)
+INSERT INTO lots (id, name, address, lat, lng, capacity, rate_per_hour, billing_minutes, max_daily_fee, grace_period_minutes, currency, payment_methods, operator_wallet)
 VALUES (
     'lot-02',
     'Azrieli Center',
@@ -32,6 +33,7 @@ VALUES (
     18.00,
     15,
     130.00,
+    0.5,
     'ILS',
     '{stripe,x402}',
     '0x0000000000000000000000000000000000000001'

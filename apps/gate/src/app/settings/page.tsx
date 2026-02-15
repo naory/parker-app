@@ -19,6 +19,7 @@ export default function Settings() {
     ratePerHour: '',
     billingMinutes: '15',
     maxDailyFee: '',
+    gracePeriodMinutes: '0',
     currency: 'USD',
     paymentMethods: 'stripe,x402',
   })
@@ -43,6 +44,7 @@ export default function Settings() {
             ratePerHour: data.ratePerHour?.toString() || '',
             billingMinutes: data.billingMinutes?.toString() || '15',
             maxDailyFee: data.maxDailyFee?.toString() || '',
+            gracePeriodMinutes: data.gracePeriodMinutes?.toString() || '0',
             currency: cur,
             paymentMethods: (data.paymentMethods || ['stripe', 'x402']).join(','),
           })
@@ -72,6 +74,7 @@ export default function Settings() {
           ratePerHour: form.ratePerHour || undefined,
           billingMinutes: form.billingMinutes || undefined,
           maxDailyFee: form.maxDailyFee || undefined,
+          gracePeriodMinutes: form.gracePeriodMinutes || undefined,
           currency: form.currency || undefined,
           paymentMethods: form.paymentMethods
             ? form.paymentMethods.split(',').map((m) => m.trim()).filter(Boolean)
@@ -149,6 +152,13 @@ export default function Settings() {
               value={form.billingMinutes}
               type="number"
               onChange={(v) => updateField('billingMinutes', v)}
+            />
+            <Field
+              label="Grace Period (min)"
+              value={form.gracePeriodMinutes}
+              placeholder="0"
+              type="number"
+              onChange={(v) => updateField('gracePeriodMinutes', v)}
             />
             <Field
               label={`Max Daily Fee (${currency})`}

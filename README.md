@@ -56,7 +56,7 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 1. Car arrives at gate
 2. Gate camera captures plate image, ALPR extracts plate number via Google Vision API
 3. API checks if plate belongs to a registered driver
-4. Parking NFT minted on **Hedera** via HTS (metadata: plate, lot ID, entry time)
+4. Parking NFT minted on **Hedera** via HTS (metadata: plate, lot ID, entry time) — **write-ahead**: the on-chain NFT is the authoritative proof of entry
 5. Session created in DB, WebSocket notifies driver app in real-time
 6. Gate opens
 
@@ -69,6 +69,20 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 4. On payment confirmation (either rail): parking NFT burned on **Hedera**, session closed in DB
 5. Gate opens automatically, driver app notified via WebSocket
 
+### Resilience: On-Chain vs Off-Chain
+
+Following the [Hedera pragmatic design patterns](https://hedera.com/blog/pragmatic-blockchain-design-patterns-integrating-blockchain-into-business-processes/) and the same hybrid model used by [MINGO Tickets](https://mingoapps.com/), Parker uses a layered resilience strategy:
+
+| Layer | Source | When |
+|-------|--------|------|
+| **1. PostgreSQL** | Fast path for all operations | Default — DB is up |
+| **2. Hedera Mirror Node** | Read-only fallback — verifies NFT exists + reads entry metadata | DB unreachable |
+| **3. Gate-side cache** | Local session cache built from WebSocket events | Both DB and Mirror Node down |
+
+**Why not make Hedera the primary?** Blockchain consensus is fast (~3-5s on Hedera) but PostgreSQL is faster (~1ms). At a busy parking gate, every second matters. The DB handles the operational speed; Hedera provides the trust guarantee and fallback. This matches how MINGO uses Hedera as an "invisible trust layer" rather than the operational database.
+
+**Key design principle:** The Hedera NFT is minted *before* the DB write on entry (write-ahead). This means the on-chain record is always the leading indicator — if the DB loses a record, the NFT on Hedera proves the car is parked. See `SPEC.md` §11 for the full resilience architecture.
+
 ## Architecture
 
 The app has three main components:
@@ -76,19 +90,21 @@ The app has three main components:
 ### 🚗 Driver App (PWA)
 - Register with license plate, country, car make/model — on-chain via DriverRegistry contract + off-chain via API
 - Coinbase Smart Wallet integration (passkey-based, no seed phrase)
-- Live dashboard with active parking session card (real-time duration timer + estimated cost)
+- Live dashboard with active parking session card (lot name, address with Google Maps link, real-time duration timer + estimated cost)
 - Full parking history with date, lot, duration, fee, NFT token ID
 - Profile page with vehicle details and wallet address
 - Real-time WebSocket updates when sessions start/end
 
 ### 🚧 Gate App (PWA)
 - Camera feed with ALPR overlay — captures frame, sends to scan API, gets plate back
+- Lot name and address displayed in header (fetched from lot status API)
 - Entry/exit mode toggle with manual plate input fallback
 - Live gate status indicator (open/closed) with operation result feedback
 - Session manager — searchable table of active sessions with live duration and estimated fees
 - Operator dashboard — lot occupancy, active session count, average duration
 - Lot settings page — configure pricing (rate/hr, billing increment, daily cap), capacity, address
 - WebSocket connection with live status indicator
+- **Offline-capable**: local session cache built from WebSocket events — if the API is unreachable, the gate can still validate exits from its cache and open the gate (payment deferred)
 
 ### 🔧 API Server
 - Express.js with PostgreSQL for off-chain indexing
@@ -246,7 +262,7 @@ parker-app/
 │       ├── src/
 │       │   ├── app/         # pages: live gate, dashboard, sessions, settings
 │       │   ├── components/  # CameraFeed, PlateResult, GateStatus
-│       │   ├── hooks/       # useGateSocket
+│       │   ├── hooks/       # useGateSocket, useSessionCache (offline resilience)
 │       │   └── lib/         # API client
 │       └── ...
 ├── contracts/           # Solidity smart contracts
@@ -303,6 +319,10 @@ parker-app/
 | `/ws/gate/:lotId` | Real-time gate events (entry/exit) |
 | `/ws/driver/:plate` | Real-time session updates for driver |
 
+## Privacy & Security
+
+**On-chain privacy:** Plate numbers are **never stored in plaintext** on Hedera. The NFT metadata contains only a `keccak256` hash of the plate (`plateHash`), the lot ID, and the entry timestamp. A third party querying the public Mirror Node sees opaque hashes — they cannot reverse them to plate numbers or build a location history for any driver. Plaintext plate data exists only in the access-controlled PostgreSQL database. See `SPEC.md` §12.1 for the full privacy model.
+
 ## Validation & Safety
 
 The API enforces the following invariants:
@@ -339,6 +359,9 @@ The API enforces the following invariants:
 - [x] End-to-end smoke testing
 - [ ] Deploy DriverRegistry to Base Sepolia
 - [ ] Create Hedera NFT collection on testnet
+- [x] Write-ahead NFT minting (mint before DB write on entry)
+- [x] Mirror Node fallback for exit when DB is unreachable
+- [x] Gate-side session cache for offline-capable exit validation
 - [ ] On-chain payment verification (x402 signature check)
 - [ ] Live FX rate feed (CoinGecko / Circle API) to replace static env var rates
 - [ ] Wallet authentication (SIWE / EIP-4361)

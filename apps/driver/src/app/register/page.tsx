@@ -5,6 +5,7 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagm
 import { useRouter } from 'next/navigation'
 import { DRIVER_REGISTRY_ABI, CONTRACT_ADDRESSES } from '@parker/core'
 import { useDriverProfile } from '@/hooks/useDriverProfile'
+import { useAuth } from '@/providers/AuthProvider'
 
 /** All known countries — filtered by NEXT_PUBLIC_DEPLOYMENT_COUNTRIES at runtime */
 const ALL_COUNTRIES: Record<string, string> = {
@@ -26,6 +27,7 @@ export default function Register() {
   const { address } = useAccount()
   const router = useRouter()
   const { setPlate } = useDriverProfile()
+  const { token, isAuthenticated, signIn } = useAuth()
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<'form' | 'onchain' | 'api'>('form')
 
@@ -71,15 +73,23 @@ export default function Register() {
         }
       }
 
-      // Step 2: Register off-chain via API
+      // Step 2: Ensure SIWE auth before API call
+      if (!isAuthenticated) {
+        await signIn()
+      }
+
+      // Step 3: Register off-chain via API
       setStep('api')
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      } else {
+        headers['x-wallet-address'] = address || ''
+      }
       const res = await fetch(`${apiUrl}/api/drivers/register`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-wallet-address': address || '',
-        },
+        headers,
         body: JSON.stringify(form),
       })
 

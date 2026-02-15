@@ -2,21 +2,26 @@ import type { SessionRecord, DriverRecord, LotStatus } from '@parker/core'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
-/** Fetch helper with wallet address header */
+/** Fetch helper with auth token or wallet address header */
 async function apiFetch<T>(
   path: string,
   options: {
     method?: string
     body?: unknown
     wallet?: string
+    token?: string | null
   } = {},
 ): Promise<T> {
-  const { method = 'GET', body, wallet } = options
+  const { method = 'GET', body, wallet, token } = options
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-  if (wallet) {
+
+  // Prefer JWT auth, fall back to wallet header
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  } else if (wallet) {
     headers['x-wallet-address'] = wallet
   }
 
@@ -44,6 +49,16 @@ export async function getDriverByWallet(wallet: string): Promise<DriverRecord | 
   // The API doesn't have a get-by-wallet endpoint, so we'll use sessions API
   // For now, we store the plate locally after registration
   return null
+}
+
+export async function updateDriver(
+  plate: string,
+  updates: { carMake?: string; carModel?: string },
+): Promise<DriverRecord> {
+  return apiFetch<DriverRecord>(`/api/drivers/${encodeURIComponent(plate)}`, {
+    method: 'PUT',
+    body: updates,
+  })
 }
 
 // ---- Lot API ----
@@ -75,3 +90,5 @@ export async function getSessionHistory(
     `/api/sessions/history/${encodeURIComponent(plate)}?limit=${limit}&offset=${offset}`,
   )
 }
+
+export { apiFetch }

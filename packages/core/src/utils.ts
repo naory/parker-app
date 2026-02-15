@@ -63,13 +63,29 @@ export function formatFee(amount: bigint): string {
  * - Zero or negative billingIncrement → defaults to 15
  * - Zero or negative rate → fee = 0
  */
+/**
+ * Build a Hashscan URL for an NFT.
+ * @param serial  The NFT serial number (e.g. 42)
+ * @param tokenId Hedera token ID (e.g. "0.0.12345")
+ * @param network "mainnet" | "testnet" | "previewnet"
+ */
+export function getHashscanNftUrl(
+  serial: number | string,
+  tokenId: string,
+  network: string = 'testnet',
+): string {
+  return `https://hashscan.io/${network}/token/${tokenId}/${serial}`
+}
+
 export function calculateFee(
   durationMinutes: number,
   ratePerHour: number,
   billingIncrementMinutes: number = 15,
   maxDailyFee?: number,
+  gracePeriodMinutes: number = 0,
 ): number {
   if (ratePerHour <= 0) return 0
+  if (gracePeriodMinutes > 0 && durationMinutes <= gracePeriodMinutes) return 0
   if (billingIncrementMinutes <= 0) billingIncrementMinutes = 15
 
   // At least 1 increment (entering and immediately exiting still costs one unit)

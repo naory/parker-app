@@ -5,11 +5,17 @@ import {
   TokenBurnTransaction,
   Status,
 } from '@hashgraph/sdk'
+import { encryptMetadata, parseMetadata } from './crypto'
 
 // ---- Types ----
 
+/**
+ * On-chain NFT metadata — stored publicly on Hedera.
+ * PRIVACY: plate is stored as a keccak256 hash, never in plaintext.
+ * The API correlates NFTs to sessions by matching hashPlate(plate) against plateHash.
+ */
 export interface ParkingNFTMetadata {
-  plateNumber: string
+  plateHash: string // keccak256 hash of the normalized plate number
   lotId: string
   entryTime: number // unix timestamp (seconds)
 }
@@ -27,15 +33,18 @@ export interface BurnResult {
 
 /**
  * Mint a parking session NFT on Hedera via HTS.
- * The metadata is encoded as a JSON string in the NFT's metadata bytes.
+ * Metadata is AES-256-GCM encrypted before going on-chain.
  * Returns the serial number assigned by HTS.
  */
 export async function mintParkingNFT(
   client: Client,
   tokenId: string,
   metadata: ParkingNFTMetadata,
+  encryptionKey: Buffer,
 ): Promise<MintResult> {
-  const metadataBytes = Buffer.from(JSON.stringify(metadata), 'utf-8')
+  // Hedera NFT metadata is limited to 100 bytes.
+  // Encrypted binary format: [version][IV][ciphertext][tag] (~72 bytes)
+  const metadataBytes = encryptMetadata(metadata, encryptionKey)
 
   const tx = new TokenMintTransaction()
     .setTokenId(TokenId.fromString(tokenId))
@@ -89,7 +98,17 @@ export async function burnParkingNFT(
   return { transactionId }
 }
 
-// ---- Mirror Node Query ----
+// ---- Mirror Node Helpers ----
+
+function getMirrorNodeBaseUrl(network: 'testnet' | 'mainnet' | 'previewnet'): string {
+  switch (network) {
+    case 'mainnet': return 'https://mainnet-public.mirrornode.hedera.com'
+    case 'previewnet': return 'https://previewnet.mirrornode.hedera.com'
+    default: return 'https://testnet.mirrornode.hedera.com'
+  }
+}
+
+// ---- Mirror Node Query: Single NFT ----
 
 /**
  * Check if a specific NFT serial exists (not burned) via the Hedera Mirror Node REST API.
@@ -100,13 +119,7 @@ export async function getNftInfo(
   serial: number,
   network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
 ): Promise<{ exists: boolean; metadata?: string; deleted: boolean }> {
-  const baseUrl =
-    network === 'mainnet'
-      ? 'https://mainnet-public.mirrornode.hedera.com'
-      : network === 'previewnet'
-        ? 'https://previewnet.mirrornode.hedera.com'
-        : 'https://testnet.mirrornode.hedera.com'
-
+  const baseUrl = getMirrorNodeBaseUrl(network)
   const url = `${baseUrl}/api/v1/tokens/${tokenId}/nfts/${serial}`
 
   try {
@@ -136,4 +149,79 @@ export async function getNftInfo(
     console.error(`[hedera] Mirror node query failed for ${tokenId}/${serial}:`, error)
     return { exists: false, deleted: false }
   }
+}
+
+// ---- Mirror Node Query: Find Active NFT by Plate Hash ----
+
+/** Parsed NFT with decoded metadata */
+export interface ActiveNftSession {
+  serial: number
+  plateHash: string
+  lotId: string
+  entryTime: number // unix seconds
+}
+
+/**
+ * Search the Mirror Node for an active (not burned) parking NFT matching a given plateHash.
+ * Used as a DB fallback when PostgreSQL is unreachable.
+ *
+ * Scans the most recent NFTs in the collection (paginated, newest first).
+ * Returns the first active NFT whose metadata.plateHash matches the target.
+ */
+export async function findActiveNftByPlateHash(
+  tokenId: string,
+  plateHash: string,
+  network: 'testnet' | 'mainnet' | 'previewnet' = 'testnet',
+  encryptionKey?: Buffer,
+): Promise<ActiveNftSession | null> {
+  const baseUrl = getMirrorNodeBaseUrl(network)
+
+  // Paginate through NFTs (newest first, up to 3 pages of 100)
+  let nextUrl: string | null = `${baseUrl}/api/v1/tokens/${tokenId}/nfts?order=desc&limit=100`
+  let pagesChecked = 0
+  const maxPages = 3 // Safety limit — don't scan the entire collection
+
+  while (nextUrl && pagesChecked < maxPages) {
+    try {
+      const res = await fetch(nextUrl)
+      if (!res.ok) {
+        console.error(`[hedera] Mirror node list error: ${res.status}`)
+        return null
+      }
+
+      const data = (await res.json()) as {
+        nfts: Array<{
+          serial_number: number
+          deleted: boolean
+          metadata: string // base64-encoded
+        }>
+        links?: { next?: string }
+      }
+
+      for (const nft of data.nfts) {
+        // Skip burned NFTs
+        if (nft.deleted) continue
+
+        if (!encryptionKey) continue
+        const parsed = parseMetadata(nft.metadata, encryptionKey)
+        if (parsed && parsed.plateHash === plateHash) {
+          return {
+            serial: nft.serial_number,
+            plateHash: parsed.plateHash,
+            lotId: parsed.lotId,
+            entryTime: parsed.entryTime,
+          }
+        }
+      }
+
+      // Follow pagination link (if any)
+      nextUrl = data.links?.next ? `${baseUrl}${data.links.next}` : null
+      pagesChecked++
+    } catch (error) {
+      console.error('[hedera] Mirror node scan failed:', error)
+      return null
+    }
+  }
+
+  return null
 }

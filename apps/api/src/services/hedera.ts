@@ -3,8 +3,12 @@ import {
   mintParkingNFT as htsMint,
   burnParkingNFT as htsBurn,
   getNftInfo,
+  findActiveNftByPlateHash as htsFindByPlate,
+  parseEncryptionKey,
   type HederaNetwork,
+  type ActiveNftSession,
 } from '@parker/hedera'
+import { hashPlate } from '@parker/core'
 import type { Client } from '@hashgraph/sdk'
 
 // ---- Configuration ----
@@ -13,6 +17,14 @@ const HEDERA_ACCOUNT_ID = process.env.HEDERA_ACCOUNT_ID
 const HEDERA_PRIVATE_KEY = process.env.HEDERA_PRIVATE_KEY
 const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || 'testnet') as HederaNetwork
 const HEDERA_TOKEN_ID = process.env.HEDERA_TOKEN_ID
+
+// ---- NFT Metadata Encryption (required) ----
+
+if (!process.env.NFT_ENCRYPTION_KEY) {
+  throw new Error('NFT_ENCRYPTION_KEY is required. Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"')
+}
+const _encryptionKey = parseEncryptionKey(process.env.NFT_ENCRYPTION_KEY)
+console.log('[hedera] NFT metadata encryption enabled (AES-256-GCM)')
 
 // ---- Client (lazy singleton) ----
 
@@ -42,6 +54,8 @@ export function isHederaEnabled(): boolean {
 
 /**
  * Mint a parking session NFT on Hedera via HTS.
+ * PRIVACY: the plate number is hashed (keccak256) before going on-chain.
+ * Only the hash is stored in the NFT metadata — never the raw plate.
  * Returns the serial number (stored as tokenId in DB) and transaction ID.
  */
 export async function mintParkingNFTOnHedera(
@@ -54,10 +68,10 @@ export async function mintParkingNFTOnHedera(
 
   const client = getClient()
   const result = await htsMint(client, HEDERA_TOKEN_ID, {
-    plateNumber,
+    plateHash: hashPlate(plateNumber),
     lotId,
     entryTime: Math.floor(Date.now() / 1000),
-  })
+  }, _encryptionKey)
 
   return {
     tokenId: result.serial,
@@ -91,3 +105,21 @@ export async function isNftActiveOnHedera(serial: number): Promise<boolean> {
   const info = await getNftInfo(HEDERA_TOKEN_ID, serial, HEDERA_NETWORK)
   return info.exists
 }
+
+// ---- Mirror Node Fallback (DB-down resilience) ----
+
+/**
+ * Find an active parking NFT by plate number via the Mirror Node.
+ * Used as a fallback when the DB is unreachable during exit.
+ * The plate is hashed before querying — Mirror Node never sees the raw plate.
+ */
+export async function findActiveSessionOnHedera(
+  plateNumber: string,
+): Promise<ActiveNftSession | null> {
+  if (!HEDERA_TOKEN_ID) return null
+
+  const plate_hash = hashPlate(plateNumber)
+  return htsFindByPlate(HEDERA_TOKEN_ID, plate_hash, HEDERA_NETWORK, _encryptionKey)
+}
+
+export { type ActiveNftSession }
