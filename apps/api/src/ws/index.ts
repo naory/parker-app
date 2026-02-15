@@ -112,11 +112,17 @@ export function notifyGate(lotId: string, event: object) {
 /** Notify a specific driver about their session */
 export function notifyDriver(plate: string, event: object) {
   const clients = driverClients.get(plate)
-  if (!clients) return
+  if (!clients || clients.size === 0) {
+    console.warn(`[ws] notifyDriver: no connected clients for plate="${plate}" (registered plates: ${[...driverClients.keys()].join(', ') || 'none'})`)
+    return
+  }
   const message = JSON.stringify(event)
+  let sent = 0
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message)
+      sent++
     }
   }
+  console.log(`[ws] notifyDriver: sent to ${sent}/${clients.size} clients for plate="${plate}"`)
 }

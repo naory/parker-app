@@ -163,3 +163,23 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 **Behavior:** The `normalizePlate()` utility strips whitespace and dashes, then converts to uppercase. This function is applied at every system boundary — localStorage, WebSocket subscriptions, API requests, and ALPR output — ensuring consistent matching everywhere.
 
 **Primary file:** `packages/core/src/utils.ts` (lines ~4-11)
+
+---
+
+## 17. On-Chain Payment Watcher
+
+**Problem:** When a driver pays via EIP-681 QR code (scanned with an external wallet), the system needs to detect the on-chain USDC transfer and auto-settle the session.
+
+**Behavior:** The payment watcher subscribes to ERC-20 Transfer events on the USDC contract (Base Sepolia). When the gate exit registers a pending payment (expected amount + receiver wallet), the watcher matches incoming transfers by receiver address and amount (within 1% tolerance). On match, it ends the DB session, burns the Hedera NFT if applicable, and notifies both gate and driver via WebSocket. Stale pending payments older than 30 minutes are pruned automatically.
+
+**Primary file:** `apps/api/src/services/paymentWatcher.ts`
+
+---
+
+## 18. Dev Simulation Payment Bypass
+
+**Problem:** During development, testing the full payment flow requires real on-chain USDC transfers, which is impractical.
+
+**Behavior:** In development mode (`NODE_ENV=development`), the x402 middleware accepts a special `X-PAYMENT: simulated-dev-payment` header, bypassing on-chain transaction hash validation. The driver app's "Simulate Pay" button sends this header to quickly test the exit flow without real crypto. This bypass is only active in development mode.
+
+**Primary files:** `packages/x402/src/middleware.ts`, `apps/driver/src/components/PaymentPrompt.tsx`

@@ -42,6 +42,11 @@
 - [ ] **Dispute resolution flow**
   Admin endpoint to cancel/refund sessions. On-chain evidence linking for disputes.
 
+## Testing
+
+- [x] **paymentWatcher unit tests**
+  15 tests covering `addPendingPayment`/`removePendingPayment`, `startPaymentWatcher`, transfer event matching (exact, 1% tolerance, wrong amount, wrong receiver, case-insensitive), Hedera NFT burn on settle, and stale payment pruning. Statement coverage: 9.5% → 92%.
+
 ## Technical Debt
 
 - [ ] **Zod schema validation**

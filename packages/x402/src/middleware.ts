@@ -52,7 +52,13 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
     // Check if client already provided payment proof
     const paymentHeader = req.headers['x-payment'] as string | undefined
     if (paymentHeader) {
-      if (publicClient) {
+      // Dev simulation bypass — accept 'simulated-dev-payment' in development
+      const isDev = process.env.NODE_ENV === 'development'
+      if (isDev && paymentHeader === 'simulated-dev-payment') {
+        console.warn(`[x402] Dev mode — accepting simulated payment`)
+        ;(req as any).paymentVerified = true
+        ;(req as any).paymentTxHash = paymentHeader
+      } else if (publicClient) {
         // On-chain verification mode
         if (!TX_HASH_REGEX.test(paymentHeader)) {
           return res.status(400).json({ error: 'Invalid transaction hash format' })
