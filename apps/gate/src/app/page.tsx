@@ -67,7 +67,8 @@ export default function GateView() {
     }
   }, [addEntry, removeExit])
 
-  const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent)
+  const gateApiKey = process.env.NEXT_PUBLIC_GATE_API_KEY || null
+  const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent, gateApiKey)
 
   const [lastResult, setLastResult] = useState<{
     success: boolean

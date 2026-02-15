@@ -4,19 +4,63 @@ import { WebSocketServer, WebSocket } from 'ws'
 const gateClients = new Map<string, Set<WebSocket>>() // lotId => clients
 const driverClients = new Map<string, Set<WebSocket>>() // plate => clients
 
-export function setupWebSocket(server: HttpServer) {
+export interface WsOptions {
+  verifyToken?: (token: string) => Promise<string | null>
+  gateApiKey?: string
+}
+
+export function setupWebSocket(server: HttpServer, options: WsOptions = {}) {
   const wss = new WebSocketServer({ noServer: true })
+  const isDev = process.env.NODE_ENV === 'development'
 
   // Handle HTTP upgrade manually — accept any path starting with /ws
-  server.on('upgrade', (req, socket, head) => {
-    const pathname = new URL(req.url || '', `http://${req.headers.host}`).pathname
-    if (pathname.startsWith('/ws')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req)
-      })
-    } else {
+  server.on('upgrade', async (req, socket, head) => {
+    const url = new URL(req.url || '', `http://${req.headers.host}`)
+    const pathname = url.pathname
+
+    if (!pathname.startsWith('/ws')) {
       socket.destroy()
+      return
     }
+
+    // Authentication (skip in development mode)
+    if (!isDev) {
+      const isGatePath = pathname.startsWith('/ws/gate/')
+
+      // Gate paths accept apiKey
+      if (isGatePath && options.gateApiKey) {
+        const apiKey = url.searchParams.get('apiKey')
+        if (apiKey === options.gateApiKey) {
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            wss.emit('connection', ws, req)
+          })
+          return
+        }
+      }
+
+      // All paths accept JWT token
+      const token = url.searchParams.get('token')
+        || req.headers.authorization?.replace('Bearer ', '')
+
+      if (token && options.verifyToken) {
+        const address = await options.verifyToken(token)
+        if (address) {
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            wss.emit('connection', ws, req)
+          })
+          return
+        }
+      }
+
+      // No valid auth provided
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+      socket.destroy()
+      return
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req)
+    })
   })
 
   wss.on('connection', (ws, req) => {

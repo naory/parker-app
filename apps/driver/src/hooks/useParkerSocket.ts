@@ -18,6 +18,7 @@ interface SocketEvent {
 export function useParkerSocket(
   plate: string | null,
   onEvent?: (event: SocketEvent) => void,
+  token?: string | null,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -30,7 +31,8 @@ export function useParkerSocket(
     if (!plate) return
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws'
-    const url = `${wsUrl}/driver/${encodeURIComponent(plate)}`
+    let url = `${wsUrl}/driver/${encodeURIComponent(plate)}`
+    if (token) url += `?token=${encodeURIComponent(token)}`
 
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -58,7 +60,7 @@ export function useParkerSocket(
     ws.onerror = () => {
       ws.close()
     }
-  }, [plate])
+  }, [plate, token])
 
   useEffect(() => {
     connect()

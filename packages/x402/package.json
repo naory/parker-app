@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@x402/express": "^2.3.0"
+    "@x402/express": "^2.3.0",
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "@parker/tsconfig": "workspace:*",

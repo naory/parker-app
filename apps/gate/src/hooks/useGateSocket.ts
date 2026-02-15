@@ -18,6 +18,7 @@ interface GateEvent {
 export function useGateSocket(
   lotId: string | null,
   onEvent?: (event: GateEvent) => void,
+  apiKey?: string | null,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -30,7 +31,8 @@ export function useGateSocket(
     if (!lotId) return
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws'
-    const url = `${wsUrl}/gate/${encodeURIComponent(lotId)}`
+    let url = `${wsUrl}/gate/${encodeURIComponent(lotId)}`
+    if (apiKey) url += `?apiKey=${encodeURIComponent(apiKey)}`
 
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -58,7 +60,7 @@ export function useGateSocket(
     ws.onerror = () => {
       ws.close()
     }
-  }, [lotId])
+  }, [lotId, apiKey])
 
   useEffect(() => {
     connect()

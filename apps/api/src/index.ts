@@ -3,6 +3,7 @@ import { createServer } from 'http'
 
 import { createApp } from './app'
 import { setupWebSocket } from './ws/index'
+import { verifyJwt } from './routes/auth'
 import { isBaseEnabled } from './services/blockchain'
 import { isHederaEnabled } from './services/hedera'
 import { isStripeEnabled } from './services/stripe'
@@ -11,8 +12,11 @@ const app = createApp()
 const server = createServer(app)
 const port = process.env.PORT || 3001
 
-// WebSocket
-setupWebSocket(server)
+// WebSocket with authentication
+setupWebSocket(server, {
+  verifyToken: verifyJwt,
+  gateApiKey: process.env.GATE_API_KEY,
+})
 
 server.listen(port, () => {
   console.log(`Parker API running on http://localhost:${port}`)
