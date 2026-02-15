@@ -13,14 +13,14 @@
 
 ## Security (P0)
 
-- [ ] **x402 on-chain payment verification**
-  The x402 middleware currently trusts the `X-PAYMENT` header (MVP pass-through). Verify the USDC transfer on Base before marking payment as confirmed.
+- [x] **x402 on-chain payment verification**
+  The x402 middleware now verifies ERC20 transfers on-chain via viem when a publicClient is configured. Gate exit validates receiver wallet and amount (1% tolerance).
 
-- [ ] **WebSocket authentication**
-  Anyone can subscribe to `/ws/driver/:plate` and see real-time session events. Require JWT or signed token for WS connections.
+- [x] **WebSocket authentication**
+  WebSocket upgrade handler validates JWT token or gate API key, rejects unauthenticated connections with 401. Skipped in development mode.
 
-- [ ] **Rate limiting**
-  Add express-rate-limit to ALPR scan endpoint, registration, and auth routes. Prevent abuse of Google Cloud Vision API calls.
+- [x] **Rate limiting**
+  Three tiers via express-rate-limit: strict (10/min) for auth, medium (30/min) for gate ops & registration, standard (100/min) catch-all.
 
 ## Features
 
