@@ -6,13 +6,15 @@
   "types": "./src/index.ts",
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "@google-cloud/vision": "^4.3.0"
   },
   "devDependencies": {
     "@parker/tsconfig": "workspace:*",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
   }
 }
