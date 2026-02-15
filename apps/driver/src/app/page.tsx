@@ -15,7 +15,7 @@ import { useAuth } from '@/providers/AuthProvider'
 export default function Dashboard() {
   const { isConnected } = useAccount()
   const { plate, isRegistered, setPlate } = useDriverProfile()
-  const { isAuthenticated, signIn, signing } = useAuth()
+  const { isAuthenticated, signIn, signing, token } = useAuth()
   const [sessionKey, setSessionKey] = useState(0)
   const [mounted, setMounted] = useState(false)
 
@@ -47,7 +47,7 @@ export default function Dashboard() {
     }
   }, [])
 
-  useParkerSocket(plate, handleSocketEvent)
+  useParkerSocket(plate, handleSocketEvent, token)
 
   // Avoid hydration mismatch — wallet state is only available on client
   if (!mounted) {

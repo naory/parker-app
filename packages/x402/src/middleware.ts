@@ -1,4 +1,6 @@
 import type { RequestHandler, Request, Response, NextFunction } from 'express'
+import type { PublicClient } from 'viem'
+import { verifyERC20Transfer, type ERC20TransferResult } from './verify'
 
 /**
  * x402 Payment Middleware for Parker.
@@ -10,9 +12,8 @@ import type { RequestHandler, Request, Response, NextFunction } from 'express'
  * 4. Client resends request with `X-PAYMENT` header containing signed tx
  * 5. Middleware verifies payment, allows request through
  *
- * For MVP: Middleware checks for an `X-PAYMENT` header. If present, it marks
- * payment as complete. If not, and the route signals payment is needed,
- * it returns a 402 response with payment instructions.
+ * When `publicClient` is provided, on-chain verification is performed.
+ * Without `publicClient` (dev mode): trusts the header with a console warning.
  */
 
 export interface PaymentMiddlewareOptions {
@@ -22,6 +23,8 @@ export interface PaymentMiddlewareOptions {
   token?: string
   /** Default operator wallet to receive payment */
   receiverWallet?: string
+  /** viem PublicClient for on-chain tx verification. If omitted, header is trusted (dev mode). */
+  publicClient?: PublicClient
 }
 
 export interface PaymentRequired {
@@ -35,22 +38,46 @@ export interface PaymentRequired {
   receiver?: string
 }
 
+const TX_HASH_REGEX = /^0x[0-9a-fA-F]{64}$/
+
 export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}): RequestHandler {
   const {
     network: defaultNetwork = 'base-sepolia',
     token: defaultToken = 'USDC',
     receiverWallet: defaultReceiver = process.env.LOT_OPERATOR_WALLET || '0x0',
+    publicClient,
   } = options
 
-  const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
+  const middleware: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
     // Check if client already provided payment proof
     const paymentHeader = req.headers['x-payment'] as string | undefined
     if (paymentHeader) {
-      // In production: verify the signed transaction / payment proof on-chain
-      // For MVP: trust the header and mark payment as verified
-      console.log(`[x402] Payment header received: ${paymentHeader.slice(0, 20)}...`)
-      ;(req as any).paymentVerified = true
-      ;(req as any).paymentTxHash = paymentHeader
+      if (publicClient) {
+        // On-chain verification mode
+        if (!TX_HASH_REGEX.test(paymentHeader)) {
+          return res.status(400).json({ error: 'Invalid transaction hash format' })
+        }
+
+        try {
+          const transfer = await verifyERC20Transfer(
+            publicClient,
+            paymentHeader as `0x${string}`,
+          )
+          ;(req as any).paymentVerified = true
+          ;(req as any).paymentTxHash = paymentHeader
+          ;(req as any).paymentTransfer = transfer
+        } catch (err) {
+          return res.status(400).json({
+            error: 'Payment verification failed',
+            details: (err as Error).message,
+          })
+        }
+      } else {
+        // Dev mode: trust the header
+        console.warn(`[x402] No publicClient — trusting X-PAYMENT header without on-chain verification`)
+        ;(req as any).paymentVerified = true
+        ;(req as any).paymentTxHash = paymentHeader
+      }
     }
 
     // Intercept the response to check if the route requested payment

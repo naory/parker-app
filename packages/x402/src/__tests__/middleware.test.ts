@@ -39,25 +39,25 @@ describe('createPaymentMiddleware', () => {
     next = vi.fn()
   })
 
-  it('calls next() always', () => {
+  it('calls next() always', async () => {
     const req = mockReq()
     const res = mockRes()
-    middleware(req, res, next)
+    await middleware(req, res, next)
     expect(next).toHaveBeenCalled()
   })
 
-  it('sets paymentVerified when X-PAYMENT header present', () => {
+  it('sets paymentVerified when X-PAYMENT header present (dev mode, no publicClient)', async () => {
     const req = mockReq({ headers: { 'x-payment': '0xtxhash123' } as any })
     const res = mockRes()
-    middleware(req, res, next)
+    await middleware(req, res, next)
     expect((req as any).paymentVerified).toBe(true)
     expect((req as any).paymentTxHash).toBe('0xtxhash123')
   })
 
-  it('returns 402 when paymentRequired is set and no payment header', () => {
+  it('returns 402 when paymentRequired is set and no payment header', async () => {
     const req = mockReq()
     const res = mockRes()
-    middleware(req, res, next)
+    await middleware(req, res, next)
 
     // Simulate route handler setting paymentRequired
     res.locals.paymentRequired = {
@@ -78,10 +78,10 @@ describe('createPaymentMiddleware', () => {
     expect(res._body.x402.receiver).toBe('0xABC')
   })
 
-  it('passes through normally when payment verified', () => {
+  it('passes through normally when payment verified', async () => {
     const req = mockReq({ headers: { 'x-payment': '0xtx' } as any })
     const res = mockRes()
-    middleware(req, res, next)
+    await middleware(req, res, next)
 
     res.locals.paymentRequired = {
       amount: '10',
@@ -96,14 +96,89 @@ describe('createPaymentMiddleware', () => {
     expect(res._body.session).toBe('closed')
   })
 
-  it('passes through when no paymentRequired set', () => {
+  it('passes through when no paymentRequired set', async () => {
     const req = mockReq()
     const res = mockRes()
-    middleware(req, res, next)
+    await middleware(req, res, next)
 
     res.json({ ok: true })
 
     expect(res._status).toBe(200)
     expect(res._body.ok).toBe(true)
+  })
+})
+
+describe('createPaymentMiddleware with publicClient', () => {
+  it('rejects malformed transaction hash', async () => {
+    const mockClient = {} as any
+    const middleware = createPaymentMiddleware({
+      receiverWallet: '0xABC',
+      publicClient: mockClient,
+    })
+    const next = vi.fn()
+
+    const req = mockReq({ headers: { 'x-payment': 'not-a-hash' } as any })
+    const res = mockRes()
+    await middleware(req, res, next)
+
+    expect(res._status).toBe(400)
+    expect(res._body.error).toBe('Invalid transaction hash format')
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('rejects when on-chain verification fails', async () => {
+    const mockClient = {
+      getTransactionReceipt: vi.fn().mockRejectedValue(new Error('tx not found')),
+    } as any
+    const middleware = createPaymentMiddleware({
+      receiverWallet: '0xABC',
+      publicClient: mockClient,
+    })
+    const next = vi.fn()
+
+    const txHash = '0x' + 'ab'.repeat(32)
+    const req = mockReq({ headers: { 'x-payment': txHash } as any })
+    const res = mockRes()
+    await middleware(req, res, next)
+
+    expect(res._status).toBe(400)
+    expect(res._body.error).toBe('Payment verification failed')
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('attaches paymentTransfer when verification succeeds', async () => {
+    const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+    const from = '0x1111111111111111111111111111111111111111'
+    const to = '0x2222222222222222222222222222222222222222'
+    const amount = 10_000000n
+
+    const padAddress = (addr: string) => '0x' + addr.replace('0x', '').toLowerCase().padStart(64, '0')
+
+    const mockClient = {
+      getTransactionReceipt: vi.fn().mockResolvedValue({
+        status: 'success',
+        logs: [{
+          address: '0xtoken',
+          topics: [TRANSFER_TOPIC, padAddress(from), padAddress(to)],
+          data: '0x' + amount.toString(16).padStart(64, '0'),
+        }],
+      }),
+    } as any
+
+    const middleware = createPaymentMiddleware({
+      receiverWallet: '0xABC',
+      publicClient: mockClient,
+    })
+    const next = vi.fn()
+
+    const txHash = '0x' + 'ab'.repeat(32)
+    const req = mockReq({ headers: { 'x-payment': txHash } as any })
+    const res = mockRes()
+    await middleware(req, res, next)
+
+    expect(next).toHaveBeenCalled()
+    expect((req as any).paymentVerified).toBe(true)
+    expect((req as any).paymentTransfer.amount).toBe(amount)
+    expect((req as any).paymentTransfer.confirmed).toBe(true)
   })
 })

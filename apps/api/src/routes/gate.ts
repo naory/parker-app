@@ -317,6 +317,36 @@ gateRouter.post('/exit', async (req, res) => {
 
     // ---- Phase 3: Payment verified — close session ----
 
+    // Validate on-chain transfer details (when available)
+    const transfer = (req as any).paymentTransfer as import('@parker/x402').ERC20TransferResult | undefined
+    if (transfer) {
+      const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
+      if (expectedReceiver && transfer.to.toLowerCase() !== expectedReceiver.toLowerCase()) {
+        return res.status(400).json({
+          error: 'Payment receiver mismatch',
+          expected: expectedReceiver,
+          actual: transfer.to,
+        })
+      }
+
+      // Verify amount is within 1% of expected fee (handles rounding)
+      const stablecoinDecimals = 6 // USDC has 6 decimals
+      const expectedAmount = BigInt(Math.round(fee * 10 ** stablecoinDecimals))
+      if (expectedAmount > 0n) {
+        const tolerance = expectedAmount / 100n // 1%
+        const diff = transfer.amount > expectedAmount
+          ? transfer.amount - expectedAmount
+          : expectedAmount - transfer.amount
+        if (diff > tolerance) {
+          return res.status(400).json({
+            error: 'Payment amount mismatch',
+            expectedAmount: expectedAmount.toString(),
+            actualAmount: transfer.amount.toString(),
+          })
+        }
+      }
+    }
+
     // Burn parking NFT on Hedera
     const serialToBurn = session?.tokenId || fallbackSerial
     if (isHederaEnabled() && serialToBurn) {
