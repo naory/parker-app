@@ -47,16 +47,16 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 └──────────────┘        └──────────────┘
 ```
 
-**Dual-chain + dual-rail architecture:**
+**Hedera-first + dual-rail architecture (with optional Base components):**
 - **Hedera** — Parking session NFTs via native Token Service (mint on entry, burn on exit)
-- **Base Sepolia** — Driver registration (DriverRegistry contract), x402 stablecoin payments
+- **Base Sepolia (optional per deployment)** — DriverRegistry sync and x402 stablecoin rail
 - **Stripe** — Credit card payments in the lot's local currency (any Stripe-supported currency)
 
 ### Entry Flow
 1. Car arrives at gate
 2. Gate camera captures plate image, ALPR extracts plate number via Google Vision API
 3. API checks if plate belongs to a registered driver
-4. Parking NFT minted on **Hedera** via HTS (metadata: plate, lot ID, entry time) — **write-ahead**: the on-chain NFT is the authoritative proof of entry
+4. Parking NFT minted on **Hedera** via HTS (AES-256-GCM encrypted metadata carrying `plateHash`, lot ID, entry time) — **write-ahead**: the on-chain NFT is the authoritative proof of entry
 5. Session created in DB, WebSocket notifies driver app in real-time
 6. Gate opens
 
@@ -88,7 +88,7 @@ Following the [Hedera pragmatic design patterns](https://hedera.com/blog/pragmat
 The app has three main components:
 
 ### 🚗 Driver App (PWA)
-- Register with license plate, country, car make/model — on-chain via DriverRegistry contract + off-chain via API
+- Register with license plate, country, car make/model — off-chain via API, with optional on-chain sync to `DriverRegistry` on Base
 - Coinbase Smart Wallet integration (passkey-based, no seed phrase)
 - Live dashboard with active parking session card (lot name, address with Google Maps link, real-time duration timer + estimated cost)
 - Full parking history with date, lot, duration, fee, NFT token ID
@@ -110,7 +110,7 @@ The app has three main components:
 - Express.js with PostgreSQL for off-chain indexing
 - ALPR pipeline via `@parker/alpr` (Google Cloud Vision)
 - **Hedera integration** via `@parker/hedera` (`@hashgraph/sdk`) — mints parking NFTs on entry, burns on exit
-- **Base integration** via viem — DriverRegistry reads on Base Sepolia
+- **Optional Base integration** via viem — DriverRegistry reads/sync on Base Sepolia
 - **Multi-currency payment** — each lot defines its own currency (USD, EUR, GBP, etc.) and accepted payment methods
 - **x402 payment middleware** — returns HTTP 402 with stablecoin amount (FX-converted from local currency); verifies payment proof on retry
 - **Stripe Checkout** — creates payment sessions in the lot's local currency; webhook-driven session closure
@@ -128,7 +128,7 @@ The app has three main components:
 | Payments (crypto) | x402 protocol (stablecoin on Base Sepolia) |
 | Payments (card) | Stripe Checkout (any Stripe-supported currency) |
 | Parking NFTs | Hedera Token Service (native HTS, `@hashgraph/sdk`) |
-| Driver Registry | Solidity 0.8.20 + Hardhat (Base Sepolia) |
+| Driver Registry (optional) | Solidity 0.8.20 + Hardhat (Base Sepolia) |
 | ALPR | Google Cloud Vision API |
 | Backend | Node.js + Express + TypeScript |
 | Database | PostgreSQL 16 (Docker) |
@@ -181,6 +181,29 @@ The database is auto-seeded with two demo lots and a test driver. Each lot has i
 > Plates are stored in normalized form (alphanumeric, no dashes). The API normalizes
 > all incoming plates automatically, so `12-345-67`, `12 345 67`, and `1234567` all
 > resolve to the same driver.
+
+### Try It Now (Seed Data)
+
+Use the default seeded values:
+- `lotId=lot-01`
+- `plateNumber=1234567`
+
+```bash
+# Entry (starts session + mints Hedera HTS NFT when configured)
+curl -X POST http://localhost:3001/api/gate/entry \
+  -H "Content-Type: application/json" \
+  -d '{"plateNumber":"1234567","lotId":"lot-01"}'
+
+# Exit (returns fee + payment options; session closes after payment confirmation)
+curl -X POST http://localhost:3001/api/gate/exit \
+  -H "Content-Type: application/json" \
+  -d '{"plateNumber":"1234567","lotId":"lot-01"}'
+```
+
+Where to look:
+- **Gate UI:** `http://localhost:3002` (live entry/exit status + cache badge)
+- **Driver UI:** `http://localhost:3000` (active session, payment flow, history)
+- **Hedera NFT:** in Driver history, click the Hashscan link (set `NEXT_PUBLIC_HEDERA_TOKEN_ID` in `apps/driver/.env` to enable links)
 
 ### Hedera Setup (Parking NFTs)
 
@@ -266,7 +289,7 @@ parker-app/
 │       │   └── lib/         # API client
 │       └── ...
 ├── contracts/           # Solidity smart contracts
-│   ├── contracts/       # DriverRegistry.sol, ParkingNFT.sol
+│   ├── contracts/       # DriverRegistry.sol (+ legacy ParkingNFT.sol reference contract)
 │   ├── test/            # Full test suites for both contracts
 │   └── scripts/         # Deploy script
 ├── packages/
@@ -321,7 +344,7 @@ parker-app/
 
 ## Privacy & Security
 
-**On-chain privacy:** Plate numbers are **never stored in plaintext** on Hedera. The NFT metadata contains only a `keccak256` hash of the plate (`plateHash`), the lot ID, and the entry timestamp. A third party querying the public Mirror Node sees opaque hashes — they cannot reverse them to plate numbers or build a location history for any driver. Plaintext plate data exists only in the access-controlled PostgreSQL database. See `SPEC.md` §12.1 for the full privacy model.
+**On-chain privacy:** Plate numbers are **never stored in plaintext** on Hedera. Parker hashes the plate (`plateHash`) and then stores NFT metadata as an **AES-256-GCM encrypted binary payload** on HTS. Public Mirror Node readers see ciphertext bytes, not readable plate/lot/time fields. The API can decrypt metadata with `NFT_ENCRYPTION_KEY` for fallback lookups, while plaintext plate data remains only in the access-controlled PostgreSQL database. See `SPEC.md` §12.1 for the full privacy model.
 
 ## Validation & Safety
 
@@ -343,8 +366,7 @@ The API enforces the following invariants:
 
 🚧 **MVP in active development**
 
-- [x] Smart contracts (DriverRegistry on Base + ParkingNFT on Hedera HTS)
-- [x] Dual-chain architecture: Hedera (NFTs) + Base Sepolia (payments/registry)
+- [x] On-chain architecture: Hedera HTS parking NFTs + optional Base DriverRegistry/x402 rail
 - [x] API server with full CRUD, ALPR, blockchain integration
 - [x] Driver app: registration, wallet connect, session view, history, profile
 - [x] Gate app: camera feed, ALPR scan, dashboard, sessions, settings
@@ -357,7 +379,7 @@ The API enforces the following invariants:
 - [x] Database schema + seed data
 - [x] Input validation, fee guardrails, race-condition guards
 - [x] End-to-end smoke testing
-- [ ] Deploy DriverRegistry to Base Sepolia
+- [ ] Deploy DriverRegistry to Base Sepolia (if Base registry sync is enabled)
 - [ ] Create Hedera NFT collection on testnet
 - [x] Write-ahead NFT minting (mint before DB write on entry)
 - [x] Mirror Node fallback for exit when DB is unreachable

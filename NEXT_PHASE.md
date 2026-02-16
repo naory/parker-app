@@ -11,7 +11,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Smart contracts (DriverRegistry, ParkingNFT) | ✅ Complete | Solidity + Hardhat, 19 passing tests |
+| On-chain components (DriverRegistry + Hedera HTS parking NFT collection) | ✅ Complete | DriverRegistry Solidity contract + HTS mint/burn integration |
 | Driver registration API | ✅ Complete | CRUD routes, plate normalization |
 | Parking session management API | ✅ Complete | Entry/exit flow with fee calculation |
 | Gate API (entry, exit, scan, lot CRUD) | ✅ Complete | Full ALPR integration path |
@@ -27,7 +27,7 @@
 | Off-chain DB layer (PostgreSQL) | ✅ Complete | Drivers, sessions, lots tables |
 | Deployment model (multi-country) | ✅ Complete | DEPLOYMENT_COUNTRIES env-based scoping |
 | Wallet auth (EIP-4361 / SIWE) | ✅ Complete | JWT-based auth with nonce, signature verification; dev fallback via x-wallet-address |
-| Contract deployment (Base Sepolia) | ✅ Complete | DriverRegistry at `0x3Af5...62Ab`, Hedera NFT collection `0.0.7933460` |
+| Contract deployment (optional Base Sepolia components) | ✅ Complete | DriverRegistry at `0x3Af5...62Ab`, Hedera NFT collection `0.0.7933460` |
 | Driver app wallet connect | ✅ Complete | Wagmi + Coinbase Smart Wallet, AuthProvider with SIWE sign-in |
 | Gate offline resilience | ✅ Complete | Session cache in `useSessionCache` hook, 24h TTL, gate opens when API unreachable |
 | Gate exit QR code fallback | ✅ Complete | QR code with payment details when WebSocket is unreliable |
@@ -42,7 +42,7 @@
 
 | Feature | SPEC Reference | Gap |
 |---------|---------------|-----|
-| On-chain driver registration sync | §4.1 | DB-only; register endpoint doesn't call `DriverRegistry.register()` on-chain |
+| Optional on-chain driver registration sync | §4.1 | DB-only; register endpoint doesn't call `DriverRegistry.register()` on-chain |
 
 ---
 
@@ -54,7 +54,7 @@
 2. ~~**x402 on-chain payment verification**~~ ✅ ERC20 transfer verification via viem
 3. ~~**WebSocket authentication**~~ ✅ JWT + gate API key auth on upgrade
 
-4. **On-chain driver registration sync**
+4. **Optional on-chain driver registration sync**
    - Wire `POST /api/drivers/register` to also call `DriverRegistry.register()` on Base Sepolia
    - Implement event listener to sync on-chain state → DB
 
