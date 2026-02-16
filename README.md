@@ -12,6 +12,8 @@ Country operator runs one deployment; lots are per-operator configs.
 
 Parker replaces fragmented centralized parking app flows (e.g., municipal/operator apps such as Pango, EasyPark, or RingGo) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (stablecoin) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
 
+For the architectural rationale, see `docs/WHY_BLOCKCHAIN.md`.
+
 ### White-Label Deployment Model
 
 Parker is multi-country and currency-agnostic at the platform level. In practice, each operator scopes its own deployment to a target market (single country or region) and configures lots within that deployment.
