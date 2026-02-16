@@ -10,6 +10,7 @@ import { isBaseEnabled } from './services/blockchain'
 import { isHederaEnabled } from './services/hedera'
 import { isStripeEnabled } from './services/stripe'
 import { startPaymentWatcher } from './services/paymentWatcher'
+import { logger } from './services/observability'
 
 const app = createApp()
 const server = createServer(app)
@@ -22,18 +23,22 @@ setupWebSocket(server, {
 })
 
 server.listen(port, () => {
-  console.log(`Parker API running on http://localhost:${port}`)
-  console.log(`Hedera NFTs: ${isHederaEnabled() ? 'enabled' : 'disabled'}`)
-  console.log(`Base registry: ${isBaseEnabled() ? 'enabled' : 'disabled'}`)
-  console.log(`Stripe payments: ${isStripeEnabled() ? 'enabled' : 'disabled'}`)
+  logger.info('api_server_started', {
+    port: Number(port),
+    url: `http://localhost:${port}`,
+    hedera_enabled: isHederaEnabled(),
+    base_enabled: isBaseEnabled(),
+    stripe_enabled: isStripeEnabled(),
+  })
 
   // Start on-chain payment watcher (only when Base RPC is configured)
   if (isBaseEnabled()) {
     const rpcUrl = process.env.RPC_URL || 'https://sepolia.base.org'
     const client = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) })
     startPaymentWatcher(client as any)
-    console.log('On-chain payment watcher: enabled')
+    logger.info('payment_watcher_started', { enabled: true })
   } else {
     startPaymentWatcher(null)
+    logger.info('payment_watcher_started', { enabled: false })
   }
 })

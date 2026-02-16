@@ -13,6 +13,7 @@
     "@parker/alpr": "workspace:*",
     "@parker/core": "workspace:*",
     "@parker/hedera": "workspace:*",
+    "@parker/observability": "workspace:*",
     "@parker/x402": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
