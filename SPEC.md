@@ -20,7 +20,7 @@ Centralized parking apps (Tango, Pango) suffer from:
 A decentralized parking system where:
 - Each parking event is an on-chain NFT with immutable timestamps
 - Payment is handled via the x402 protocol (HTTP-native, stablecoin-based)
-- Verification happens directly against the blockchain — no central server dependency
+- Verification is hybrid: PostgreSQL is the fast operational path, with Hedera Mirror Node fallback for resilience
 - Drivers maintain a digital wallet linked to their vehicle identity
 
 ## 2.1 Deployment Model
@@ -43,31 +43,31 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 
 ```
                          ┌───────────────────┐
-                         │    Base L2 Chain   │
-                         │  ┌─────────────┐  │
-                         │  │ ParkingNFT   │  │
-                         │  │ Contract     │  │
-                         │  └─────────────┘  │
-                         │  ┌─────────────┐  │
-                         │  │ DriverReg    │  │
-                         │  │ Contract     │  │
-                         │  └─────────────┘  │
+                         │  Hedera Network   │
+                         │  HTS NFT Token    │
                          └────────▲──────────┘
                                   │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-              ┌─────▼─────┐ ┌────▼────┐ ┌─────▼─────┐
-              │  Driver   │ │ Parker  │ │   Gate    │
-              │  App      │ │ Backend │ │   App     │
-              │  (PWA)    │ │ (API)   │ │   (PWA)   │
-              └───────────┘ └─────────┘ └───────────┘
+              ┌─────────────┐     │      ┌──────────────┐
+              │ Base Sepolia │◄────┼────►│    Stripe    │
+              │ DriverRegistry│            │  (cards)     │
+              │ + x402 rail   │            └──────────────┘
+              │   (optional)  │
+              └──────▲────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+  ┌─────▼─────┐ ┌────▼────┐ ┌─────▼─────┐
+  │  Driver   │ │ Parker  │ │   Gate    │
+  │  App      │ │ Backend │ │   App     │
+  │  (PWA)    │ │ (API)   │ │   (PWA)   │
+  └───────────┘ └─────────┘ └───────────┘
 ```
 
 ### 3.2 Component Breakdown
 
 #### Parker Backend (API Server)
 - Express.js with x402 payment middleware
-- Interfaces with blockchain (ethers.js / viem)
+- Interfaces with Hedera HTS (`@hashgraph/sdk`) and Base (`viem`)
 - ALPR processing pipeline
 - WebSocket for real-time gate events
 - PostgreSQL for off-chain indexing (fast queries, plate lookups)
@@ -86,9 +86,9 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 - Operator dashboard
 - Offline resilience (queue transactions when connectivity drops)
 
-## 4. Smart Contracts
+## 4. On-Chain Components
 
-### 4.1 DriverRegistry Contract
+### 4.1 DriverRegistry Contract (Base Sepolia, optional sync)
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -125,52 +125,19 @@ contract DriverRegistry {
 }
 ```
 
-### 4.2 ParkingNFT Contract
+### 4.2 Parking Session NFT (Hedera HTS)
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+Parker's parking session NFT is implemented on **Hedera Token Service (HTS)** as a native NFT collection (not as a Solidity ERC-721 contract on Base).
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+Active implementation:
+- Entry: API mints one HTS NFT serial per parking session
+- Exit: API burns the serial after payment confirmation
+- Metadata: `plateHash`, `lotId`, and `entryTime` are packed and encrypted with AES-256-GCM before minting
+- Mirror Node fallback: API decrypts metadata and matches `hashPlate(plate)` for DB-down recovery
 
-struct ParkingSession {
-    string plateNumber;
-    string lotId;            // Unique parking lot identifier
-    uint256 entryTime;
-    uint256 exitTime;        // 0 while active
-    uint256 feePaid;         // in USDC (6 decimals)
-    bool active;
-}
-
-contract ParkingNFT is ERC721 {
-    uint256 public nextTokenId;
-    mapping(uint256 => ParkingSession) public sessions;
-    mapping(bytes32 => uint256) public activeSessionByPlate;  // plate hash => tokenId
-
-    // Lot operators (authorized to mint/close sessions)
-    mapping(address => bool) public authorizedLots;
-
-    event SessionStarted(uint256 indexed tokenId, string plateNumber, string lotId, uint256 entryTime);
-    event SessionEnded(uint256 indexed tokenId, string plateNumber, uint256 exitTime, uint256 fee);
-
-    function startSession(
-        string calldata plateNumber,
-        string calldata lotId
-    ) external returns (uint256 tokenId);
-    // Only authorized lot operators can call
-
-    function endSession(
-        string calldata plateNumber,
-        uint256 feePaid
-    ) external;
-    // Calculates duration, charges driver via x402, marks NFT complete
-
-    function getActiveSession(string calldata plateNumber)
-        external view returns (ParkingSession memory);
-
-    function isParked(string calldata plateNumber) external view returns (bool);
-}
-```
+Notes:
+- `contracts/ParkingNFT.sol` exists as a legacy/reference contract from earlier EVM design exploration
+- Production parking-session flow uses HTS mint/burn via `packages/hedera`
 
 ### 4.3 Fee Calculation
 
@@ -333,7 +300,7 @@ CREATE TABLE drivers (
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Session index (mirrors on-chain ParkingNFT)
+-- Session index (mirrors on-chain Hedera HTS parking NFTs)
 CREATE TABLE sessions (
     id                UUID PRIMARY KEY,
     token_id          BIGINT UNIQUE,          -- Hedera NFT serial number
@@ -494,29 +461,32 @@ With write-ahead, the Hedera NFT is the authoritative proof of entry. The DB is 
 
 ### 12.1 On-Chain Privacy Model
 
-The Hedera Mirror Node is a **public REST API** — anyone can query all NFTs in a token collection and read their metadata. This creates a privacy risk: if plate numbers were stored in plaintext, anyone could build a complete parking location history for any vehicle.
+The Hedera Mirror Node is a **public REST API** — anyone can query NFTs in the token collection and read raw metadata bytes. This creates a privacy risk if metadata is stored in cleartext.
 
-**Design principle: hash on-chain, plaintext off-chain.**
+**Design principle: hash + encrypt on-chain, plaintext off-chain.**
 
 ```
 On-chain (Hedera — public):
-  NFT metadata = { "plateHash": "0xa1b2c3...", "lotId": "lot-01", "entryTime": 1707840000 }
+  NFT metadata = AES-256-GCM ciphertext bytes (version + IV + ciphertext + auth tag)
+  // plaintext before encryption: { plateHash, lotId, entryTime }
 
 Off-chain (PostgreSQL — access-controlled):
   sessions = { plate_number: "1234567", hedera_serial: 42, lot_id: "lot-01", ... }
 ```
 
-The plate number is hashed using `keccak256` (via `hashPlate()` from `@parker/core`) before being written to the NFT metadata. This is a **one-way hash** — a third party scanning the Mirror Node sees only opaque hex strings, not plate numbers. They cannot:
+The plate number is first hashed using `keccak256` (via `hashPlate()` from `@parker/core`), then packed with `lotId` and `entryTime`, and finally encrypted with **AES-256-GCM** (`NFT_ENCRYPTION_KEY`) before minting. A third party scanning the Mirror Node sees ciphertext bytes, not readable fields. They cannot:
 - Reverse a hash to get a plate number
 - Link two parking sessions to the same vehicle (without already knowing the plate)
 - Build a location history for a driver
 
-The API server correlates NFTs to sessions by computing `hashPlate(plate)` and matching it against the on-chain `plateHash`. This works for the Mirror Node fallback path (§11.3) because the gate already knows the plate (from ALPR) and can hash it to look up the matching NFT.
+The API server correlates NFTs to sessions in fallback mode by:
+1. computing `hashPlate(plate)` from the gate scan
+2. decrypting candidate NFT metadata with `NFT_ENCRYPTION_KEY`
+3. matching decrypted `plateHash`
 
 **What remains public on-chain:**
-- `lotId` — an internal identifier (e.g., "lot-01"), not a street address. An observer can see how many sessions a lot has, but not who parked there.
-- `entryTime` — timestamp of when a session started
-- Mint/burn transaction history — proves a session existed and when it ended
+- Mint/burn transaction history and token serial lifecycle
+- Encrypted metadata payload bytes (not plaintext fields)
 
 **What is NOT on-chain:**
 - Plate numbers (only hashes)
@@ -567,7 +537,7 @@ The API server correlates NFTs to sessions by computing `hashPlate(plate)` and m
 
 ## 15. Open Questions
 
-1. ~~**Which chain?**~~ Resolved: dual-chain — Hedera (parking NFTs via HTS) + Base Sepolia (driver registry + x402 payments)
+1. ~~**Which chain?**~~ Resolved: Hedera-first for parking NFTs (HTS), with optional Base Sepolia components (DriverRegistry sync + x402 rail)
 2. ~~**Currency conversion:**~~ Resolved: each lot sets its own currency; Stripe charges natively, x402 converts via FX rates
 3. ~~**DB single point of failure:**~~ Resolved: write-ahead NFT + Mirror Node fallback + gate-side cache implemented (§11). Remaining P2 items: DB sync queue + circuit breaker.
 4. **Unregistered cars:** Refuse entry? Allow with traditional ticket fallback?
