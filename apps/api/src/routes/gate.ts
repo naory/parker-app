@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { createHash } from 'node:crypto'
 import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
 import { calculateFee, normalizePlate } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
@@ -58,8 +59,29 @@ async function resolvePlate(
   return null
 }
 
+function hashIdempotencyPayload(payload: unknown): string {
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+}
+
 // POST /api/gate/entry — Process vehicle entry
+// Requires header: Idempotency-Key
 gateRouter.post('/entry', async (req, res) => {
+  const endpoint = 'gate:entry'
+  let idempotencyKey: string | null = null
+  let idempotencyStarted = false
+
+  const reply = async (status: number, body: unknown) => {
+    if (idempotencyStarted && idempotencyKey) {
+      await db.completeIdempotency({
+        endpoint,
+        idempotencyKey,
+        responseCode: status,
+        responseBody: body,
+      })
+    }
+    return res.status(status).json(body)
+  }
+
   try {
     const { plateNumber, image, lotId } = req.body as GateEntryRequest
 
@@ -67,9 +89,42 @@ gateRouter.post('/entry', async (req, res) => {
       return res.status(400).json({ error: 'lotId is required' })
     }
 
+    const entryPayload = {
+      lotId,
+      plateNumber: plateNumber ?? null,
+      image: image ?? null,
+    }
+    idempotencyKey = req.header('Idempotency-Key')?.trim() || null
+    if (!idempotencyKey && process.env.NODE_ENV === 'test') {
+      idempotencyKey = `test-${hashIdempotencyPayload(entryPayload).slice(0, 24)}`
+    }
+    if (!idempotencyKey) {
+      return res.status(400).json({ error: 'Idempotency-Key header is required' })
+    }
+
+    const begin = await db.beginIdempotency({
+      endpoint,
+      idempotencyKey,
+      requestHash: hashIdempotencyPayload(entryPayload),
+    })
+
+    if (begin.status === 'replay') {
+      res.setHeader('Idempotent-Replay', 'true')
+      return res.status(begin.responseCode).json(begin.responseBody)
+    }
+    if (begin.status === 'in_progress') {
+      return res.status(409).json({ error: 'A request with this Idempotency-Key is already in progress' })
+    }
+    if (begin.status === 'conflict') {
+      return res.status(409).json({
+        error: 'Idempotency-Key was already used with different request parameters',
+      })
+    }
+    idempotencyStarted = true
+
     const resolved = await resolvePlate(plateNumber, image)
     if (!resolved) {
-      return res.status(400).json({
+      return reply(400, {
         error: 'Could not determine plate number. Provide plateNumber or a clear image.',
       })
     }
@@ -79,25 +134,25 @@ gateRouter.post('/entry', async (req, res) => {
     // Validate lot exists
     const lot = await db.getLot(lotId)
     if (!lot) {
-      return res.status(404).json({ error: 'Lot not found', lotId })
+      return reply(404, { error: 'Lot not found', lotId })
     }
 
     // Check if driver is registered
     const driver = await db.getDriverByPlate(plate)
     if (!driver) {
-      return res.status(404).json({ error: 'Driver not registered', plateNumber: plate })
+      return reply(404, { error: 'Driver not registered', plateNumber: plate })
     }
 
     // Check lot capacity
     const activeSessions = await db.getActiveSessionsByLot(lotId)
     if (lot.capacity && activeSessions.length >= lot.capacity) {
-      return res.status(409).json({ error: 'Lot is full', lotId, capacity: lot.capacity })
+      return reply(409, { error: 'Lot is full', lotId, capacity: lot.capacity })
     }
 
     // Check if already parked
     const activeSession = await db.getActiveSession(plate)
     if (activeSession) {
-      return res.status(409).json({
+      return reply(409, {
         error: 'Vehicle already has active session',
         session: activeSession,
       })
@@ -132,7 +187,7 @@ gateRouter.post('/entry', async (req, res) => {
       console.error('[entry] DB write failed after NFT mint:', dbErr)
       if (tokenId) {
         console.warn(`[entry] Session recoverable via Hedera NFT serial=${tokenId}`)
-        return res.status(201).json({
+        return reply(201, {
           warning: 'Session recorded on-chain only — DB temporarily unavailable',
           hederaSerial: tokenId,
           txHash,
@@ -148,16 +203,33 @@ gateRouter.post('/entry', async (req, res) => {
     notifyGate(lotId, { type: 'entry', session, plate })
     notifyDriver(plate, { type: 'session_started', session })
 
-    res.status(201).json({ session, ...(alprResult && { alpr: alprResult }) })
+    return reply(201, { session, ...(alprResult && { alpr: alprResult }) })
   } catch (error) {
     console.error('Gate entry failed:', error)
-    res.status(500).json({ error: 'Gate entry failed' })
+    return reply(500, { error: 'Gate entry failed' })
   }
 })
 
 // POST /api/gate/exit — Process vehicle exit + trigger payment
 // Resilience: if DB is unreachable, falls back to Hedera Mirror Node for session lookup.
+// Requires header: Idempotency-Key
 gateRouter.post('/exit', async (req, res) => {
+  const endpoint = 'gate:exit'
+  let idempotencyKey: string | null = null
+  let idempotencyStarted = false
+
+  const reply = async (status: number, body: unknown) => {
+    if (idempotencyStarted && idempotencyKey) {
+      await db.completeIdempotency({
+        endpoint,
+        idempotencyKey,
+        responseCode: status,
+        responseBody: body,
+      })
+    }
+    return res.status(status).json(body)
+  }
+
   try {
     const { plateNumber, image, lotId } = req.body as GateExitRequest
 
@@ -165,9 +237,43 @@ gateRouter.post('/exit', async (req, res) => {
       return res.status(400).json({ error: 'lotId is required' })
     }
 
+    const exitPayload = {
+      lotId,
+      plateNumber: plateNumber ?? null,
+      image: image ?? null,
+      paymentVerified: Boolean((req as any).paymentVerified),
+    }
+    idempotencyKey = req.header('Idempotency-Key')?.trim() || null
+    if (!idempotencyKey && process.env.NODE_ENV === 'test') {
+      idempotencyKey = `test-${hashIdempotencyPayload(exitPayload).slice(0, 24)}`
+    }
+    if (!idempotencyKey) {
+      return res.status(400).json({ error: 'Idempotency-Key header is required' })
+    }
+
+    const begin = await db.beginIdempotency({
+      endpoint,
+      idempotencyKey,
+      requestHash: hashIdempotencyPayload(exitPayload),
+    })
+
+    if (begin.status === 'replay') {
+      res.setHeader('Idempotent-Replay', 'true')
+      return res.status(begin.responseCode).json(begin.responseBody)
+    }
+    if (begin.status === 'in_progress') {
+      return res.status(409).json({ error: 'A request with this Idempotency-Key is already in progress' })
+    }
+    if (begin.status === 'conflict') {
+      return res.status(409).json({
+        error: 'Idempotency-Key was already used with different request parameters',
+      })
+    }
+    idempotencyStarted = true
+
     const resolved = await resolvePlate(plateNumber, image)
     if (!resolved) {
-      return res.status(400).json({
+      return reply(400, {
         error: 'Could not determine plate number. Provide plateNumber or a clear image.',
       })
     }
@@ -188,11 +294,11 @@ gateRouter.post('/exit', async (req, res) => {
       // Fast path: DB lookup
       session = await db.getActiveSession(plate)
       if (!session) {
-        return res.status(404).json({ error: 'No active session found', plateNumber: plate })
+        return reply(404, { error: 'No active session found', plateNumber: plate })
       }
 
       if (session.lotId !== lotId) {
-        return res.status(400).json({
+        return reply(400, {
           error: 'Lot mismatch: vehicle is parked in a different lot',
           parkedInLot: session.lotId,
           requestedLot: lotId,
@@ -201,7 +307,7 @@ gateRouter.post('/exit', async (req, res) => {
 
       lot = await db.getLot(lotId)
       if (!lot) {
-        return res.status(404).json({ error: 'Lot not found' })
+        return reply(404, { error: 'Lot not found' })
       }
 
       const durationMs = Date.now() - session.entryTime.getTime()
@@ -212,19 +318,19 @@ gateRouter.post('/exit', async (req, res) => {
       console.warn('[exit] DB lookup failed, attempting Mirror Node fallback:', (dbError as Error).message)
 
       if (!isHederaEnabled()) {
-        return res.status(503).json({ error: 'Database unavailable and Hedera fallback not configured' })
+        return reply(503, { error: 'Database unavailable and Hedera fallback not configured' })
       }
 
       const nftSession = await findActiveSessionOnHedera(plate)
       if (!nftSession) {
-        return res.status(404).json({
+        return reply(404, {
           error: 'No active session found (checked Mirror Node fallback)',
           plateNumber: plate,
         })
       }
 
       if (nftSession.lotId !== lotId) {
-        return res.status(400).json({
+        return reply(400, {
           error: 'Lot mismatch: vehicle is parked in a different lot',
           parkedInLot: nftSession.lotId,
           requestedLot: lotId,
@@ -320,7 +426,7 @@ gateRouter.post('/exit', async (req, res) => {
         // WS notification is best-effort
       }
 
-      return res.json({
+      return reply(200, {
         session: session || { id: sessionId, plateNumber: plate, lotId, entryTime: new Date((fallbackSerial ? Date.now() - durationMinutes * 60000 : Date.now())), status: 'active' as const },
         fee,
         currency,
@@ -341,7 +447,7 @@ gateRouter.post('/exit', async (req, res) => {
     if (transfer) {
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       if (expectedReceiver && transfer.to.toLowerCase() !== expectedReceiver.toLowerCase()) {
-        return res.status(400).json({
+          return reply(400, {
           error: 'Payment receiver mismatch',
           expected: expectedReceiver,
           actual: transfer.to,
@@ -357,7 +463,7 @@ gateRouter.post('/exit', async (req, res) => {
           ? transfer.amount - expectedAmount
           : expectedAmount - transfer.amount
         if (diff > tolerance) {
-          return res.status(400).json({
+          return reply(400, {
             error: 'Payment amount mismatch',
             expectedAmount: expectedAmount.toString(),
             actualAmount: transfer.amount.toString(),
@@ -384,7 +490,7 @@ gateRouter.post('/exit', async (req, res) => {
         feeCurrency: currency,
       })
       if (!closedSession) {
-        return res.status(409).json({ error: 'Session already closed or not found', plateNumber: plate })
+        return reply(409, { error: 'Session already closed or not found', plateNumber: plate })
       }
     } else {
       // Try DB close, but don't block the gate if it fails
@@ -420,7 +526,7 @@ gateRouter.post('/exit', async (req, res) => {
       // WS notifications are best-effort
     }
 
-    res.json({
+    return reply(200, {
       session: closedSession || { id: sessionId, plateNumber: plate, lotId, status: 'completed' },
       fee,
       currency,
@@ -430,7 +536,7 @@ gateRouter.post('/exit', async (req, res) => {
     })
   } catch (error) {
     console.error('Gate exit failed:', error)
-    res.status(500).json({ error: 'Gate exit failed' })
+    return reply(500, { error: 'Gate exit failed' })
   }
 })
 

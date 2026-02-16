@@ -169,6 +169,80 @@ async function updateLot(lotId: string, updates: UpdateLotInput): Promise<Lot | 
   return rows[0] ? mapLot(rows[0]) : null
 }
 
+// ---- Idempotency Queries ----
+
+interface BeginIdempotencyInput {
+  endpoint: string
+  idempotencyKey: string
+  requestHash: string
+}
+
+type BeginIdempotencyResult =
+  | { status: 'started' }
+  | { status: 'replay'; responseCode: number; responseBody: unknown }
+  | { status: 'in_progress' }
+  | { status: 'conflict' }
+
+async function beginIdempotency(input: BeginIdempotencyInput): Promise<BeginIdempotencyResult> {
+  const insert = await pool.query(
+    `INSERT INTO idempotency_keys (endpoint, idempotency_key, request_hash, status)
+     VALUES ($1, $2, $3, 'pending')
+     ON CONFLICT DO NOTHING
+     RETURNING endpoint`,
+    [input.endpoint, input.idempotencyKey, input.requestHash],
+  )
+
+  if (insert.rowCount && insert.rowCount > 0) {
+    return { status: 'started' }
+  }
+
+  const { rows } = await pool.query(
+    `SELECT request_hash, status, response_code, response_body
+     FROM idempotency_keys
+     WHERE endpoint = $1 AND idempotency_key = $2`,
+    [input.endpoint, input.idempotencyKey],
+  )
+
+  const row = rows[0]
+  if (!row) {
+    // Very unlikely race (deleted between insert/select) — allow processing.
+    return { status: 'started' }
+  }
+
+  if (row.request_hash !== input.requestHash) {
+    return { status: 'conflict' }
+  }
+
+  if (row.status === 'completed') {
+    return {
+      status: 'replay',
+      responseCode: row.response_code ?? 200,
+      responseBody: row.response_body ?? {},
+    }
+  }
+
+  return { status: 'in_progress' }
+}
+
+interface CompleteIdempotencyInput {
+  endpoint: string
+  idempotencyKey: string
+  responseCode: number
+  responseBody: unknown
+}
+
+async function completeIdempotency(input: CompleteIdempotencyInput): Promise<void> {
+  await pool.query(
+    `UPDATE idempotency_keys
+     SET status = 'completed',
+         response_code = $3,
+         response_body = $4::jsonb,
+         completed_at = NOW()
+     WHERE endpoint = $1 AND idempotency_key = $2`,
+    [input.endpoint, input.idempotencyKey, input.responseCode, JSON.stringify(input.responseBody ?? {})],
+  )
+}
+
 // ---- Row Mappers ----
 
 function mapDriver(row: any): DriverRecord {
@@ -231,4 +305,6 @@ export const db = {
   getSessionHistory,
   getLot,
   updateLot,
+  beginIdempotency,
+  completeIdempotency,
 }

@@ -8,11 +8,13 @@ Most parking lots today are fully automated: they scan license plates at entry a
 
 ## Overview
 
-Parker replaces broken centralized parking apps (like Tango) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (stablecoin) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
+Country operator runs one deployment; lots are per-operator configs.
+
+Parker replaces fragmented centralized parking app flows (e.g., municipal/operator apps such as Pango, EasyPark, or RingGo) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (stablecoin) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
 
 ### White-Label Deployment Model
 
-Parker is a multi-country, currency-agnostic platform — but each deployment is operated by a **country or regional entity** that white-labels it for their market. A single deployment is scoped to one country (e.g., Israel, US) or one region (e.g., EU).
+Parker is multi-country and currency-agnostic at the platform level. In practice, each operator scopes its own deployment to a target market (single country or region) and configures lots within that deployment.
 
 The `DEPLOYMENT_COUNTRIES` environment variable controls:
 - **Driver registration** — only countries in the deployment are shown; single-country deployments auto-select and hide the picker
@@ -172,6 +174,29 @@ This starts:
 - **Driver app** on `http://localhost:3000`
 - **Gate app** on `http://localhost:3002`
 
+### Secrets & Key Management (Production)
+
+For local development, `.env` files are convenient. For production, inject secrets at runtime from a managed secret store.
+
+- **HashiCorp Vault (example):**
+  ```bash
+  export HEDERA_PRIVATE_KEY="$(vault kv get -field=HEDERA_PRIVATE_KEY secret/parker/prod)"
+  export NFT_ENCRYPTION_KEY="$(vault kv get -field=NFT_ENCRYPTION_KEY secret/parker/prod)"
+  pnpm --filter api start
+  ```
+- **AWS Secrets Manager (example):**
+  ```bash
+  export HEDERA_PRIVATE_KEY="$(aws secretsmanager get-secret-value --secret-id parker/prod --query 'SecretString' --output text | jq -r '.HEDERA_PRIVATE_KEY')"
+  export NFT_ENCRYPTION_KEY="$(aws secretsmanager get-secret-value --secret-id parker/prod --query 'SecretString' --output text | jq -r '.NFT_ENCRYPTION_KEY')"
+  pnpm --filter api start
+  ```
+- **Doppler (example):**
+  ```bash
+  doppler run -- pnpm --filter api start
+  ```
+
+**Never store production private keys on developer laptops, in git, or in plaintext `.env` files.** Rotate keys after any suspected exposure.
+
 ### Seed Data
 
 The database is auto-seeded with two demo lots and a test driver. Each lot has its own currency, rates, and payment methods — see `apps/api/src/db/seed.sql` for details.
@@ -192,11 +217,13 @@ Use the default seeded values:
 # Entry (starts session + mints Hedera HTS NFT when configured)
 curl -X POST http://localhost:3001/api/gate/entry \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: entry-lot01-1234567-001" \
   -d '{"plateNumber":"1234567","lotId":"lot-01"}'
 
 # Exit (returns fee + payment options; session closes after payment confirmation)
 curl -X POST http://localhost:3001/api/gate/exit \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: exit-lot01-1234567-001" \
   -d '{"plateNumber":"1234567","lotId":"lot-01"}'
 ```
 
@@ -324,8 +351,8 @@ parker-app/
 ### Gate API
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/gate/entry` | Process vehicle entry (plate string or image) |
-| POST | `/api/gate/exit` | Process vehicle exit + return payment options (x402 + Stripe) |
+| POST | `/api/gate/entry` | Process vehicle entry (plate string or image). Requires `Idempotency-Key` header |
+| POST | `/api/gate/exit` | Process vehicle exit + return payment options (x402 + Stripe). Requires `Idempotency-Key` header |
 | POST | `/api/gate/scan` | ALPR: upload image, get plate number |
 | GET | `/api/gate/lot/:lotId/status` | Lot occupancy, config, currency, payment methods |
 | GET | `/api/gate/lot/:lotId/sessions` | Active sessions list |
@@ -346,6 +373,8 @@ parker-app/
 
 **On-chain privacy:** Plate numbers are **never stored in plaintext** on Hedera. Parker hashes the plate (`plateHash`) and then stores NFT metadata as an **AES-256-GCM encrypted binary payload** on HTS. Public Mirror Node readers see ciphertext bytes, not readable plate/lot/time fields. The API can decrypt metadata with `NFT_ENCRYPTION_KEY` for fallback lookups, while plaintext plate data remains only in the access-controlled PostgreSQL database. See `SPEC.md` §12.1 for the full privacy model.
 
+For a focused adversarial analysis (replay attacks, cloned tickets, plate spoofing, race conditions, gate offline behavior, and payment disputes), see `THREAT_MODEL.md`.
+
 ## Validation & Safety
 
 The API enforces the following invariants:
@@ -358,6 +387,7 @@ The API enforces the following invariants:
 - **Multi-currency** — each lot defines its own currency (ISO 4217); the pricing service converts to stablecoin via configurable FX rates for the x402 rail, while Stripe charges in the lot's native currency directly
 - **Payment-before-close** — the exit route returns payment options without closing the session; the session is only closed after payment confirmation (x402 proof header or Stripe webhook)
 - **Idempotent webhooks** — Stripe webhook handler checks if the session is still active before closing, preventing duplicate closures on retry
+- **Idempotent gate mutations** — `POST /api/gate/entry` and `POST /api/gate/exit` require an `Idempotency-Key`; duplicate retries return the cached response without re-running side effects
 - **Input validation** — required fields are checked on all mutation endpoints; numeric lot settings reject `NaN`; session history `limit`/`offset` are sanitized and capped
 - **Duplicate registration** — returns `409` with a clear error message instead of a generic 500
 - **Status constraints** — `sessions.status` is enforced via `CHECK` constraint (`active`, `completed`, `cancelled`)

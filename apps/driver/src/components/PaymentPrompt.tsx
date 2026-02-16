@@ -19,6 +19,13 @@ const ERC20_TRANSFER_ABI = [
   },
 ] as const
 
+function newIdempotencyKey(prefix: string): string {
+  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+  return `${prefix}-${Date.now()}-${rand}`
+}
+
 interface PaymentPromptProps {
   fee: number
   currency: string
@@ -75,6 +82,7 @@ export function PaymentPrompt({
         headers: {
           'Content-Type': 'application/json',
           'X-PAYMENT': txHash,
+          'Idempotency-Key': newIdempotencyKey(`driver-exit-pay-${lotId}-${plateNumber}`),
         },
         body: JSON.stringify({ plateNumber, lotId }),
       })
@@ -106,6 +114,7 @@ export function PaymentPrompt({
         headers: {
           'Content-Type': 'application/json',
           'X-PAYMENT': 'simulated-dev-payment',
+          'Idempotency-Key': newIdempotencyKey(`driver-exit-sim-${lotId}-${plateNumber}`),
         },
         body: JSON.stringify({ plateNumber, lotId }),
       })
