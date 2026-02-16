@@ -6,6 +6,13 @@ import type { PaymentOptions } from '@parker/core'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
+function newIdempotencyKey(prefix: string): string {
+  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+  return `${prefix}-${Date.now()}-${rand}`
+}
+
 export default function PayPage() {
   return (
     <Suspense
@@ -42,7 +49,10 @@ function PayContent() {
 
     fetch(`${API_URL}/api/gate/exit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': newIdempotencyKey(`driver-pay-load-${lotId}-${plate}`),
+      },
       body: JSON.stringify({ plateNumber: plate, lotId }),
     })
       .then(async (res) => {
@@ -68,6 +78,7 @@ function PayContent() {
         headers: {
           'Content-Type': 'application/json',
           'X-PAYMENT': 'simulated-dev-payment',
+          'Idempotency-Key': newIdempotencyKey(`driver-pay-sim-${lotId}-${plate}`),
         },
         body: JSON.stringify({ plateNumber: plate, lotId }),
       })

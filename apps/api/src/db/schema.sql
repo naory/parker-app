@@ -63,3 +63,18 @@ CREATE TABLE lots (
     operator_wallet VARCHAR(42) NOT NULL,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Idempotency keys for gate entry/exit requests
+-- Prevents duplicate side effects (double mint/burn/session transitions) on retries.
+CREATE TABLE idempotency_keys (
+    endpoint        VARCHAR(64) NOT NULL,    -- e.g. gate:entry, gate:exit
+    idempotency_key VARCHAR(255) NOT NULL,
+    request_hash    VARCHAR(128) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending|completed
+    response_code   INT,
+    response_body   JSONB,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    PRIMARY KEY (endpoint, idempotency_key),
+    CONSTRAINT chk_idempotency_status CHECK (status IN ('pending', 'completed'))
+);

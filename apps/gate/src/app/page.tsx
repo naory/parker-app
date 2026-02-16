@@ -12,6 +12,13 @@ import { useSessionCache } from '@/hooks/useSessionCache'
 import { buildERC20TransferURI, USDC_ADDRESSES } from '@parker/core'
 import type { PaymentOptions } from '@parker/core'
 
+function newIdempotencyKey(prefix: string): string {
+  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+  return `${prefix}-${Date.now()}-${rand}`
+}
+
 export default function GateView() {
   const [mode, setMode] = useState<'entry' | 'exit'>('entry')
   const [lastPlate, setLastPlate] = useState<string | null>(null)
@@ -94,7 +101,10 @@ export default function GateView() {
       const endpoint = mode === 'entry' ? '/api/gate/entry' : '/api/gate/exit'
       const res = await fetch(`${apiUrl}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': newIdempotencyKey(`gate-${mode}-${lotId}-${plate}`),
+        },
         body: JSON.stringify({ plateNumber: plate, lotId }),
       })
 
