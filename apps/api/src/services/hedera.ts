@@ -9,7 +9,8 @@ import {
   type ActiveNftSession,
 } from '@parker/hedera'
 import { hashPlate } from '@parker/core'
-import type { Client } from '@hashgraph/sdk'
+import { TokenInfoQuery, type Client } from '@hashgraph/sdk'
+import { logger, mintLatencyMs, burnLatencyMs, mirrorLagSeconds } from './observability'
 
 // ---- Configuration ----
 
@@ -67,11 +68,19 @@ export async function mintParkingNFTOnHedera(
   }
 
   const client = getClient()
+  const startedAt = Date.now()
   const result = await htsMint(client, HEDERA_TOKEN_ID, {
     plateHash: hashPlate(plateNumber),
     lotId,
     entryTime: Math.floor(Date.now() / 1000),
   }, _encryptionKey)
+  mintLatencyMs.observe(Date.now() - startedAt)
+  logger.info('hedera_mint_success', {
+    token_id: HEDERA_TOKEN_ID,
+    serial: result.serial,
+    duration_ms: Date.now() - startedAt,
+    lot_id: lotId,
+  })
 
   return {
     tokenId: result.serial,
@@ -91,7 +100,14 @@ export async function endParkingSessionOnHedera(
   }
 
   const client = getClient()
+  const startedAt = Date.now()
   const result = await htsBurn(client, HEDERA_TOKEN_ID, serial)
+  burnLatencyMs.observe(Date.now() - startedAt)
+  logger.info('hedera_burn_success', {
+    token_id: HEDERA_TOKEN_ID,
+    serial,
+    duration_ms: Date.now() - startedAt,
+  })
 
   return { txHash: result.transactionId }
 }
@@ -119,7 +135,41 @@ export async function findActiveSessionOnHedera(
   if (!HEDERA_TOKEN_ID) return null
 
   const plate_hash = hashPlate(plateNumber)
-  return htsFindByPlate(HEDERA_TOKEN_ID, plate_hash, HEDERA_NETWORK, _encryptionKey)
+  const result = await htsFindByPlate(HEDERA_TOKEN_ID, plate_hash, HEDERA_NETWORK, _encryptionKey)
+  if (result?.entryTime) {
+    const lagSeconds = Math.max(0, Math.floor(Date.now() / 1000) - result.entryTime)
+    mirrorLagSeconds.observe(lagSeconds)
+  }
+  return result
+}
+
+export async function checkHederaConnectivity(): Promise<boolean> {
+  if (!isHederaEnabled() || !HEDERA_TOKEN_ID) return false
+  try {
+    const client = getClient()
+    await new TokenInfoQuery().setTokenId(HEDERA_TOKEN_ID).execute(client)
+    return true
+  } catch (error) {
+    logger.warn('hedera_connectivity_check_failed', { token_id: HEDERA_TOKEN_ID }, error)
+    return false
+  }
+}
+
+export async function checkMirrorNodeConnectivity(): Promise<boolean> {
+  if (!HEDERA_TOKEN_ID) return false
+  const baseUrl =
+    HEDERA_NETWORK === 'mainnet'
+      ? 'https://mainnet-public.mirrornode.hedera.com'
+      : HEDERA_NETWORK === 'previewnet'
+        ? 'https://previewnet.mirrornode.hedera.com'
+        : 'https://testnet.mirrornode.hedera.com'
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/tokens/${HEDERA_TOKEN_ID}`)
+    return res.ok || res.status === 404
+  } catch (error) {
+    logger.warn('mirror_connectivity_check_failed', { base_url: baseUrl }, error)
+    return false
+  }
 }
 
 export { type ActiveNftSession }

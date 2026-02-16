@@ -10,9 +10,12 @@ import { sessionsRouter } from './routes/sessions'
 import { webhooksRouter } from './routes/webhooks'
 import { verifyWallet } from './middleware/auth'
 import { strictLimit, mediumLimit, standardLimit } from './middleware/rateLimit'
+import { observabilityMiddleware } from './middleware/observability'
 import { isBaseEnabled } from './services/blockchain'
 import { isHederaEnabled } from './services/hedera'
 import { isStripeEnabled } from './services/stripe'
+import { metrics } from './services/observability'
+import { getReadinessReport } from './services/health'
 
 export function createApp() {
   const app = express()
@@ -23,6 +26,7 @@ export function createApp() {
   // Middleware
   app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || '*' }))
   app.use(express.json({ limit: '10mb' }))
+  app.use(observabilityMiddleware)
   app.use(verifyWallet)
 
   // Rate limiting
@@ -42,7 +46,41 @@ export function createApp() {
     publicClient,
   }))
 
-  // Health check
+  // Basic health check (liveness)
+  app.get('/healthz', (_req, res) => {
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+    })
+  })
+
+  // Detailed readiness check (dependencies/config)
+  app.get('/readyz', async (_req, res) => {
+    const readiness = await getReadinessReport()
+    const status = readiness.ready ? 200 : 503
+    res.status(status).json({
+      status: readiness.ready ? 'ready' : 'not_ready',
+      timestamp: new Date().toISOString(),
+      checks: {
+        db: readiness.db ? 'ok' : 'fail',
+        hedera: readiness.hedera ? 'ok' : 'fail',
+        mirror: readiness.mirror ? 'ok' : 'fail',
+        paymentRails: readiness.paymentRails,
+      },
+    })
+  })
+
+  // Metrics snapshot
+  app.get('/metrics', (_req, res) => {
+    res.json({
+      timestamp: new Date().toISOString(),
+      metrics: metrics.asJson(),
+      tracing: { status: 'todo' },
+    })
+  })
+
+  // Backward-compatible health endpoint
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',

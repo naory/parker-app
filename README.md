@@ -324,6 +324,7 @@ parker-app/
 │   ├── hedera/          # Hedera HTS integration (mint/burn NFTs, mirror node queries, setup script)
 │   ├── alpr/            # License plate recognition (Google Vision + country-aware plate normalization)
 │   ├── x402/            # x402 payment middleware (server) + payment client (browser)
+│   ├── observability/   # Structured logging + metrics primitives
 │   ├── tsconfig/        # Shared TypeScript configs
 │   └── eslint-config/   # Shared ESLint config
 ├── infra/               # Docker Compose (PostgreSQL)
@@ -363,6 +364,13 @@ parker-app/
 |--------|------|-------------|
 | POST | `/api/webhooks/stripe` | Stripe payment confirmation (closes session + burns NFT) |
 
+### Health & Observability
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/healthz` | Liveness probe (basic process health) |
+| GET | `/readyz` | Readiness probe (DB + Hedera + Mirror Node + payment rail config) |
+| GET | `/metrics` | In-memory metrics snapshot (mint/burn latency, mirror lag, failures) |
+
 ### WebSocket
 | Path | Description |
 |------|-------------|
@@ -374,6 +382,11 @@ parker-app/
 **On-chain privacy:** Plate numbers are **never stored in plaintext** on Hedera. Parker hashes the plate (`plateHash`) and then stores NFT metadata as an **AES-256-GCM encrypted binary payload** on HTS. Public Mirror Node readers see ciphertext bytes, not readable plate/lot/time fields. The API can decrypt metadata with `NFT_ENCRYPTION_KEY` for fallback lookups, while plaintext plate data remains only in the access-controlled PostgreSQL database. See `SPEC.md` §12.1 for the full privacy model.
 
 For a focused adversarial analysis (replay attacks, cloned tickets, plate spoofing, race conditions, gate offline behavior, and payment disputes), see `THREAT_MODEL.md`.
+
+Observability highlights:
+- Structured JSON logs with request context (`request_id`, `session_id`, `lot_id`)
+- Core metrics for mint/burn latency, mirror lag, failed exits, and payment failures
+- Tracing is intentionally deferred for now (**TODO**) and will be added in a later phase.
 
 ## Validation & Safety
 

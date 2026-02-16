@@ -15,6 +15,7 @@ import {
 import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
 import { addPendingPayment, removePendingPayment } from '../services/paymentWatcher'
+import { failedExitsTotal, logger, paymentFailuresTotal } from '../services/observability'
 import type { PaymentRequired } from '@parker/x402'
 
 export const gateRouter = Router()
@@ -83,6 +84,7 @@ gateRouter.post('/entry', async (req, res) => {
   }
 
   try {
+    const requestId = (res.locals as any).requestId as string | undefined
     const { plateNumber, image, lotId } = req.body as GateEntryRequest
 
     if (!lotId) {
@@ -202,6 +204,13 @@ gateRouter.post('/entry', async (req, res) => {
     // Notify via WebSocket
     notifyGate(lotId, { type: 'entry', session, plate })
     notifyDriver(plate, { type: 'session_started', session })
+    logger.info('gate_entry_success', {
+      request_id: requestId,
+      session_id: session.id,
+      lot_id: lotId,
+      plate_number: plate,
+      token_id: session.tokenId,
+    })
 
     return reply(201, { session, ...(alprResult && { alpr: alprResult }) })
   } catch (error) {
@@ -219,6 +228,9 @@ gateRouter.post('/exit', async (req, res) => {
   let idempotencyStarted = false
 
   const reply = async (status: number, body: unknown) => {
+    if (status >= 400) {
+      failedExitsTotal.inc({ status: String(status) })
+    }
     if (idempotencyStarted && idempotencyKey) {
       await db.completeIdempotency({
         endpoint,
@@ -231,6 +243,7 @@ gateRouter.post('/exit', async (req, res) => {
   }
 
   try {
+    const requestId = (res.locals as any).requestId as string | undefined
     const { plateNumber, image, lotId } = req.body as GateExitRequest
 
     if (!lotId) {
@@ -447,7 +460,8 @@ gateRouter.post('/exit', async (req, res) => {
     if (transfer) {
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       if (expectedReceiver && transfer.to.toLowerCase() !== expectedReceiver.toLowerCase()) {
-          return reply(400, {
+        paymentFailuresTotal.inc({ reason: 'receiver_mismatch' })
+        return reply(400, {
           error: 'Payment receiver mismatch',
           expected: expectedReceiver,
           actual: transfer.to,
@@ -463,6 +477,7 @@ gateRouter.post('/exit', async (req, res) => {
           ? transfer.amount - expectedAmount
           : expectedAmount - transfer.amount
         if (diff > tolerance) {
+          paymentFailuresTotal.inc({ reason: 'amount_mismatch' })
           return reply(400, {
             error: 'Payment amount mismatch',
             expectedAmount: expectedAmount.toString(),
@@ -525,6 +540,16 @@ gateRouter.post('/exit', async (req, res) => {
     } catch {
       // WS notifications are best-effort
     }
+
+    logger.info('gate_exit_success', {
+      request_id: requestId,
+      session_id: closedSession?.id || sessionId,
+      lot_id: lotId,
+      plate_number: plate,
+      using_fallback: usingFallback,
+      fee_amount: fee,
+      fee_currency: currency,
+    })
 
     return reply(200, {
       session: closedSession || { id: sessionId, plateNumber: plate, lotId, status: 'completed' },
