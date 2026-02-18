@@ -119,21 +119,68 @@ gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
     const { plate, lotId } = parsedBody
     let intent = await db.getActiveXrplPendingIntent(plate, lotId)
 
-    // Backward-compatible fallback while deployments roll out the new DB table.
+    // If pending state is missing (e.g. restart or direct driver flow), derive it here.
     if (!intent) {
-      const pending = getPendingPaymentByPlateLot(plate, lotId)
-      if (pending) {
-        intent = await db.upsertXrplPendingIntent({
-          plateNumber: pending.plate,
-          lotId: pending.lotId,
-          sessionId: pending.sessionId,
-          amount: pending.expectedAmount,
-          destination: pending.receiverWallet,
-          token: X402_STABLECOIN,
-          network: X402_NETWORK,
-          expiresAt: new Date(Date.now() + 15 * 60_000),
-        })
+      let pending = getPendingPaymentByPlateLot(plate, lotId)
+      if (!pending) {
+        const session = await db.getActiveSession(plate)
+        if (!session) {
+          return res.status(404).json({
+            error: 'No active session found. Request /api/gate/exit first.',
+          })
+        }
+        if (session.lotId !== lotId) {
+          return res.status(400).json({
+            error: 'Lot mismatch for active session',
+            parkedInLot: session.lotId,
+            requestedLot: lotId,
+          })
+        }
+
+        const lot = await db.getLot(lotId)
+        if (!lot) {
+          return res.status(404).json({ error: 'Lot not found', lotId })
+        }
+        const entryMs = new Date(session.entryTime).getTime()
+        const durationMinutes = (Date.now() - entryMs) / (1000 * 60)
+        const fee = calculateFee(
+          durationMinutes,
+          lot.ratePerHour,
+          lot.billingMinutes,
+          lot.maxDailyFee ?? undefined,
+          lot.gracePeriodMinutes ?? 0,
+        )
+        if (fee <= 0) {
+          return res.status(400).json({
+            error: 'No payment required for this session',
+          })
+        }
+
+        const stablecoinAmount = convertToStablecoin(fee, lot.currency || 'USD')
+        pending = {
+          plate,
+          lotId,
+          sessionId: session.id,
+          expectedAmount: stablecoinAmount.toFixed(6),
+          receiverWallet: lot.operatorWallet || process.env.LOT_OPERATOR_WALLET || '',
+          fee,
+          feeCurrency: lot.currency || 'USD',
+          tokenId: session.tokenId,
+          createdAt: Date.now(),
+        }
+        addPendingPayment(pending)
       }
+
+      intent = await db.upsertXrplPendingIntent({
+        plateNumber: pending.plate,
+        lotId: pending.lotId,
+        sessionId: pending.sessionId,
+        amount: pending.expectedAmount,
+        destination: pending.receiverWallet,
+        token: X402_STABLECOIN,
+        network: X402_NETWORK,
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      })
     }
 
     if (!intent) {
