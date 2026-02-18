@@ -1,5 +1,4 @@
 import { X402_STABLECOIN, X402_NETWORK } from './pricing'
-import type { PendingPayment } from './paymentWatcher'
 
 interface XamanCreateResponse {
   payloadUuid: string
@@ -11,6 +10,15 @@ interface XamanPayloadStatus {
   resolved: boolean
   rejected: boolean
   txHash?: string
+}
+
+interface XamanPaymentIntent {
+  paymentId: string
+  sessionId: string
+  plate: string
+  lotId: string
+  expectedAmount: string
+  receiverWallet: string
 }
 
 const DEFAULT_XAMAN_API_URL = 'https://xumm.app'
@@ -45,7 +53,7 @@ export function isXamanConfigured(): boolean {
 }
 
 export async function createXamanPayloadForPendingPayment(
-  pending: PendingPayment,
+  pending: XamanPaymentIntent,
 ): Promise<XamanCreateResponse> {
   const { apiUrl, apiKey, apiSecret } = getXamanConfig()
   if (!apiKey || !apiSecret) {
@@ -61,7 +69,7 @@ export async function createXamanPayloadForPendingPayment(
 
   const memoData = {
     v: 1,
-    paymentId: `${pending.sessionId}:${Date.now()}`,
+    paymentId: pending.paymentId,
     plate: pending.plate,
     lotId: pending.lotId,
     network: X402_NETWORK,

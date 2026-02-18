@@ -243,6 +243,152 @@ async function completeIdempotency(input: CompleteIdempotencyInput): Promise<voi
   )
 }
 
+// ---- XRPL Intent Queries ----
+
+export interface XrplPaymentIntentRecord {
+  paymentId: string
+  plateNumber: string
+  lotId: string
+  sessionId: string
+  amount: string
+  destination: string
+  token: string
+  network: string
+  status: 'pending' | 'resolved' | 'expired' | 'cancelled'
+  expiresAt: Date
+  xamanPayloadUuid?: string
+  xamanDeepLink?: string
+  xamanQrPng?: string
+  txHash?: string
+}
+
+interface UpsertXrplPendingIntentInput {
+  plateNumber: string
+  lotId: string
+  sessionId: string
+  amount: string
+  destination: string
+  token: string
+  network: string
+  expiresAt: Date
+}
+
+async function upsertXrplPendingIntent(
+  input: UpsertXrplPendingIntentInput,
+): Promise<XrplPaymentIntentRecord> {
+  const { rows } = await pool.query(
+    `INSERT INTO xrpl_payment_intents (
+        plate_number, lot_id, session_id, amount, destination, token, network, status, expires_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NOW())
+      ON CONFLICT (plate_number, lot_id) WHERE status = 'pending'
+      DO UPDATE SET
+        session_id = EXCLUDED.session_id,
+        amount = EXCLUDED.amount,
+        destination = EXCLUDED.destination,
+        token = EXCLUDED.token,
+        network = EXCLUDED.network,
+        expires_at = EXCLUDED.expires_at,
+        xaman_payload_uuid = NULL,
+        xaman_deep_link = NULL,
+        xaman_qr_png = NULL,
+        tx_hash = NULL,
+        updated_at = NOW()
+      RETURNING *`,
+    [
+      input.plateNumber,
+      input.lotId,
+      input.sessionId,
+      input.amount,
+      input.destination,
+      input.token,
+      input.network,
+      input.expiresAt,
+    ],
+  )
+
+  return mapXrplIntent(rows[0])
+}
+
+async function getActiveXrplPendingIntent(
+  plateNumber: string,
+  lotId: string,
+): Promise<XrplPaymentIntentRecord | null> {
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM xrpl_payment_intents
+     WHERE plate_number = $1
+       AND lot_id = $2
+       AND status = 'pending'
+       AND expires_at > NOW()
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [plateNumber, lotId],
+  )
+
+  return rows[0] ? mapXrplIntent(rows[0]) : null
+}
+
+async function attachXamanPayloadToIntent(input: {
+  paymentId: string
+  payloadUuid: string
+  deepLink?: string
+  qrPng?: string
+}): Promise<void> {
+  await pool.query(
+    `UPDATE xrpl_payment_intents
+     SET xaman_payload_uuid = $2::uuid,
+         xaman_deep_link = $3,
+         xaman_qr_png = $4,
+         updated_at = NOW()
+     WHERE payment_id = $1::uuid`,
+    [input.paymentId, input.payloadUuid, input.deepLink ?? null, input.qrPng ?? null],
+  )
+}
+
+async function resolveXrplIntentByPayloadUuid(input: {
+  payloadUuid: string
+  txHash?: string
+}): Promise<void> {
+  await pool.query(
+    `UPDATE xrpl_payment_intents
+     SET status = 'resolved',
+         tx_hash = COALESCE($2, tx_hash),
+         updated_at = NOW()
+     WHERE xaman_payload_uuid = $1::uuid
+       AND status = 'pending'`,
+    [input.payloadUuid, input.txHash ?? null],
+  )
+}
+
+async function cancelXrplIntentByPayloadUuid(payloadUuid: string): Promise<void> {
+  await pool.query(
+    `UPDATE xrpl_payment_intents
+     SET status = 'cancelled',
+         updated_at = NOW()
+     WHERE xaman_payload_uuid = $1::uuid
+       AND status = 'pending'`,
+    [payloadUuid],
+  )
+}
+
+async function resolveActiveXrplIntentByPlateLot(input: {
+  plateNumber: string
+  lotId: string
+  txHash?: string
+}): Promise<void> {
+  await pool.query(
+    `UPDATE xrpl_payment_intents
+     SET status = 'resolved',
+         tx_hash = COALESCE($3, tx_hash),
+         updated_at = NOW()
+     WHERE plate_number = $1
+       AND lot_id = $2
+       AND status = 'pending'`,
+    [input.plateNumber, input.lotId, input.txHash ?? null],
+  )
+}
+
 // ---- Row Mappers ----
 
 function mapDriver(row: any): DriverRecord {
@@ -292,6 +438,25 @@ function mapLot(row: any): Lot {
   }
 }
 
+function mapXrplIntent(row: any): XrplPaymentIntentRecord {
+  return {
+    paymentId: row.payment_id,
+    plateNumber: row.plate_number,
+    lotId: row.lot_id,
+    sessionId: row.session_id,
+    amount: typeof row.amount === 'string' ? row.amount : String(row.amount),
+    destination: row.destination,
+    token: row.token,
+    network: row.network,
+    status: row.status,
+    expiresAt: row.expires_at,
+    xamanPayloadUuid: row.xaman_payload_uuid ?? undefined,
+    xamanDeepLink: row.xaman_deep_link ?? undefined,
+    xamanQrPng: row.xaman_qr_png ?? undefined,
+    txHash: row.tx_hash ?? undefined,
+  }
+}
+
 export const db = {
   createDriver,
   getDriverByPlate,
@@ -307,4 +472,10 @@ export const db = {
   updateLot,
   beginIdempotency,
   completeIdempotency,
+  upsertXrplPendingIntent,
+  getActiveXrplPendingIntent,
+  attachXamanPayloadToIntent,
+  resolveXrplIntentByPayloadUuid,
+  cancelXrplIntentByPayloadUuid,
+  resolveActiveXrplIntentByPlateLot,
 }

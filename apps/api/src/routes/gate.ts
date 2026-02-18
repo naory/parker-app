@@ -117,15 +117,52 @@ gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
       return res.status(400).json({ error: parsedBody.error })
     }
     const { plate, lotId } = parsedBody
-    const pending = getPendingPaymentByPlateLot(plate, lotId)
-    if (!pending) {
+    let intent = await db.getActiveXrplPendingIntent(plate, lotId)
+
+    // Backward-compatible fallback while deployments roll out the new DB table.
+    if (!intent) {
+      const pending = getPendingPaymentByPlateLot(plate, lotId)
+      if (pending) {
+        intent = await db.upsertXrplPendingIntent({
+          plateNumber: pending.plate,
+          lotId: pending.lotId,
+          sessionId: pending.sessionId,
+          amount: pending.expectedAmount,
+          destination: pending.receiverWallet,
+          token: X402_STABLECOIN,
+          network: X402_NETWORK,
+          expiresAt: new Date(Date.now() + 15 * 60_000),
+        })
+      }
+    }
+
+    if (!intent) {
       return res.status(404).json({
         error: 'No pending XRPL payment found. Request /api/gate/exit first.',
       })
     }
 
-    const payload = await createXamanPayloadForPendingPayment(pending)
-    return res.json(payload)
+    const payload = await createXamanPayloadForPendingPayment({
+      paymentId: intent.paymentId,
+      sessionId: intent.sessionId,
+      plate: intent.plateNumber,
+      lotId: intent.lotId,
+      expectedAmount: intent.amount,
+      receiverWallet: intent.destination,
+    })
+
+    await db.attachXamanPayloadToIntent({
+      paymentId: intent.paymentId,
+      payloadUuid: payload.payloadUuid,
+      deepLink: payload.deepLink,
+      qrPng: payload.qrPng,
+    })
+
+    return res.json({
+      ...payload,
+      paymentId: intent.paymentId,
+      expiresAt: intent.expiresAt,
+    })
   } catch (error) {
     console.error('Failed to create Xaman payload:', error)
     return res.status(500).json({ error: 'Failed to create Xaman payload' })
@@ -143,6 +180,14 @@ gateRouter.get('/xrpl/xaman-status/:payloadUuid', async (req, res) => {
       return res.status(400).json({ error: 'Invalid payloadUuid format' })
     }
     const status = await getXamanPayloadStatus(payloadUuid)
+    if (status.resolved && status.txHash) {
+      await db.resolveXrplIntentByPayloadUuid({
+        payloadUuid,
+        txHash: status.txHash,
+      })
+    } else if (status.rejected) {
+      await db.cancelXrplIntentByPayloadUuid(payloadUuid)
+    }
     return res.json(status)
   } catch (error) {
     console.error('Failed to fetch Xaman payload status:', error)
@@ -542,6 +587,26 @@ gateRouter.post('/exit', async (req, res) => {
           tokenId: session?.tokenId,
           createdAt: Date.now(),
         })
+
+        if (X402_NETWORK.startsWith('xrpl:')) {
+          try {
+            await db.upsertXrplPendingIntent({
+              plateNumber: plate,
+              lotId,
+              sessionId,
+              amount: paymentOptions.x402.amount,
+              destination: paymentOptions.x402.receiver,
+              token: paymentOptions.x402.token,
+              network: paymentOptions.x402.network,
+              expiresAt: new Date(Date.now() + 15 * 60_000),
+            })
+          } catch (persistErr) {
+            console.warn(
+              '[x402:xrpl] Failed to persist pending intent (continuing):',
+              (persistErr as Error).message,
+            )
+          }
+        }
       }
 
       // Notify driver that payment is required (so the driver app shows a payment prompt)
@@ -616,6 +681,23 @@ gateRouter.post('/exit', async (req, res) => {
             actualAmount: transfer.amount.toString(),
           })
         }
+      }
+    }
+
+    if (X402_NETWORK.startsWith('xrpl:')) {
+      try {
+        const txHash =
+          typeof (req as any).paymentTxHash === 'string' ? (req as any).paymentTxHash : undefined
+        await db.resolveActiveXrplIntentByPlateLot({
+          plateNumber: plate,
+          lotId,
+          txHash,
+        })
+      } catch (intentErr) {
+        console.warn(
+          '[x402:xrpl] Failed to mark intent resolved (continuing):',
+          (intentErr as Error).message,
+        )
       }
     }
 
