@@ -33,17 +33,15 @@ export default function History() {
   useEffect(() => {
     if (sessions.length === 0) return
     const uniqueLotIds = [...new Set(sessions.map((s) => s.lotId))]
-    Promise.all(
-      uniqueLotIds.map((id) =>
-        getLotStatus(id).then((lot) => [id, lot] as const),
-      ),
-    ).then((results) => {
-      const map: Record<string, { name: string; address?: string }> = {}
-      for (const [id, lot] of results) {
-        if (lot) map[id] = { name: lot.name, address: lot.address }
-      }
-      setLotMap(map)
-    })
+    Promise.all(uniqueLotIds.map((id) => getLotStatus(id).then((lot) => [id, lot] as const))).then(
+      (results) => {
+        const map: Record<string, { name: string; address?: string }> = {}
+        for (const [id, lot] of results) {
+          if (lot) map[id] = { name: lot.name, address: lot.address }
+        }
+        setLotMap(map)
+      },
+    )
   }, [sessions])
 
   return (
@@ -109,7 +107,8 @@ export default function History() {
                           : '--'}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {hours > 0 ? `${hours}h ` : ''}{mins}m
+                        {hours > 0 ? `${hours}h ` : ''}
+                        {mins}m
                       </p>
                     </div>
                   </div>
@@ -125,8 +124,8 @@ export default function History() {
                     >
                       {session.status}
                     </span>
-                    {session.tokenId && (
-                      HEDERA_TOKEN_ID ? (
+                    {session.tokenId &&
+                      (HEDERA_TOKEN_ID ? (
                         <a
                           href={getHashscanNftUrl(session.tokenId, HEDERA_TOKEN_ID, HEDERA_NETWORK)}
                           target="_blank"
@@ -138,8 +137,7 @@ export default function History() {
                         </a>
                       ) : (
                         <span className="text-xs text-gray-300">NFT #{session.tokenId}</span>
-                      )
-                    )}
+                      ))}
                   </div>
                 </div>
               </Link>

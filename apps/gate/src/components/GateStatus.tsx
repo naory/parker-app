@@ -14,9 +14,7 @@ export function GateStatus({ open, mode }: GateStatusProps) {
     >
       <div className="text-6xl">{open ? '\u2191' : '\u2193'}</div>
       <p className="mt-2 text-xl font-bold text-white">{open ? 'GATE OPEN' : 'GATE CLOSED'}</p>
-      <p className="mt-1 text-sm text-white/80">
-        Mode: {mode === 'entry' ? 'Entry' : 'Exit'}
-      </p>
+      <p className="mt-1 text-sm text-white/80">Mode: {mode === 'entry' ? 'Entry' : 'Exit'}</p>
     </div>
   )
 }

@@ -34,7 +34,10 @@ export default function Register() {
   // White-label: restrict country list to deployment config
   const deploymentCountries = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_DEPLOYMENT_COUNTRIES || ''
-    const codes = raw.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean)
+    const codes = raw
+      .split(',')
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean)
     if (codes.length === 0) return Object.keys(ALL_COUNTRIES) // no restriction → show all
     return codes.filter((c) => c in ALL_COUNTRIES)
   }, [])
@@ -138,9 +141,13 @@ export default function Register() {
               className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-parker-500 focus:outline-none focus:ring-1 focus:ring-parker-500"
               required
             >
-              <option value="" disabled>Select country</option>
+              <option value="" disabled>
+                Select country
+              </option>
               {deploymentCountries.map((code) => (
-                <option key={code} value={code}>{ALL_COUNTRIES[code] || code}</option>
+                <option key={code} value={code}>
+                  {ALL_COUNTRIES[code] || code}
+                </option>
               ))}
             </select>
           </div>

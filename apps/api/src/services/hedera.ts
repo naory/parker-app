@@ -22,7 +22,9 @@ const HEDERA_TOKEN_ID = process.env.HEDERA_TOKEN_ID
 // ---- NFT Metadata Encryption (required) ----
 
 if (!process.env.NFT_ENCRYPTION_KEY) {
-  throw new Error('NFT_ENCRYPTION_KEY is required. Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"')
+  throw new Error(
+    "NFT_ENCRYPTION_KEY is required. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+  )
 }
 const _encryptionKey = parseEncryptionKey(process.env.NFT_ENCRYPTION_KEY)
 console.log('[hedera] NFT metadata encryption enabled (AES-256-GCM)')
@@ -69,11 +71,16 @@ export async function mintParkingNFTOnHedera(
 
   const client = getClient()
   const startedAt = Date.now()
-  const result = await htsMint(client, HEDERA_TOKEN_ID, {
-    plateHash: hashPlate(plateNumber),
-    lotId,
-    entryTime: Math.floor(Date.now() / 1000),
-  }, _encryptionKey)
+  const result = await htsMint(
+    client,
+    HEDERA_TOKEN_ID,
+    {
+      plateHash: hashPlate(plateNumber),
+      lotId,
+      entryTime: Math.floor(Date.now() / 1000),
+    },
+    _encryptionKey,
+  )
   mintLatencyMs.observe(Date.now() - startedAt)
   logger.info('hedera_mint_success', {
     token_id: HEDERA_TOKEN_ID,
@@ -92,9 +99,7 @@ export async function mintParkingNFTOnHedera(
  * Burn a parking session NFT on Hedera (end of session).
  * The serial number comes from the DB session's tokenId.
  */
-export async function endParkingSessionOnHedera(
-  serial: number,
-): Promise<{ txHash: string }> {
+export async function endParkingSessionOnHedera(serial: number): Promise<{ txHash: string }> {
   if (!HEDERA_TOKEN_ID) {
     throw new Error('HEDERA_TOKEN_ID not configured')
   }

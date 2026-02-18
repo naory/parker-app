@@ -27,7 +27,9 @@ export function encodePlaintext(data: NftPlaintext): Buffer {
   const plateHashHex = data.plateHash.replace(/^0x/, '')
   const plateHashBuf = Buffer.from(plateHashHex, 'hex')
   if (plateHashBuf.length !== PLATE_HASH_LEN) {
-    throw new Error(`Invalid plateHash length: expected ${PLATE_HASH_LEN} bytes, got ${plateHashBuf.length}`)
+    throw new Error(
+      `Invalid plateHash length: expected ${PLATE_HASH_LEN} bytes, got ${plateHashBuf.length}`,
+    )
   }
 
   const lotIdBuf = Buffer.from(data.lotId, 'utf-8')
@@ -90,12 +92,7 @@ export function encryptMetadata(data: NftPlaintext, key: Buffer): Buffer {
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()])
   const tag = cipher.getAuthTag()
 
-  return Buffer.concat([
-    Buffer.from([VERSION_ENCRYPTED]),
-    iv,
-    encrypted,
-    tag,
-  ])
+  return Buffer.concat([Buffer.from([VERSION_ENCRYPTED]), iv, encrypted, tag])
 }
 
 /**

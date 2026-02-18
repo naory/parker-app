@@ -30,7 +30,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <span className="font-light text-parker-300">Gate</span>
               </h1>
               {process.env.NEXT_PUBLIC_LOT_ID && (
-                <p className="hidden text-xs text-gray-400 lg:block">{process.env.NEXT_PUBLIC_LOT_ID}</p>
+                <p className="hidden text-xs text-gray-400 lg:block">
+                  {process.env.NEXT_PUBLIC_LOT_ID}
+                </p>
               )}
               <p className="text-center text-2xl font-bold lg:hidden">P</p>
             </div>

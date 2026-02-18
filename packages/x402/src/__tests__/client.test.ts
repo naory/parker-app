@@ -50,7 +50,9 @@ describe('createPaymentClient', () => {
 
   it('sends payment and retries request on 402', async () => {
     const sendPayment = vi.fn().mockResolvedValue('0xtxhash')
-    const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
     vi.stubGlobal('fetch', mockFetch)
 
     const client = createPaymentClient({ sendPayment })
@@ -82,9 +84,12 @@ describe('createPaymentClient', () => {
       token: 'USDC',
       network: 'base-sepolia',
     })
-    expect(mockFetch).toHaveBeenCalledWith('http://test/exit', expect.objectContaining({
-      headers: expect.objectContaining({ 'X-PAYMENT': '0xtxhash' }),
-    }))
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://test/exit',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-PAYMENT': '0xtxhash' }),
+      }),
+    )
     expect(result).toBeTruthy()
 
     vi.unstubAllGlobals()

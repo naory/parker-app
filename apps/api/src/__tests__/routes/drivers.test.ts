@@ -53,14 +53,21 @@ describe('drivers routes', () => {
       const res = await request(app)
         .post('/api/drivers/register')
         .set('x-wallet-address', '0xABC')
-        .send({ plateNumber: '12-345-67', countryCode: 'IL', carMake: 'Toyota', carModel: 'Corolla' })
+        .send({
+          plateNumber: '12-345-67',
+          countryCode: 'IL',
+          carMake: 'Toyota',
+          carModel: 'Corolla',
+        })
 
       expect(res.status).toBe(201)
       expect(res.body.plateNumber).toBe('1234567')
-      expect(db.createDriver).toHaveBeenCalledWith(expect.objectContaining({
-        wallet: '0xABC',
-        plateNumber: '1234567',
-      }))
+      expect(db.createDriver).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wallet: '0xABC',
+          plateNumber: '1234567',
+        }),
+      )
     })
 
     it('returns 401 without wallet header', async () => {

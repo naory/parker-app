@@ -95,36 +95,30 @@ export function useSessionCache() {
   // Subscribe to cache mutations so React re-renders when sessions change
   const rev = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  const addEntry = useCallback(
-    (event: Record<string, unknown>) => {
-      const plate = String(event.plate || '')
-      const lotId = String(event.lotId || '')
-      if (!plate) return
+  const addEntry = useCallback((event: Record<string, unknown>) => {
+    const plate = String(event.plate || '')
+    const lotId = String(event.lotId || '')
+    if (!plate) return
 
-      const session = event.session as Record<string, unknown> | undefined
-      const entryTime =
-        session && typeof session.entryTime === 'string'
-          ? new Date(session.entryTime).getTime()
-          : Date.now()
+    const session = event.session as Record<string, unknown> | undefined
+    const entryTime =
+      session && typeof session.entryTime === 'string'
+        ? new Date(session.entryTime).getTime()
+        : Date.now()
 
-      cache.set(plate, { plate, lotId, entryTime })
-      pruneStale() // also calls notify()
-      console.log(`[cache] Entry cached: ${plate} at lot ${lotId} (total: ${cache.size})`)
-    },
-    [],
-  )
+    cache.set(plate, { plate, lotId, entryTime })
+    pruneStale() // also calls notify()
+    console.log(`[cache] Entry cached: ${plate} at lot ${lotId} (total: ${cache.size})`)
+  }, [])
 
-  const removeExit = useCallback(
-    (event: Record<string, unknown>) => {
-      const plate = String(event.plate || '')
-      if (!plate) return
+  const removeExit = useCallback((event: Record<string, unknown>) => {
+    const plate = String(event.plate || '')
+    if (!plate) return
 
-      cache.delete(plate)
-      notify()
-      console.log(`[cache] Exit removed: ${plate} (total: ${cache.size})`)
-    },
-    [],
-  )
+    cache.delete(plate)
+    notify()
+    console.log(`[cache] Exit removed: ${plate} (total: ${cache.size})`)
+  }, [])
 
   const getSession = useCallback((plate: string): CachedSession | undefined => {
     return cache.get(plate)

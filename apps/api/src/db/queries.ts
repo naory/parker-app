@@ -239,7 +239,12 @@ async function completeIdempotency(input: CompleteIdempotencyInput): Promise<voi
          response_body = $4::jsonb,
          completed_at = NOW()
      WHERE endpoint = $1 AND idempotency_key = $2`,
-    [input.endpoint, input.idempotencyKey, input.responseCode, JSON.stringify(input.responseBody ?? {})],
+    [
+      input.endpoint,
+      input.idempotencyKey,
+      input.responseCode,
+      JSON.stringify(input.responseBody ?? {}),
+    ],
   )
 }
 

@@ -50,21 +50,20 @@ export default function OperatorDashboard() {
   }, [lotId])
 
   // Calculate dashboard stats
-  const occupancy = status
-    ? `${status.currentOccupancy} / ${status.capacity ?? '--'}`
-    : '-- / --'
+  const occupancy = status ? `${status.currentOccupancy} / ${status.capacity ?? '--'}` : '-- / --'
 
-  const avgDuration = sessions.length > 0
-    ? (() => {
-        const totalMs = sessions.reduce((sum, s) => {
-          return sum + (Date.now() - new Date(s.entryTime).getTime())
-        }, 0)
-        const avgMinutes = Math.round(totalMs / sessions.length / 60_000)
-        const h = Math.floor(avgMinutes / 60)
-        const m = avgMinutes % 60
-        return h > 0 ? `${h}h ${m}m` : `${m}m`
-      })()
-    : '--'
+  const avgDuration =
+    sessions.length > 0
+      ? (() => {
+          const totalMs = sessions.reduce((sum, s) => {
+            return sum + (Date.now() - new Date(s.entryTime).getTime())
+          }, 0)
+          const avgMinutes = Math.round(totalMs / sessions.length / 60_000)
+          const h = Math.floor(avgMinutes / 60)
+          const m = avgMinutes % 60
+          return h > 0 ? `${h}h ${m}m` : `${m}m`
+        })()
+      : '--'
 
   return (
     <div className="p-6">
@@ -114,11 +113,13 @@ export default function OperatorDashboard() {
                       <div>
                         <p className="text-sm font-medium text-gray-800">{session.plateNumber}</p>
                         <p className="text-xs text-gray-400">
-                          Since {entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          Since{' '}
+                          {entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </p>
                       </div>
                       <p className="text-sm text-gray-500">
-                        {h > 0 ? `${h}h ` : ''}{m}m
+                        {h > 0 ? `${h}h ` : ''}
+                        {m}m
                       </p>
                     </div>
                   )

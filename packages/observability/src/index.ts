@@ -30,10 +30,18 @@ export class StructuredLogger {
     console.log(JSON.stringify(payload))
   }
 
-  debug(message: string, fields?: LogFields) { this.emit('debug', message, fields) }
-  info(message: string, fields?: LogFields) { this.emit('info', message, fields) }
-  warn(message: string, fields?: LogFields, err?: unknown) { this.emit('warn', message, fields, err) }
-  error(message: string, fields?: LogFields, err?: unknown) { this.emit('error', message, fields, err) }
+  debug(message: string, fields?: LogFields) {
+    this.emit('debug', message, fields)
+  }
+  info(message: string, fields?: LogFields) {
+    this.emit('info', message, fields)
+  }
+  warn(message: string, fields?: LogFields, err?: unknown) {
+    this.emit('warn', message, fields, err)
+  }
+  error(message: string, fields?: LogFields, err?: unknown) {
+    this.emit('error', message, fields, err)
+  }
 }
 
 export function createLogger(baseFields: LogFields = {}): StructuredLogger {
@@ -42,12 +50,18 @@ export function createLogger(baseFields: LogFields = {}): StructuredLogger {
 
 function labelsKey(labels?: Record<string, string>): string {
   if (!labels || Object.keys(labels).length === 0) return ''
-  return Object.keys(labels).sort().map((k) => `${k}=${labels[k]}`).join(',')
+  return Object.keys(labels)
+    .sort()
+    .map((k) => `${k}=${labels[k]}`)
+    .join(',')
 }
 
 export class Counter {
   private values = new Map<string, number>()
-  constructor(public readonly name: string, public readonly help: string) {}
+  constructor(
+    public readonly name: string,
+    public readonly help: string,
+  ) {}
 
   inc(labels?: Record<string, string>, value = 1) {
     const key = labelsKey(labels)
@@ -56,9 +70,7 @@ export class Counter {
 
   snapshot(): Array<{ labels: Record<string, string>; value: number }> {
     return Array.from(this.values.entries()).map(([k, value]) => ({
-      labels: k
-        ? Object.fromEntries(k.split(',').map((pair) => pair.split('=')))
-        : {},
+      labels: k ? Object.fromEntries(k.split(',').map((pair) => pair.split('='))) : {},
       value,
     }))
   }
@@ -66,11 +78,20 @@ export class Counter {
 
 export class Histogram {
   private values = new Map<string, { count: number; sum: number; min: number; max: number }>()
-  constructor(public readonly name: string, public readonly help: string, public readonly unit = 'ms') {}
+  constructor(
+    public readonly name: string,
+    public readonly help: string,
+    public readonly unit = 'ms',
+  ) {}
 
   observe(value: number, labels?: Record<string, string>) {
     const key = labelsKey(labels)
-    const current = this.values.get(key) || { count: 0, sum: 0, min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY }
+    const current = this.values.get(key) || {
+      count: 0,
+      sum: 0,
+      min: Number.POSITIVE_INFINITY,
+      max: Number.NEGATIVE_INFINITY,
+    }
     current.count += 1
     current.sum += value
     current.min = Math.min(current.min, value)
@@ -88,9 +109,7 @@ export class Histogram {
     unit: string
   }> {
     return Array.from(this.values.entries()).map(([k, v]) => ({
-      labels: k
-        ? Object.fromEntries(k.split(',').map((pair) => pair.split('=')))
-        : {},
+      labels: k ? Object.fromEntries(k.split(',').map((pair) => pair.split('='))) : {},
       count: v.count,
       sum: v.sum,
       avg: v.count > 0 ? v.sum / v.count : 0,

@@ -96,9 +96,14 @@ export default function SessionDetail() {
   const hours = Math.floor(durationMinutes / 60)
   const mins = durationMinutes % 60
 
-  const estimatedCost = session?.feeAmount ?? (lotRate > 0 ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod) : 0)
+  const estimatedCost =
+    session?.feeAmount ??
+    (lotRate > 0
+      ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod)
+      : 0)
   const gracePeriodSeconds = lotGracePeriod * 60
-  const inGracePeriod = session?.status === 'active' && gracePeriodSeconds > 0 && elapsed < gracePeriodSeconds
+  const inGracePeriod =
+    session?.status === 'active' && gracePeriodSeconds > 0 && elapsed < gracePeriodSeconds
   const graceRemaining = Math.max(0, Math.ceil(gracePeriodSeconds - elapsed))
   const currency = session?.feeCurrency || lotCurrency
 
@@ -176,10 +181,7 @@ export default function SessionDetail() {
                 value={`${exitDate.toLocaleDateString()} ${exitDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
               />
             )}
-            <InfoRow
-              label="Duration"
-              value={`${hours > 0 ? `${hours}h ` : ''}${mins}m`}
-            />
+            <InfoRow label="Duration" value={`${hours > 0 ? `${hours}h ` : ''}${mins}m`} />
             <InfoRow
               label={session.status === 'completed' ? 'Fee Paid' : 'Est. Fee'}
               value={`${estimatedCost.toFixed(2)} ${currency}`}
@@ -201,8 +203,8 @@ export default function SessionDetail() {
           {(session.tokenId || session.txHash) && (
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
               <p className="mb-2 text-sm font-medium text-gray-500">On-chain</p>
-              {session.tokenId && (
-                HEDERA_TOKEN_ID ? (
+              {session.tokenId &&
+                (HEDERA_TOKEN_ID ? (
                   <div className="flex items-center justify-between border-b border-gray-50 py-2 last:border-0">
                     <p className="text-sm text-gray-500">NFT Token ID</p>
                     <a
@@ -216,8 +218,7 @@ export default function SessionDetail() {
                   </div>
                 ) : (
                   <InfoRow label="NFT Token ID" value={`#${session.tokenId}`} />
-                )
-              )}
+                ))}
               {session.txHash && <InfoRow label="Tx Hash" value={session.txHash} mono />}
             </div>
           )}
@@ -254,7 +255,9 @@ function InfoRow({
           {value}
         </span>
       ) : (
-        <p className={`text-sm text-gray-800 ${mono ? 'truncate max-w-[180px] font-mono text-xs' : ''}`}>
+        <p
+          className={`text-sm text-gray-800 ${mono ? 'truncate max-w-[180px] font-mono text-xs' : ''}`}
+        >
           {value}
         </p>
       )}

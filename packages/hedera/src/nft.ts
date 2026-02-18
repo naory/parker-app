@@ -1,10 +1,4 @@
-import {
-  Client,
-  TokenId,
-  TokenMintTransaction,
-  TokenBurnTransaction,
-  Status,
-} from '@hashgraph/sdk'
+import { Client, TokenId, TokenMintTransaction, TokenBurnTransaction, Status } from '@hashgraph/sdk'
 import { encryptMetadata, parseMetadata } from './crypto'
 
 // ---- Types ----
@@ -64,7 +58,9 @@ export async function mintParkingNFT(
 
   const transactionId = response.transactionId.toString()
 
-  console.log(`[hedera] Minted parking NFT: token=${tokenId}, serial=${serial}, tx=${transactionId}`)
+  console.log(
+    `[hedera] Minted parking NFT: token=${tokenId}, serial=${serial}, tx=${transactionId}`,
+  )
 
   return { serial, transactionId }
 }
@@ -80,9 +76,7 @@ export async function burnParkingNFT(
   tokenId: string,
   serial: number,
 ): Promise<BurnResult> {
-  const tx = new TokenBurnTransaction()
-    .setTokenId(TokenId.fromString(tokenId))
-    .setSerials([serial])
+  const tx = new TokenBurnTransaction().setTokenId(TokenId.fromString(tokenId)).setSerials([serial])
 
   const response = await tx.execute(client)
   const receipt = await response.getReceipt(client)
@@ -93,7 +87,9 @@ export async function burnParkingNFT(
 
   const transactionId = response.transactionId.toString()
 
-  console.log(`[hedera] Burned parking NFT: token=${tokenId}, serial=${serial}, tx=${transactionId}`)
+  console.log(
+    `[hedera] Burned parking NFT: token=${tokenId}, serial=${serial}, tx=${transactionId}`,
+  )
 
   return { transactionId }
 }
@@ -102,9 +98,12 @@ export async function burnParkingNFT(
 
 function getMirrorNodeBaseUrl(network: 'testnet' | 'mainnet' | 'previewnet'): string {
   switch (network) {
-    case 'mainnet': return 'https://mainnet-public.mirrornode.hedera.com'
-    case 'previewnet': return 'https://previewnet.mirrornode.hedera.com'
-    default: return 'https://testnet.mirrornode.hedera.com'
+    case 'mainnet':
+      return 'https://mainnet-public.mirrornode.hedera.com'
+    case 'previewnet':
+      return 'https://previewnet.mirrornode.hedera.com'
+    default:
+      return 'https://testnet.mirrornode.hedera.com'
   }
 }
 

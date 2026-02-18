@@ -77,7 +77,10 @@ export default function Settings() {
           gracePeriodMinutes: form.gracePeriodMinutes || undefined,
           currency: form.currency || undefined,
           paymentMethods: form.paymentMethods
-            ? form.paymentMethods.split(',').map((m) => m.trim()).filter(Boolean)
+            ? form.paymentMethods
+                .split(',')
+                .map((m) => m.trim())
+                .filter(Boolean)
             : undefined,
         }),
       })
@@ -185,9 +188,7 @@ export default function Settings() {
 
         {message && (
           <p
-            className={`text-sm ${
-              message.type === 'success' ? 'text-green-600' : 'text-red-600'
-            }`}
+            className={`text-sm ${message.type === 'success' ? 'text-green-600' : 'text-red-600'}`}
           >
             {message.text}
           </p>

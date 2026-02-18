@@ -5,11 +5,7 @@
  * ParkingNFT operations have moved to Hedera (see hedera.ts).
  */
 
-import {
-  createPublicClient,
-  http,
-  parseAbi,
-} from 'viem'
+import { createPublicClient, http, parseAbi } from 'viem'
 import { baseSepolia } from 'viem/chains'
 
 // ---- Configuration ----

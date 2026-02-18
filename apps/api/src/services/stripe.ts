@@ -100,10 +100,7 @@ export async function createParkingCheckout(
  * @param signature - Stripe-Signature header value
  * @returns The verified Stripe event
  */
-export function verifyWebhookSignature(
-  rawBody: Buffer,
-  signature: string,
-): Stripe.Event {
+export function verifyWebhookSignature(rawBody: Buffer, signature: string): Stripe.Event {
   if (!STRIPE_WEBHOOK_SECRET) {
     throw new Error('STRIPE_WEBHOOK_SECRET is required for webhook verification')
   }

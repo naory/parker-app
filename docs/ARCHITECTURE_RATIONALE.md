@@ -13,6 +13,7 @@ This architecture replaces bilateral integrations with a shared coordination lay
 ## 1. Current System Failure Modes
 
 Parking systems today involve:
+
 - Mobile payment apps
 - Gate controllers
 - Operator backends
@@ -22,6 +23,7 @@ Parking systems today involve:
 Each maintains its own version of session state.
 
 Common failure modes:
+
 - Duplicate entry or exit scans
 - Payment confirmed but gate not opened
 - Gate opened but payment not captured
@@ -38,12 +40,14 @@ These failures are not edge cases. They are structural results of distributed st
 Web2 architectures rely on API integrations between parties.
 
 This creates:
+
 - Bilateral trust dependencies
 - Database-based reconciliation
 - Log comparison for dispute resolution
 - O(n²) integration complexity as operators scale
 
 Centralized systems can enforce rules internally, but cannot provide:
+
 - Neutral verifiability across independent parties
 - Immutable lifecycle finality
 - Shared state without designating one party as ultimate authority
@@ -67,6 +71,7 @@ Exit Event
 → Burn transaction timestamp represents lifecycle finality
 
 Properties:
+
 - A session can only exist once
 - A session can only be closed once
 - Lifecycle transitions are cryptographically enforced
@@ -86,6 +91,7 @@ Entry → NFT Mint
 Exit → NFT Burn → Payment Trigger
 
 Settlement can be:
+
 - Fiat (via processor integration)
 - Stablecoin (via programmable transfer logic)
 - Hybrid (escrow at entry, settlement at burn)
@@ -93,6 +99,7 @@ Settlement can be:
 Because lifecycle transitions are on-chain, payment triggers become deterministic rather than webhook-dependent.
 
 This eliminates:
+
 - Double-charging
 - Race conditions
 - Disputed exit timestamps
@@ -105,12 +112,14 @@ Payment becomes programmatically bound to physical state transition.
 ## 5. Security & Finality Model
 
 The architecture enforces:
+
 - Non-replayable session tokens
 - Immutable timestamping
 - One-time burn closure
 - Publicly verifiable transaction records
 
 Fraud surfaces reduced:
+
 - Ticket cloning
 - Duplicate exit scanning
 - Silent record modification
@@ -124,19 +133,25 @@ It is consensus-based.
 ## 6. Operational Impact
 
 ### Reduced Reconciliation Costs
+
 Shared state eliminates cross-system audit loops.
 
 ### Interoperability
+
 Multiple apps and operators can read session state without bespoke integrations.
 
 ### Transparent Dispute Resolution
+
 Transaction history becomes objective evidence.
 
 ### Infrastructure Accountability
+
 Municipal or regulatory bodies can verify activity without internal database access.
 
 ### Programmable Expansion
+
 The same architecture extends to:
+
 - EV charging
 - Toll roads
 - Event access
@@ -160,6 +175,7 @@ Tokenized lifecycle state with deterministic settlement.
 Web2 can approximate this coordination.
 
 But it cannot provide:
+
 - Neutral shared truth
 - Immutable lifecycle finality
 - Trust-minimized multi-party interoperability

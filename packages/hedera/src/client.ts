@@ -1,8 +1,4 @@
-import {
-  Client,
-  AccountId,
-  PrivateKey,
-} from '@hashgraph/sdk'
+import { Client, AccountId, PrivateKey } from '@hashgraph/sdk'
 
 export type HederaNetwork = 'testnet' | 'mainnet' | 'previewnet'
 

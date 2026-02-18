@@ -109,7 +109,9 @@ export default function Dashboard() {
             Register your vehicle to get started
           </Link>
           <div className="mt-3 border-t border-parker-200 pt-3">
-            <p className="mb-2 text-center text-xs text-gray-500">Already registered? Link your plate:</p>
+            <p className="mb-2 text-center text-xs text-gray-500">
+              Already registered? Link your plate:
+            </p>
             <form
               onSubmit={(e) => {
                 e.preventDefault()

@@ -8,12 +8,7 @@
  * After running, copy the output HEDERA_TOKEN_ID into your .env files.
  */
 
-import {
-  TokenCreateTransaction,
-  TokenType,
-  TokenSupplyType,
-  PrivateKey,
-} from '@hashgraph/sdk'
+import { TokenCreateTransaction, TokenType, TokenSupplyType, PrivateKey } from '@hashgraph/sdk'
 import { createHederaClient } from './client'
 
 async function main() {
@@ -25,7 +20,9 @@ async function main() {
     console.error('Error: HEDERA_ACCOUNT_ID and HEDERA_PRIVATE_KEY are required')
     console.error('')
     console.error('Usage:')
-    console.error('  HEDERA_ACCOUNT_ID=0.0.xxxxx HEDERA_PRIVATE_KEY=302e... pnpm --filter @parker/hedera setup')
+    console.error(
+      '  HEDERA_ACCOUNT_ID=0.0.xxxxx HEDERA_PRIVATE_KEY=302e... pnpm --filter @parker/hedera setup',
+    )
     process.exit(1)
   }
 

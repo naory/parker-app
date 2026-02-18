@@ -3,7 +3,10 @@ import type { SessionRecord, LotStatus } from '@parker/core'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
 /** Fetch helper */
-async function apiFetch<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+async function apiFetch<T>(
+  path: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<T> {
   const { method = 'GET', body } = options
 
   const res = await fetch(`${API_URL}${path}`, {

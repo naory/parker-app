@@ -25,7 +25,12 @@ export interface PaymentClient {
   /** Handle a 402 response — returns the successful response after payment, or null if payment failed */
   handlePaymentRequired: (
     response: Response,
-    originalRequest: { url: string; method: string; headers: Record<string, string>; body?: string },
+    originalRequest: {
+      url: string
+      method: string
+      headers: Record<string, string>
+      body?: string
+    },
   ) => Promise<Response | null>
 }
 
@@ -46,7 +51,12 @@ export function createPaymentClient(options: PaymentClientOptions = {}): Payment
   return {
     async handlePaymentRequired(
       response: Response,
-      originalRequest: { url: string; method: string; headers: Record<string, string>; body?: string },
+      originalRequest: {
+        url: string
+        method: string
+        headers: Record<string, string>
+        body?: string
+      },
     ): Promise<Response | null> {
       if (response.status !== 402) {
         return null

@@ -158,16 +158,19 @@ describe('createPaymentMiddleware with publicClient', () => {
     const to = '0x2222222222222222222222222222222222222222'
     const amount = 10_000000n
 
-    const padAddress = (addr: string) => '0x' + addr.replace('0x', '').toLowerCase().padStart(64, '0')
+    const padAddress = (addr: string) =>
+      '0x' + addr.replace('0x', '').toLowerCase().padStart(64, '0')
 
     const mockClient = {
       getTransactionReceipt: vi.fn().mockResolvedValue({
         status: 'success',
-        logs: [{
-          address: '0xtoken',
-          topics: [TRANSFER_TOPIC, padAddress(from), padAddress(to)],
-          data: '0x' + amount.toString(16).padStart(64, '0'),
-        }],
+        logs: [
+          {
+            address: '0xtoken',
+            topics: [TRANSFER_TOPIC, padAddress(from), padAddress(to)],
+            data: '0x' + amount.toString(16).padStart(64, '0'),
+          },
+        ],
       }),
     } as any
 

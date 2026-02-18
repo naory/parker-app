@@ -42,7 +42,9 @@ export function SessionCard({ plate }: SessionCardProps) {
 
     // Poll every 30s for updates
     const interval = setInterval(() => {
-      getActiveSession(plate).then((s) => setSession(s)).catch(() => {})
+      getActiveSession(plate)
+        .then((s) => setSession(s))
+        .catch(() => {})
     }, 30_000)
 
     return () => clearInterval(interval)
@@ -110,9 +112,8 @@ export function SessionCard({ plate }: SessionCardProps) {
 
   // Estimate cost using lot pricing
   const durationMinutes = elapsed / 60
-  const estimatedCost = lotRate > 0
-    ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod)
-    : 0
+  const estimatedCost =
+    lotRate > 0 ? calculateFee(durationMinutes, lotRate, lotBilling, lotMaxFee, lotGracePeriod) : 0
 
   return (
     <div

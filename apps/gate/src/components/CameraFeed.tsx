@@ -81,13 +81,7 @@ export function CameraFeed({ onCapture }: CameraFeedProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-black shadow-sm">
       <div className="relative aspect-video">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="h-full w-full object-cover"
-        />
+        <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
 
         {!streaming && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900">

@@ -81,9 +81,7 @@ describe('paymentWatcher', () => {
     it('logs warning and does not throw when publicClient is null', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       expect(() => startPaymentWatcher(null)).not.toThrow()
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('No publicClient provided'),
-      )
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No publicClient provided'))
       warnSpy.mockRestore()
     })
 
@@ -108,9 +106,7 @@ describe('paymentWatcher', () => {
 
       startPaymentWatcher(mockClient, 'unknown-network')
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('No USDC address'),
-      )
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No USDC address'))
       expect(mockClient.watchContractEvent).not.toHaveBeenCalled()
       warnSpy.mockRestore()
     })

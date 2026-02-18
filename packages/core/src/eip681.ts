@@ -12,7 +12,7 @@
 /** Map of chain name → EIP-155 chain ID */
 const CHAIN_IDS: Record<string, number> = {
   'base-sepolia': 84532,
-  'base': 8453,
+  base: 8453,
 }
 
 export interface BuildERC20TransferURIOptions {
@@ -42,9 +42,7 @@ export function buildERC20TransferURI({
   chainId = 'base-sepolia',
 }: BuildERC20TransferURIOptions): string {
   // Resolve chain ID from name if needed
-  const numericChainId = typeof chainId === 'number'
-    ? chainId
-    : CHAIN_IDS[chainId]
+  const numericChainId = typeof chainId === 'number' ? chainId : CHAIN_IDS[chainId]
 
   // Convert human-readable amount to smallest unit (e.g. 1.50 USDC → 1500000)
   const amountInSmallestUnit = parseAmountToSmallestUnit(amount, decimals)

@@ -157,9 +157,7 @@ describe('Auth', () => {
 
   describe('POST /api/auth/verify', () => {
     it('rejects missing message/signature', async () => {
-      const res = await request(app)
-        .post('/api/auth/verify')
-        .send({})
+      const res = await request(app).post('/api/auth/verify').send({})
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/message and signature/)
     })
@@ -205,14 +203,12 @@ describe('Drivers', () => {
     })
 
     it('rejects registration without wallet', async () => {
-      const res = await request(app)
-        .post('/api/drivers/register')
-        .send({
-          plateNumber: TEST_PLATE,
-          countryCode: 'US',
-          carMake: 'Tesla',
-          carModel: 'Model 3',
-        })
+      const res = await request(app).post('/api/drivers/register').send({
+        plateNumber: TEST_PLATE,
+        countryCode: 'US',
+        carMake: 'Tesla',
+        carModel: 'Model 3',
+      })
 
       expect(res.status).toBe(401)
     })
@@ -320,18 +316,14 @@ describe('Gate', () => {
     })
 
     it('rejects entry without lotId', async () => {
-      const res = await request(app)
-        .post('/api/gate/entry')
-        .send({ plateNumber: TEST_PLATE })
+      const res = await request(app).post('/api/gate/entry').send({ plateNumber: TEST_PLATE })
 
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/lotId/)
     })
 
     it('rejects entry without plate', async () => {
-      const res = await request(app)
-        .post('/api/gate/entry')
-        .send({ lotId: TEST_LOT_ID })
+      const res = await request(app).post('/api/gate/entry').send({ lotId: TEST_LOT_ID })
 
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/plate/)
@@ -412,9 +404,7 @@ describe('Gate', () => {
     })
 
     it('rejects exit without lotId', async () => {
-      const res = await request(app)
-        .post('/api/gate/exit')
-        .send({ plateNumber: TEST_PLATE })
+      const res = await request(app).post('/api/gate/exit').send({ plateNumber: TEST_PLATE })
 
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/lotId/)
@@ -532,11 +522,7 @@ describe('Sessions', () => {
       mockDb.getSessionHistory.mockResolvedValue([])
 
       await request(app).get(`/api/sessions/history/${TEST_PLATE}?limit=10&offset=5`)
-      expect(mockDb.getSessionHistory).toHaveBeenCalledWith(
-        expect.any(String),
-        10,
-        5,
-      )
+      expect(mockDb.getSessionHistory).toHaveBeenCalledWith(expect.any(String), 10, 5)
     })
   })
 })

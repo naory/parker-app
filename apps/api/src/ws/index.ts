@@ -39,8 +39,8 @@ export function setupWebSocket(server: HttpServer, options: WsOptions = {}) {
       }
 
       // All paths accept JWT token
-      const token = url.searchParams.get('token')
-        || req.headers.authorization?.replace('Bearer ', '')
+      const token =
+        url.searchParams.get('token') || req.headers.authorization?.replace('Bearer ', '')
 
       if (token && options.verifyToken) {
         const address = await options.verifyToken(token)
@@ -113,7 +113,9 @@ export function notifyGate(lotId: string, event: object) {
 export function notifyDriver(plate: string, event: object) {
   const clients = driverClients.get(plate)
   if (!clients || clients.size === 0) {
-    console.warn(`[ws] notifyDriver: no connected clients for plate="${plate}" (registered plates: ${[...driverClients.keys()].join(', ') || 'none'})`)
+    console.warn(
+      `[ws] notifyDriver: no connected clients for plate="${plate}" (registered plates: ${[...driverClients.keys()].join(', ') || 'none'})`,
+    )
     return
   }
   const message = JSON.stringify(event)

@@ -6,8 +6,12 @@ vi.mock('@hashgraph/sdk', () => {
   const SUCCESS = 'SUCCESS'
 
   class MockTokenMintTransaction {
-    setTokenId() { return this }
-    addMetadata() { return this }
+    setTokenId() {
+      return this
+    }
+    addMetadata() {
+      return this
+    }
     async execute() {
       return {
         getReceipt: async () => ({
@@ -20,8 +24,12 @@ vi.mock('@hashgraph/sdk', () => {
   }
 
   class MockTokenBurnTransaction {
-    setTokenId() { return this }
-    setSerials() { return this }
+    setTokenId() {
+      return this
+    }
+    setSerials() {
+      return this
+    }
     async execute() {
       return {
         getReceipt: async () => ({ status: SUCCESS }),
@@ -66,14 +74,18 @@ describe('getNftInfo', () => {
   beforeEach(() => vi.restoreAllMocks())
 
   it('returns exists=true for valid NFT', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({
-        deleted: false,
-        metadata: Buffer.from('{"plateNumber":"ABC"}').toString('base64'),
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            deleted: false,
+            metadata: Buffer.from('{"plateNumber":"ABC"}').toString('base64'),
+          }),
       }),
-    }))
+    )
 
     const info = await getNftInfo('0.0.999', 1, 'testnet')
     expect(info.exists).toBe(true)

@@ -87,8 +87,7 @@ describe('ParkingNFT', () => {
 
     it('should allow new session after ending previous', async () => {
       await nft.connect(lotOperator).endSession('12-345-67', 0)
-      await expect(nft.connect(lotOperator).startSession('12-345-67', 'LOT-001')).to.not.be
-        .reverted
+      await expect(nft.connect(lotOperator).startSession('12-345-67', 'LOT-001')).to.not.be.reverted
     })
   })
 

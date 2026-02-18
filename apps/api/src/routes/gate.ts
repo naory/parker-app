@@ -707,7 +707,8 @@ gateRouter.post('/exit', async (req, res) => {
       | 'evm'
       | undefined
     const isDevSimulated =
-      process.env.NODE_ENV === 'development' && (req as any).paymentTxHash === 'simulated-dev-payment'
+      process.env.NODE_ENV === 'development' &&
+      (req as any).paymentTxHash === 'simulated-dev-payment'
 
     // Make XRPL verification path explicit: close only after XRPL adapter verification.
     if (fee > 0 && paymentVerified && isXrplRail && !isDevSimulated) {

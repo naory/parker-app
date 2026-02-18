@@ -4,10 +4,10 @@
 
 Security fixes are applied to the actively maintained branch.
 
-| Version | Supported |
-| ------- | --------- |
-| `main`  | Yes       |
-| Older branches/tags | No |
+| Version             | Supported |
+| ------------------- | --------- |
+| `main`              | Yes       |
+| Older branches/tags | No        |
 
 ## Reporting a Vulnerability
 

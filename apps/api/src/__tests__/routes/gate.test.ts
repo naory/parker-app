@@ -138,18 +138,14 @@ describe('gate routes', () => {
 
     it('returns 400 without lotId', async () => {
       const app = createApp()
-      const res = await request(app)
-        .post('/api/gate/entry')
-        .send({ plateNumber: '1234567' })
+      const res = await request(app).post('/api/gate/entry').send({ plateNumber: '1234567' })
 
       expect(res.status).toBe(400)
     })
 
     it('returns 400 without plate or image', async () => {
       const app = createApp()
-      const res = await request(app)
-        .post('/api/gate/entry')
-        .send({ lotId: 'LOT-1' })
+      const res = await request(app).post('/api/gate/entry').send({ lotId: 'LOT-1' })
 
       expect(res.status).toBe(400)
     })
@@ -424,7 +420,13 @@ describe('gate routes', () => {
   describe('GET /api/gate/lot/:lotId/sessions', () => {
     it('returns active sessions for lot', async () => {
       vi.mocked(db.getActiveSessionsByLot).mockResolvedValue([
-        { id: 's1', plateNumber: '1234567', lotId: 'LOT-1', entryTime: new Date(), status: 'active' },
+        {
+          id: 's1',
+          plateNumber: '1234567',
+          lotId: 'LOT-1',
+          entryTime: new Date(),
+          status: 'active',
+        },
       ])
 
       const app = createApp()
@@ -440,9 +442,7 @@ describe('gate routes', () => {
       vi.mocked(db.updateLot).mockResolvedValue({ ...mockLot, ratePerHour: 12 })
 
       const app = createApp()
-      const res = await request(app)
-        .put('/api/gate/lot/LOT-1')
-        .send({ ratePerHour: 12 })
+      const res = await request(app).put('/api/gate/lot/LOT-1').send({ ratePerHour: 12 })
 
       expect(res.status).toBe(200)
       expect(res.body.ratePerHour).toBe(12)
@@ -452,18 +452,14 @@ describe('gate routes', () => {
       vi.mocked(db.updateLot).mockResolvedValue(null)
 
       const app = createApp()
-      const res = await request(app)
-        .put('/api/gate/lot/UNKNOWN')
-        .send({ name: 'New Name' })
+      const res = await request(app).put('/api/gate/lot/UNKNOWN').send({ name: 'New Name' })
 
       expect(res.status).toBe(404)
     })
 
     it('rejects NaN numeric values', async () => {
       const app = createApp()
-      const res = await request(app)
-        .put('/api/gate/lot/LOT-1')
-        .send({ ratePerHour: 'abc' })
+      const res = await request(app).put('/api/gate/lot/LOT-1').send({ ratePerHour: 'abc' })
 
       expect(res.status).toBe(400)
     })

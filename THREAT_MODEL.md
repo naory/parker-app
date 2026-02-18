@@ -27,6 +27,7 @@
 **Impact:** duplicate billing, state corruption, inconsistent gate behavior.
 
 **Mitigations (implemented):**
+
 - DB-backed idempotency table for `gate:entry` and `gate:exit`.
 - Mandatory `Idempotency-Key` on entry/exit endpoints.
 - Request-hash binding: same key + different payload returns conflict.
@@ -38,6 +39,7 @@
 **Impact:** unpaid exits, fraudulent access.
 
 **Mitigations (implemented):**
+
 - Session proof anchored to Hedera HTS serial mint/burn lifecycle.
 - Write-ahead minting: NFT minted before DB write.
 - Mirror Node fallback verifies active NFT serial and decrypted metadata.
@@ -49,12 +51,14 @@
 **Impact:** fraud, disputes, wrong-account charging.
 
 **Mitigations (implemented + operational):**
+
 - ALPR normalization + confidence checks.
 - Driver registration binding (wallet + normalized plate).
 - Lot mismatch and active-session validations on exit.
 - On-chain/off-chain evidence trail (entry/exit timestamps, token serial, payment tx).
 
 **Operational controls recommended:**
+
 - Add second-factor spot checks for low-confidence ALPR.
 - Add camera image retention policy for dispute windows.
 
@@ -64,6 +68,7 @@
 **Impact:** inconsistent state, billing errors.
 
 **Mitigations (implemented):**
+
 - Partial unique index: one active session per plate.
 - Idempotency keys on entry/exit mutations.
 - Idempotent Stripe webhook processing.
@@ -75,6 +80,7 @@
 **Impact:** queue buildup, availability failure.
 
 **Mitigations (implemented):**
+
 - Layered resilience:
   1. DB fast path
   2. Hedera Mirror Node fallback
@@ -82,6 +88,7 @@
 - Best-effort DB reconciliation path after fallback close.
 
 **Remaining hardening (planned):**
+
 - Durable DB sync queue and reconciliation worker.
 - Circuit breaker auto-failover.
 
@@ -91,6 +98,7 @@
 **Impact:** support burden, potential revenue loss.
 
 **Mitigations (implemented):**
+
 - x402 on-chain ERC20 transfer verification.
 - Stripe signed webhooks + payment IDs in session records.
 - Immutable token serial lifecycle and tx references.
@@ -99,12 +107,15 @@
 ## 4) Cryptographic & Secret Risks
 
 ### A. Metadata Disclosure
+
 **Threat:** public chain observers infer plate history.  
 **Mitigations:** hash + AES-256-GCM encrypted NFT metadata payload; no plaintext plate on-chain.
 
 ### B. Key Exposure
+
 **Threat:** leaked Hedera private key / encryption key / webhook secret.  
 **Mitigations:**
+
 - Store secrets in managed secret stores (Vault / AWS Secrets Manager / Doppler).
 - Runtime injection only; no plaintext secrets in git.
 - Rotate secrets after suspected exposure.

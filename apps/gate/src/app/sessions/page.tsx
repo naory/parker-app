@@ -37,14 +37,23 @@ export default function Sessions() {
       .catch(() => {})
 
     getActiveSessionsByLot(lotId)
-      .then((data) => { setSessions(data); setApiError(false) })
-      .catch(() => { setSessions([]); setApiError(true) })
+      .then((data) => {
+        setSessions(data)
+        setApiError(false)
+      })
+      .catch(() => {
+        setSessions([])
+        setApiError(true)
+      })
       .finally(() => setLoading(false))
 
     // Poll every 15s
     const interval = setInterval(() => {
       getActiveSessionsByLot(lotId)
-        .then((data) => { setSessions(data); setApiError(false) })
+        .then((data) => {
+          setSessions(data)
+          setApiError(false)
+        })
         .catch(() => setApiError(true))
     }, 15_000)
 
@@ -61,9 +70,7 @@ export default function Sessions() {
   const filtered = useMemo(() => {
     if (!search) return sessions
     const q = search.toLowerCase().replace(/[\s-]/g, '')
-    return sessions.filter((s) =>
-      s.plateNumber.toLowerCase().replace(/[\s-]/g, '').includes(q),
-    )
+    return sessions.filter((s) => s.plateNumber.toLowerCase().replace(/[\s-]/g, '').includes(q))
   }, [sessions, search])
 
   return (
@@ -131,7 +138,8 @@ export default function Sessions() {
                       {entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-3 text-gray-500">
-                      {h > 0 ? `${h}h ` : ''}{m}m
+                      {h > 0 ? `${h}h ` : ''}
+                      {m}m
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-800">
                       {fee.toFixed(2)} {lotCurrency}
