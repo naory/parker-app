@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { createPaymentMiddleware } from '@parker/x402'
+import { createXrplSettlementAdapter } from '@parker/x402-xrpl-settlement-adapter'
 import { getPublicClient } from '@parker/core'
 
 import { authRouter } from './routes/auth'
@@ -38,12 +39,18 @@ export function createApp() {
   app.use('/api', standardLimit)
 
   // x402 payment middleware with on-chain verification
-  const publicClient = isBaseEnabled() ? getPublicClient() : undefined
+  const x402Network = process.env.X402_NETWORK || 'base-sepolia'
+  const isXrplRail = x402Network.startsWith('xrpl:')
+  const publicClient = !isXrplRail && isBaseEnabled() ? getPublicClient() : undefined
+  const settlementAdapter = isXrplRail && process.env.XRPL_RPC_URL
+    ? createXrplSettlementAdapter({ serverUrl: process.env.XRPL_RPC_URL })
+    : undefined
   app.use('/api/gate/exit', createPaymentMiddleware({
-    network: process.env.X402_NETWORK || 'base-sepolia',
+    network: x402Network,
     token: process.env.X402_STABLECOIN || 'USDC',
     receiverWallet: process.env.LOT_OPERATOR_WALLET,
     publicClient,
+    settlementAdapter,
   }))
 
   // Basic health check (liveness)

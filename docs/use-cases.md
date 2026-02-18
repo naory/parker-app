@@ -166,17 +166,37 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 
 ---
 
-## 17. On-Chain Payment Watcher
+## 17. On-Chain Payment Watcher (Base EVM Rail)
 
-**Problem:** When a driver pays via EIP-681 QR code (scanned with an external wallet), the system needs to detect the on-chain USDC transfer and auto-settle the session.
+**Problem:** When a driver pays via EIP-681 QR code on the Base rail (scanned with an external wallet), the system needs to detect the on-chain USDC transfer and auto-settle the session.
 
-**Behavior:** The payment watcher subscribes to ERC-20 Transfer events on the USDC contract (Base Sepolia). When the gate exit registers a pending payment (expected amount + receiver wallet), the watcher matches incoming transfers by receiver address and amount (within 1% tolerance). On match, it ends the DB session, burns the Hedera NFT if applicable, and notifies both gate and driver via WebSocket. Stale pending payments older than 30 minutes are pruned automatically.
+**Behavior:** The payment watcher subscribes to ERC-20 Transfer events on the USDC contract (Base Sepolia). When the gate exit registers a pending payment (expected amount + receiver wallet), the watcher matches incoming transfers by receiver address and amount (within 1% tolerance). On match, it ends the DB session, burns the Hedera NFT if applicable, and notifies both gate and driver via WebSocket. Stale pending payments older than 30 minutes are pruned automatically. This watcher is specific to the EVM rail.
 
 **Primary file:** `apps/api/src/services/paymentWatcher.ts`
 
 ---
 
-## 18. Dev Simulation Payment Bypass
+## 18. XRPL Settlement Confirmation
+
+**Problem:** XRPL payment confirmation cannot rely on ERC-20 event watchers or EVM transaction receipts.
+
+**Behavior:** When `X402_NETWORK` is set to `xrpl:*`, the API initializes the XRPL settlement adapter and verifies payment proofs by fetching the submitted XRPL transaction hash and validating a successful, finalized `Payment` transaction. The same `X-PAYMENT` header is used, but verification logic is network-specific.
+
+**Primary files:** `apps/api/src/app.ts`, `packages/x402-xrpl-settlement-adapter/src/index.ts`, `packages/x402/src/middleware.ts`
+
+---
+
+## 19. Xaman-First Wallet Fallback
+
+**Problem:** XRPL wallet interoperability differs across apps; deep-link/QR behavior is most consistent in Xaman.
+
+**Behavior:** Driver and gate UIs are Xaman-first (explicit Xaman CTA/copy). The API creates a Xaman payload, the client opens Xaman and polls payload status, and when signed the tx hash is auto-submitted to `/api/gate/exit`. Manual tx-hash entry remains a deterministic fallback.
+
+**Primary files:** `apps/driver/src/components/PaymentPrompt.tsx`, `apps/driver/src/app/pay/page.tsx`, `apps/gate/src/app/page.tsx`
+
+---
+
+## 20. Dev Simulation Payment Bypass
 
 **Problem:** During development, testing the full payment flow requires real on-chain USDC transfers, which is impractical.
 

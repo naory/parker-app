@@ -16,10 +16,13 @@ export function checkPaymentRailConfig(): {
   stripeConfigured: boolean
   atLeastOneRail: boolean
 } {
+  const x402Network = process.env.X402_NETWORK || ''
+  const isXrplRail = x402Network.startsWith('xrpl:')
   const x402Configured = Boolean(
-    process.env.X402_NETWORK &&
+    x402Network &&
     process.env.X402_STABLECOIN &&
-    process.env.LOT_OPERATOR_WALLET,
+    process.env.LOT_OPERATOR_WALLET &&
+    (!isXrplRail || process.env.XRPL_RPC_URL),
   )
   const stripeConfigured = isStripeEnabled()
   return {

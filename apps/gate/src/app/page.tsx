@@ -9,7 +9,14 @@ import { PlateResult } from '@/components/PlateResult'
 import { GateStatus } from '@/components/GateStatus'
 import { useGateSocket } from '@/hooks/useGateSocket'
 import { useSessionCache } from '@/hooks/useSessionCache'
-import { buildERC20TransferURI, USDC_ADDRESSES } from '@parker/core'
+import {
+  buildERC20TransferURI,
+  USDC_ADDRESSES,
+  buildXamanPaymentURI,
+  isXrplNetwork,
+  isValidXrplTxHash,
+  XAMAN_LOGO_URL,
+} from '@parker/core'
 import type { PaymentOptions } from '@parker/core'
 
 function newIdempotencyKey(prefix: string): string {
@@ -89,6 +96,101 @@ export default function GateView() {
   } | null>(null)
 
   const [paymentMethod, setPaymentMethod] = useState<'none' | 'card' | 'crypto'>('none')
+  const [paymentProof, setPaymentProof] = useState('')
+  const [paymentConfirming, setPaymentConfirming] = useState(false)
+  const [xamanQrPng, setXamanQrPng] = useState<string | null>(null)
+  const [xamanPreparing, setXamanPreparing] = useState(false)
+  const [xamanAvailable, setXamanAvailable] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const x402Network = lastResult?.paymentOptions?.x402?.network
+    if (!x402Network || !isXrplNetwork(x402Network)) return
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    fetch(`${apiUrl}/api/gate/xrpl/xaman-config`)
+      .then((r) => r.json())
+      .then((data) => setXamanAvailable(Boolean(data?.available)))
+      .catch(() => setXamanAvailable(false))
+  }, [lastResult?.paymentOptions?.x402?.network])
+
+  async function confirmManualPayment(proof: string, plate: string, lotId: string) {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    setPaymentConfirming(true)
+    try {
+      const res = await fetch(`${apiUrl}/api/gate/exit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-PAYMENT': proof,
+          'Idempotency-Key': newIdempotencyKey(`gate-exit-confirm-${lotId}-${plate}`),
+        },
+        body: JSON.stringify({ plateNumber: plate, lotId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setLastResult({ success: false, message: data.error || 'Payment confirmation failed' })
+        return
+      }
+
+      setGateOpen(true)
+      setTimeout(() => setGateOpen(false), 5000)
+      setLastResult({
+        success: true,
+        message: `Payment confirmed${data.fee ? ` — ${data.fee.toFixed(2)} ${data.currency || ''}` : ''}. Gate open.`,
+        fee: data.fee,
+        currency: data.currency,
+        waitingForPayment: false,
+      })
+      setPaymentMethod('none')
+      setPaymentProof('')
+      setXamanAvailable(null)
+    } catch {
+      setLastResult({ success: false, message: 'Network error while confirming payment' })
+    } finally {
+      setPaymentConfirming(false)
+    }
+  }
+
+  async function startXamanPayment(plate: string, lotId: string) {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    setXamanPreparing(true)
+    try {
+      const intentRes = await fetch(`${apiUrl}/api/gate/xrpl/xaman-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plateNumber: plate, lotId }),
+      })
+      const intentData = await intentRes.json().catch(() => ({}))
+      if (!intentRes.ok || !intentData.payloadUuid) {
+        setLastResult({ success: false, message: intentData.error || 'Failed to create Xaman intent' })
+        return
+      }
+      if (intentData.qrPng) {
+        setXamanQrPng(String(intentData.qrPng))
+      }
+
+      const payloadUuid = String(intentData.payloadUuid)
+      const timeoutAt = Date.now() + 2 * 60_000
+      while (Date.now() < timeoutAt) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const statusRes = await fetch(`${apiUrl}/api/gate/xrpl/xaman-status/${payloadUuid}`)
+        const statusData = await statusRes.json().catch(() => ({}))
+        if (!statusRes.ok) continue
+        if (statusData.rejected) {
+          setLastResult({ success: false, message: 'Xaman payment request was rejected' })
+          return
+        }
+        if (statusData.resolved && statusData.txHash) {
+          await confirmManualPayment(String(statusData.txHash), plate, lotId)
+          return
+        }
+      }
+      setLastResult({ success: false, message: 'Timed out waiting for Xaman payment' })
+    } catch {
+      setLastResult({ success: false, message: 'Network error while starting Xaman payment' })
+    } finally {
+      setXamanPreparing(false)
+    }
+  }
 
   async function handlePlateDetected(plate: string) {
     setLastPlate(plate)
@@ -121,6 +223,8 @@ export default function GateView() {
         } else if (data.paymentOptions && Object.keys(data.paymentOptions).length > 0) {
           // Exit with pending payment — waiting for driver to pay
           setPaymentMethod('none')
+          setXamanQrPng(null)
+          setXamanAvailable(null)
           setLastResult({
             success: true,
             message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} — choose payment method`,
@@ -145,6 +249,8 @@ export default function GateView() {
       } else if (res.status === 402 && data.fee !== undefined) {
         // HTTP 402 Payment Required — x402 middleware returned payment details
         setPaymentMethod('none')
+        setXamanQrPng(null)
+        setXamanAvailable(null)
         setLastResult({
           success: true,
           message: `Fee: ${data.fee?.toFixed(2)} ${data.currency || ''} (${data.durationMinutes}min) — choose payment method`,
@@ -272,7 +378,10 @@ export default function GateView() {
                     <div className="mt-4 flex gap-3">
                       {lastResult.paymentOptions.stripe && (
                         <button
-                          onClick={() => setPaymentMethod('card')}
+                          onClick={() => {
+                            setPaymentMethod('card')
+                            setPaymentProof('')
+                          }}
                           className="flex-1 rounded-lg border-2 border-yellow-400 bg-white px-4 py-3 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
                         >
                           Pay with Card
@@ -280,7 +389,10 @@ export default function GateView() {
                       )}
                       {lastResult.paymentOptions.x402 && (
                         <button
-                          onClick={() => setPaymentMethod('crypto')}
+                          onClick={() => {
+                            setPaymentMethod('crypto')
+                            setPaymentProof('')
+                          }}
                           className="flex-1 rounded-lg border-2 border-yellow-400 bg-white px-4 py-3 text-sm font-medium text-yellow-700 transition hover:bg-yellow-50"
                         >
                           Pay with Crypto
@@ -300,7 +412,10 @@ export default function GateView() {
                         />
                       </div>
                       <button
-                        onClick={() => setPaymentMethod('none')}
+                        onClick={() => {
+                          setPaymentMethod('none')
+                          setPaymentProof('')
+                        }}
                         className="mt-1 text-xs text-yellow-600 underline hover:text-yellow-800"
                       >
                         Back
@@ -311,23 +426,104 @@ export default function GateView() {
                   {/* Crypto: EIP-681 USDC transfer QR */}
                   {paymentMethod === 'crypto' && lastResult.paymentOptions?.x402 && (
                     <div className="mt-4 flex flex-col items-center gap-2">
-                      <p className="text-xs text-yellow-600">Scan with any crypto wallet:</p>
-                      <div className="rounded-lg bg-white p-3">
-                        <QRCodeSVG
-                          value={buildERC20TransferURI({
-                            tokenAddress: USDC_ADDRESSES[lastResult.paymentOptions.x402.network] || '',
-                            to: lastResult.paymentOptions.x402.receiver,
-                            amount: lastResult.paymentOptions.x402.amount,
-                            chainId: lastResult.paymentOptions.x402.network,
-                          })}
-                          size={200}
-                        />
-                      </div>
-                      <p className="text-xs text-yellow-500">
-                        {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token} on {lastResult.paymentOptions.x402.network}
-                      </p>
+                      {isXrplNetwork(lastResult.paymentOptions.x402.network) ? (
+                        <>
+                          <p className="text-xs text-yellow-600">Send on XRPL, then paste tx hash:</p>
+                          <div className="w-full rounded-lg border border-yellow-200 bg-white p-3">
+                            <p className="text-xs text-gray-600">
+                              Amount: {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token}
+                            </p>
+                            <p className="text-xs text-gray-600">
+                              Network: {lastResult.paymentOptions.x402.network}
+                            </p>
+                            <p className="mt-1 break-all font-mono text-xs text-gray-700">
+                              To: {lastResult.paymentOptions.x402.receiver}
+                            </p>
+                            {xamanAvailable !== false && (
+                              <button
+                                onClick={() => {
+                                  if (!lastResult.plate || !lastResult.lotId) return
+                                  startXamanPayment(lastResult.plate, lastResult.lotId)
+                                }}
+                                disabled={xamanPreparing}
+                                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-parker-600 px-4 py-2 text-xs font-medium text-parker-700 hover:bg-parker-50 disabled:opacity-50"
+                              >
+                                <img src={XAMAN_LOGO_URL} alt="Xaman" className="h-4 w-auto" />
+                                {xamanPreparing ? 'Waiting for Xaman...' : 'Generate Xaman QR / Start Payment'}
+                              </button>
+                            )}
+                            {xamanAvailable === false && (
+                              <p className="mt-3 text-center text-[11px] text-yellow-700">
+                                Xaman auto-flow is not configured on this deployment. Use manual payment and tx-hash confirmation below.
+                              </p>
+                            )}
+                            <div className="mt-3 flex justify-center rounded-lg bg-white p-2">
+                              {xamanAvailable !== false && xamanQrPng ? (
+                                <img src={xamanQrPng} alt="Xaman payment QR" className="h-[180px] w-[180px]" />
+                              ) : (
+                                <QRCodeSVG
+                                  value={buildXamanPaymentURI({
+                                    receiver: lastResult.paymentOptions.x402.receiver,
+                                    amount: lastResult.paymentOptions.x402.amount,
+                                    currency: lastResult.paymentOptions.x402.token,
+                                    network: lastResult.paymentOptions.x402.network,
+                                  })}
+                                  size={180}
+                                />
+                              )}
+                            </div>
+                            <p className="mt-1 text-center text-[11px] text-yellow-700">
+                              {xamanAvailable === false ? 'Pay manually in wallet and paste tx hash.' : 'Scan with Xaman (recommended) or pay manually.'}
+                            </p>
+                            <p className="mt-1 text-center text-[11px] text-yellow-700">
+                              If scan/deep-link handoff fails, complete payment in Xaman and paste the tx hash below.
+                            </p>
+                            <input
+                              value={paymentProof}
+                              onChange={(e) => setPaymentProof(e.target.value)}
+                              placeholder="Paste 64-char XRPL tx hash"
+                              className="mt-3 w-full rounded-md border border-gray-300 px-2 py-2 text-xs font-mono focus:border-parker-500 focus:outline-none"
+                            />
+                            <button
+                              onClick={() => {
+                                if (!lastResult.plate || !lastResult.lotId) return
+                                if (!isValidXrplTxHash(paymentProof)) {
+                                  setLastResult({ success: false, message: 'Enter a valid XRPL transaction hash' })
+                                  return
+                                }
+                                confirmManualPayment(paymentProof.trim(), lastResult.plate, lastResult.lotId)
+                              }}
+                              disabled={paymentConfirming}
+                              className="mt-3 w-full rounded-lg border-2 border-parker-600 px-4 py-2 text-xs font-medium text-parker-700 hover:bg-parker-50 disabled:opacity-50"
+                            >
+                              {paymentConfirming ? 'Confirming...' : 'Confirm XRPL Payment'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-yellow-600">Scan with any crypto wallet:</p>
+                          <div className="rounded-lg bg-white p-3">
+                            <QRCodeSVG
+                              value={buildERC20TransferURI({
+                                tokenAddress: USDC_ADDRESSES[lastResult.paymentOptions.x402.network] || '',
+                                to: lastResult.paymentOptions.x402.receiver,
+                                amount: lastResult.paymentOptions.x402.amount,
+                                chainId: lastResult.paymentOptions.x402.network,
+                              })}
+                              size={200}
+                            />
+                          </div>
+                          <p className="text-xs text-yellow-500">
+                            {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token} on {lastResult.paymentOptions.x402.network}
+                          </p>
+                        </>
+                      )}
                       <button
-                        onClick={() => setPaymentMethod('none')}
+                        onClick={() => {
+                          setPaymentMethod('none')
+                          setXamanQrPng(null)
+                        }}
                         className="mt-1 text-xs text-yellow-600 underline hover:text-yellow-800"
                       >
                         Back

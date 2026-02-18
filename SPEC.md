@@ -19,7 +19,7 @@ Centralized parking apps (Tango, Pango) suffer from:
 
 A decentralized parking system where:
 - Each parking event is an on-chain NFT with immutable timestamps
-- Payment is handled via the x402 protocol (HTTP-native, stablecoin-based)
+- Payment is handled via the x402 protocol (HTTP-native, proof-based settlement across supported rails)
 - Verification is hybrid: PostgreSQL is the fast operational path, with Hedera Mirror Node fallback for resilience
 - Drivers maintain a digital wallet linked to their vehicle identity
 
@@ -50,9 +50,14 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
               ┌─────────────┐     │      ┌──────────────┐
               │ Base Sepolia │◄────┼────►│    Stripe    │
               │ DriverRegistry│            │  (cards)     │
-              │ + x402 rail   │            └──────────────┘
-              │   (optional)  │
-              └──────▲────────┘
+              │   (optional)  │            └──────────────┘
+              └──────────────┘
+                     │
+              ┌──────▼────────┐
+              │ x402 settlement│
+              │  Base or XRPL  │
+              │   (per lot)    │
+              └──────▲─────────┘
                      │
         ┌────────────┼────────────┐
         │            │            │
@@ -67,7 +72,7 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 
 #### Parker Backend (API Server)
 - Express.js with x402 payment middleware
-- Interfaces with Hedera HTS (`@hashgraph/sdk`) and Base (`viem`)
+- Interfaces with Hedera HTS (`@hashgraph/sdk`) and optional Base (`viem`)
 - ALPR processing pipeline
 - WebSocket for real-time gate events
 - PostgreSQL for off-chain indexing (fast queries, plate lookups)
@@ -176,7 +181,9 @@ Camera Frame → Preprocessing (crop, contrast) → OCR API → Plate String →
 
 ### 6.1 Overview
 Parker supports two parallel payment rails per lot, both optional:
-- **x402 (stablecoin)** — Coinbase's HTTP 402 protocol. Fee converted from lot currency to stablecoin via FX rate. Near-zero gas on Base L2.
+- **x402 (crypto)** — HTTP 402 protocol with network-aware settlement verification:
+  - **EVM rail (Base)**: ERC-20 transfer verification via viem
+  - **XRPL rail**: XRPL `Payment` transaction verification via settlement adapter
 - **Stripe (credit card)** — Stripe Checkout in the lot's native currency. Webhook-driven session closure.
 
 Both rails result in the same outcome: session closed in DB, NFT burned on Hedera, gate opened.
@@ -186,9 +193,11 @@ Both rails result in the same outcome: session closed in DB, NFT burned on Heder
 1. Gate app calls: POST /api/gate/exit
 2. Backend calculates fee in the lot's local currency
 3. Backend returns payment options based on lot config:
-   a. x402: stablecoin amount (FX-converted), token, network, receiver
+   a. x402: crypto amount (FX-converted), token, network, receiver
    b. Stripe: checkout URL in local currency
-4a. x402 path: driver wallet signs payment, request retried with X-PAYMENT header
+4a. x402 path:
+    - EVM: wallet sends transfer, request retried with `X-PAYMENT` tx hash
+    - XRPL: wallet pays, client submits XRPL tx hash via `X-PAYMENT`
 4b. Stripe path: driver redirected to Stripe Checkout; webhook confirms payment
 5. On confirmation (either rail): NFT burned on Hedera, session closed
 6. Gate opens, driver app notified via WebSocket
@@ -201,6 +210,8 @@ app.use('/api/gate/exit', createPaymentMiddleware({
   network: process.env.X402_NETWORK || 'base-sepolia',
   token: process.env.X402_STABLECOIN || 'USDC',
   receiverWallet: process.env.LOT_OPERATOR_WALLET,
+  publicClient,       // EVM rail
+  settlementAdapter,  // XRPL rail
 }));
 
 // Stripe webhook (raw body for signature verification)
@@ -212,6 +223,12 @@ app.use('/api/webhooks', webhooksRouter);
 - Stripe charges in the lot's native currency directly (USD, EUR, GBP, etc.)
 - x402 converts local currency fees to stablecoin via `FX_RATE_{FROM}_{TO}` env vars
 - Pricing service supports bidirectional FX lookup (direct or inverse rate)
+
+### 6.5 XRPL Wallet Compatibility
+- UX is Xaman-first for XRPL settlement
+- QR/deep-link support still depends on device/browser handoff behavior
+- Driver and gate UIs always provide manual fallback: submit XRPL transaction hash
+- API verification remains deterministic because settlement is validated server-side from the tx hash
 
 ## 7. Driver App — Detailed Spec
 

@@ -15,6 +15,7 @@
     "@parker/hedera": "workspace:*",
     "@parker/observability": "workspace:*",
     "@parker/x402": "workspace:*",
+    "@parker/x402-xrpl-settlement-adapter": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.0",

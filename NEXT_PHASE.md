@@ -16,8 +16,8 @@
 | Parking session management API | ✅ Complete | Entry/exit flow with fee calculation |
 | Gate API (entry, exit, scan, lot CRUD) | ✅ Complete | Full ALPR integration path |
 | ALPR package (normalize + recognize) | ✅ Complete | Google Cloud Vision, IL/US/EU formats |
-| x402 payment middleware | ✅ Complete | 402 flow with on-chain ERC20 transfer verification via viem |
-| x402 client (driver-side) | ✅ Complete | Auto-retry with payment proof |
+| x402 payment middleware | ✅ Complete | 402 flow with network-aware verification (EVM via viem, XRPL via settlement adapter) |
+| x402 client (driver-side) | ✅ Complete | EVM auto-retry + XRPL manual tx-hash confirmation fallback |
 | Stripe payment integration | ✅ Complete | Checkout + webhook flow with NFT burn |
 | Hedera NFT minting/burning | ✅ Complete | HTS-based, with mirror node queries + AES-256-GCM encrypted metadata |
 | Multi-currency pricing service | ✅ Complete | FX rate conversion, per-lot currency |
@@ -51,7 +51,7 @@
 ### P0 — Must Have (Security & Core Gaps)
 
 1. ~~**Rate limiting**~~ ✅ Three tiers via express-rate-limit
-2. ~~**x402 on-chain payment verification**~~ ✅ ERC20 transfer verification via viem
+2. ~~**x402 on-chain payment verification**~~ ✅ Network-aware verification (EVM transfer verification + XRPL adapter verification)
 3. ~~**WebSocket authentication**~~ ✅ JWT + gate API key auth on upgrade
 
 4. **Optional on-chain driver registration sync**
@@ -135,7 +135,7 @@
 | ~~No wallet auth~~ | ~~Critical~~ | ✅ Fixed — EIP-4361 SIWE implemented |
 | ~~WebSocket has no auth~~ | ~~High~~ | ✅ Fixed — JWT + gate API key auth on WS upgrade |
 | ~~ALPR endpoint has no rate limit~~ | ~~High~~ | ✅ Fixed — three-tier rate limiting via express-rate-limit |
-| ~~x402 payment verification is MVP-only~~ | ~~Critical~~ | ✅ Fixed — on-chain ERC20 transfer verification via viem |
+| ~~x402 payment verification is MVP-only~~ | ~~Critical~~ | ✅ Fixed — network-aware x402 verification (EVM + XRPL) |
 | Plate numbers in plaintext in DB | **Medium** | Acceptable for off-chain index (per SPEC §11), add access control on query endpoints |
 | NFT metadata encrypted on-chain | **Safe** | ✅ AES-256-GCM encryption prevents on-chain plate tracking |
 | Stripe webhook secret in env | **Low** | ✅ Verified via signature |

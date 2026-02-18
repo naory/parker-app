@@ -1,0 +1,21 @@
+{
+  "name": "@parker/x402-xrpl-settlement-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@parker/x402": "workspace:*",
+    "xrpl": "^4.4.0"
+  },
+  "devDependencies": {
+    "@parker/tsconfig": "workspace:*",
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
+  }
+}

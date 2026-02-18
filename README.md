@@ -1,6 +1,6 @@
 # Parker 🅿️
 
-Decentralized parking management powered by blockchain, the x402 payment protocol, and multi-currency Stripe checkout.
+Decentralized parking management powered by blockchain, the x402 payment protocol (EVM + XRPL rails), and multi-currency Stripe checkout.
 
 ## Motivation
 
@@ -10,9 +10,10 @@ Most parking lots today are fully automated: they scan license plates at entry a
 
 Country operator runs one deployment; lots are per-operator configs.
 
-Parker replaces fragmented centralized parking app flows (e.g., municipal/operator apps such as Pango, EasyPark, or RingGo) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (stablecoin) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
+Parker replaces fragmented centralized parking app flows (e.g., municipal/operator apps such as Pango, EasyPark, or RingGo) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (Base or XRPL) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
 
 For the architectural rationale, see `docs/WHY_BLOCKCHAIN.md`.
+For operational and fallback scenarios, see `docs/use-cases.md`.
 
 ### White-Label Deployment Model
 
@@ -46,14 +47,15 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
        │                        │
        ▼                        ▼
 ┌──────────────┐        ┌──────────────┐
-│  Base Sepolia │        │    Stripe    │
-│ (x402/USDC)  │        │ (Card/local) │
+│ x402 rail(s) │        │    Stripe    │
+│ Base / XRPL  │        │ (Card/local) │
 └──────────────┘        └──────────────┘
 ```
 
 **Hedera-first + dual-rail architecture (with optional Base components):**
 - **Hedera** — Parking session NFTs via native Token Service (mint on entry, burn on exit)
-- **Base Sepolia (optional per deployment)** — DriverRegistry sync and x402 stablecoin rail
+- **x402 crypto rail** — settlement can run on Base (EVM) or XRPL (selected via `X402_NETWORK`)
+- **Base Sepolia (optional per deployment)** — DriverRegistry sync and optional EVM x402 settlement
 - **Stripe** — Credit card payments in the lot's local currency (any Stripe-supported currency)
 
 ### Entry Flow
@@ -68,7 +70,7 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 1. Car approaches exit, plate scanned again
 2. System finds active parking session and calculates fee in the lot's local currency
 3. API returns **payment options** based on lot config:
-   - **x402 (crypto)** — fee converted to stablecoin (e.g. USDC) via FX rate; driver wallet signs and sends payment, request retried with proof
+   - **x402 (crypto)** — fee converted via FX; payment proof verified per selected network (EVM tx hash or XRPL tx hash). XRPL UX is Xaman-first with manual tx-hash fallback.
    - **Stripe (card)** — Stripe Checkout session created in the lot's currency; driver redirected to Stripe-hosted page; webhook confirms payment
 4. On payment confirmation (either rail): parking NFT burned on **Hedera**, session closed in DB
 5. Gate opens automatically, driver app notified via WebSocket
@@ -116,7 +118,7 @@ The app has three main components:
 - **Hedera integration** via `@parker/hedera` (`@hashgraph/sdk`) — mints parking NFTs on entry, burns on exit
 - **Optional Base integration** via viem — DriverRegistry reads/sync on Base Sepolia
 - **Multi-currency payment** — each lot defines its own currency (USD, EUR, GBP, etc.) and accepted payment methods
-- **x402 payment middleware** — returns HTTP 402 with stablecoin amount (FX-converted from local currency); verifies payment proof on retry
+- **x402 payment middleware** — returns HTTP 402 with crypto amount (FX-converted from local currency); verifies payment proof on retry via network-aware adapters (EVM + XRPL)
 - **Stripe Checkout** — creates payment sessions in the lot's local currency; webhook-driven session closure
 - **Pricing service** — currency-agnostic FX conversion via configurable rates (`FX_RATE_{FROM}_{TO}` env vars)
 - WebSocket server for real-time gate and driver events
@@ -129,7 +131,7 @@ The app has three main components:
 | Monorepo | pnpm workspaces + Turborepo |
 | Frontend | Next.js 14 (PWA, mobile-first, Tailwind CSS) |
 | Driver Wallet | Coinbase Smart Wallet via wagmi |
-| Payments (crypto) | x402 protocol (stablecoin on Base Sepolia) |
+| Payments (crypto) | x402 protocol (Base EVM and XRPL settlement rails) |
 | Payments (card) | Stripe Checkout (any Stripe-supported currency) |
 | Parking NFTs | Hedera Token Service (native HTS, `@hashgraph/sdk`) |
 | Driver Registry (optional) | Solidity 0.8.20 + Hardhat (Base Sepolia) |
@@ -262,17 +264,35 @@ STRIPE_SUCCESS_URL=http://localhost:3000/payment/success
 STRIPE_CANCEL_URL=http://localhost:3000/payment/cancel
 ```
 
-**x402 (stablecoin)** — converts the lot's local currency fee to stablecoin via FX rate:
+**x402 (crypto rails)** — converts the lot's local currency fee via FX and verifies settlement proof on the selected rail:
 ```bash
 # Add to apps/api/.env:
 X402_STABLECOIN=USDC
 X402_NETWORK=base-sepolia
 LOT_OPERATOR_WALLET=0x...
 
+# For XRPL settlement (required when X402_NETWORK starts with "xrpl:")
+XRPL_RPC_URL=wss://s.altnet.rippletest.net:51233
+XAMAN_API_URL=https://xumm.app
+XAMAN_API_KEY=...
+XAMAN_API_SECRET=...
+# Required for non-XRP XRPL assets (e.g., RLUSD IOU):
+XRPL_ISSUER=r...
+
 # FX rates (only needed when lot currency differs from stablecoin base):
 FX_RATE_EUR_USD=1.08
 FX_RATE_GBP_USD=1.27
 ```
+
+Supported examples:
+- `X402_NETWORK=base-sepolia` (EVM, ERC-20 transfer verification)
+- `X402_NETWORK=xrpl:testnet` (XRPL, tx-hash verification via adapter)
+
+Branding note: Xaman logo assets used in the UI are sourced from the official XRPL Labs branding repository:
+`https://github.com/XRPL-Labs/Xaman-Branding`
+
+Branding note: Coinbase wallet branding should be sourced from Coinbase official brand/press assets:
+`https://www.coinbase.com/press`
 
 Each lot's `currency` and `paymentMethods` are stored in the database and can be updated via `PUT /api/gate/lot/:lotId`.
 
@@ -325,7 +345,8 @@ parker-app/
 │   ├── core/            # Shared types, utils (calculateFee, formatPlate, hashPlate), contract ABIs
 │   ├── hedera/          # Hedera HTS integration (mint/burn NFTs, mirror node queries, setup script)
 │   ├── alpr/            # License plate recognition (Google Vision + country-aware plate normalization)
-│   ├── x402/            # x402 payment middleware (server) + payment client (browser)
+│   ├── x402/            # x402 middleware/client + EVM verification primitives
+│   ├── x402-xrpl-settlement-adapter/ # XRPL settlement verification adapter
 │   ├── observability/   # Structured logging + metrics primitives
 │   ├── tsconfig/        # Shared TypeScript configs
 │   └── eslint-config/   # Shared ESLint config
@@ -356,6 +377,8 @@ parker-app/
 |--------|------|-------------|
 | POST | `/api/gate/entry` | Process vehicle entry (plate string or image). Requires `Idempotency-Key` header |
 | POST | `/api/gate/exit` | Process vehicle exit + return payment options (x402 + Stripe). Requires `Idempotency-Key` header |
+| POST | `/api/gate/xrpl/xaman-intent` | Create Xaman payload for pending XRPL payment (Xaman-first flow) |
+| GET | `/api/gate/xrpl/xaman-status/:payloadUuid` | Poll Xaman payload resolution and get XRPL tx hash |
 | POST | `/api/gate/scan` | ALPR: upload image, get plate number |
 | GET | `/api/gate/lot/:lotId/status` | Lot occupancy, config, currency, payment methods |
 | GET | `/api/gate/lot/:lotId/sessions` | Active sessions list |
@@ -400,7 +423,8 @@ The API enforces the following invariants:
 - **One active session per plate** — enforced at both application level and via a PostgreSQL partial unique index (`WHERE status = 'active'`)
 - **Fee guardrails** — `calculateFee` handles zero/negative duration (minimum 1 billing increment), zero rate (fee = 0), and division-by-zero on billing interval (defaults to 15 min). Fees are rounded to 6 decimal places and capped by `maxDailyFee`
 - **Multi-currency** — each lot defines its own currency (ISO 4217); the pricing service converts to stablecoin via configurable FX rates for the x402 rail, while Stripe charges in the lot's native currency directly
-- **Payment-before-close** — the exit route returns payment options without closing the session; the session is only closed after payment confirmation (x402 proof header or Stripe webhook)
+- **Payment-before-close** — the exit route returns payment options without closing the session; the session is only closed after payment confirmation (`X-PAYMENT` proof for x402, or Stripe webhook)
+- **Network-aware x402 verification** — `X-PAYMENT` proofs are verified according to `X402_NETWORK` (EVM receipt parsing or XRPL payment verification)
 - **Idempotent webhooks** — Stripe webhook handler checks if the session is still active before closing, preventing duplicate closures on retry
 - **Idempotent gate mutations** — `POST /api/gate/entry` and `POST /api/gate/exit` require an `Idempotency-Key`; duplicate retries return the cached response without re-running side effects
 - **Input validation** — required fields are checked on all mutation endpoints; numeric lot settings reject `NaN`; session history `limit`/`offset` are sanitized and capped
@@ -416,9 +440,10 @@ The API enforces the following invariants:
 - [x] Driver app: registration, wallet connect, session view, history, profile
 - [x] Gate app: camera feed, ALPR scan, dashboard, sessions, settings
 - [x] x402 payment flow (middleware + client)
+- [x] x402 XRPL settlement adapter (tx-hash verification path)
 - [x] Multi-currency support: per-lot currency config, FX conversion for x402 rail
 - [x] Stripe Checkout integration: credit card payments in any local currency
-- [x] Dual payment rails: Stripe (card) + x402 (stablecoin) per lot config
+- [x] Dual payment rails: Stripe (card) + x402 (Base/XRPL) per lot config
 - [x] Stripe webhook with idempotent session closure
 - [x] Real-time WebSocket events (gate auto-opens on payment from any rail)
 - [x] Database schema + seed data
@@ -429,7 +454,8 @@ The API enforces the following invariants:
 - [x] Write-ahead NFT minting (mint before DB write on entry)
 - [x] Mirror Node fallback for exit when DB is unreachable
 - [x] Gate-side session cache for offline-capable exit validation
-- [x] On-chain payment verification (x402 ERC20 transfer verification via viem)
+- [x] On-chain payment verification (EVM via viem + XRPL via settlement adapter)
+- [x] XRPL payment verification via x402 settlement adapter (with manual tx-hash UX fallback)
 - [ ] Live FX rate feed (CoinGecko / Circle API) to replace static env var rates
 - [x] Wallet authentication (SIWE / EIP-4361)
 - [ ] Push notifications

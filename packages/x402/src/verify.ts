@@ -1,15 +1,11 @@
 import { type PublicClient, decodeEventLog, parseAbi } from 'viem'
+import type { PaymentTransferResult } from './adapter'
 
 const erc20TransferAbi = parseAbi([
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ])
 
-export interface ERC20TransferResult {
-  from: string
-  to: string
-  amount: bigint
-  confirmed: boolean
-}
+export interface ERC20TransferResult extends PaymentTransferResult {}
 
 /**
  * Verify an ERC20 transfer on-chain by checking the transaction receipt.

@@ -1,9 +1,15 @@
 'use client'
 
-import { useState } from 'react'
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useEffect, useState } from 'react'
+import { useWriteContract } from 'wagmi'
 import { parseUnits, type Address } from 'viem'
-import { USDC_ADDRESSES } from '@parker/core'
+import {
+  USDC_ADDRESSES,
+  isXrplNetwork,
+  isValidXrplTxHash,
+  buildXamanPaymentURI,
+  XAMAN_LOGO_URL,
+} from '@parker/core'
 import type { PaymentOptions } from '@parker/core'
 
 const ERC20_TRANSFER_ABI = [
@@ -49,12 +55,124 @@ export function PaymentPrompt({
 }: PaymentPromptProps) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'confirming' | 'settling' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [xrplTxHash, setXrplTxHash] = useState('')
+  const [xamanQrPng, setXamanQrPng] = useState<string | null>(null)
+  const [xamanAvailable, setXamanAvailable] = useState<boolean | null>(null)
 
   const { writeContractAsync } = useWriteContract()
 
+  const x402 = paymentOptions.x402
+  const isXrplRail = isXrplNetwork(x402?.network)
+
+  useEffect(() => {
+    if (!isXrplRail) return
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    fetch(`${apiUrl}/api/gate/xrpl/xaman-config`)
+      .then((r) => r.json())
+      .then((data) => setXamanAvailable(Boolean(data?.available)))
+      .catch(() => setXamanAvailable(false))
+  }, [isXrplRail])
+
+  async function settleWithPaymentProof(paymentProof: string, keyPrefix: string) {
+    setStatus('settling')
+    setError(null)
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    const res = await fetch(`${apiUrl}/api/gate/exit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-PAYMENT': paymentProof,
+        'Idempotency-Key': newIdempotencyKey(`${keyPrefix}-${lotId}-${plateNumber}`),
+      },
+      body: JSON.stringify({ plateNumber, lotId }),
+    })
+
+    if (res.ok) {
+      setStatus('done')
+      onPaid()
+      return
+    }
+
+    const data = await res.json().catch(() => ({}))
+    setError(data.error || 'Settlement failed')
+    setStatus('error')
+  }
+
   async function handlePayWithCrypto() {
-    const x402 = paymentOptions.x402
     if (!x402) return
+
+    if (isXrplRail) {
+      if (xamanAvailable === false && xrplTxHash.trim().length === 0) {
+        setError('Xaman auto-flow is unavailable. Pay in wallet and paste the XRPL transaction hash.')
+        return
+      }
+      // If tx hash already provided manually, confirm directly.
+      if (xrplTxHash.trim().length > 0) {
+        if (!isValidXrplTxHash(xrplTxHash)) {
+          setError('Enter a valid XRPL transaction hash (64 hex chars)')
+          return
+        }
+        try {
+          await settleWithPaymentProof(xrplTxHash.trim(), 'driver-exit-pay-xrpl')
+        } catch {
+          setError('Network error')
+          setStatus('error')
+        }
+        return
+      }
+
+      // Xaman-first: create payload, deep-link into Xaman, and poll for tx hash.
+      try {
+        setStatus('sending')
+        setError(null)
+
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+        const intentRes = await fetch(`${apiUrl}/api/gate/xrpl/xaman-intent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plateNumber, lotId }),
+        })
+        const intentData = await intentRes.json().catch(() => ({}))
+        if (!intentRes.ok || !intentData.payloadUuid) {
+          setError(intentData.error || 'Failed to create Xaman payment intent')
+          setStatus('error')
+          return
+        }
+
+        if (intentData.qrPng) {
+          setXamanQrPng(String(intentData.qrPng))
+        }
+        if (intentData.deepLink) {
+          window.location.href = String(intentData.deepLink)
+        }
+
+        setStatus('confirming')
+        const payloadUuid = String(intentData.payloadUuid)
+        const timeoutAt = Date.now() + 2 * 60_000
+        while (Date.now() < timeoutAt) {
+          await new Promise((r) => setTimeout(r, 2000))
+          const statusRes = await fetch(`${apiUrl}/api/gate/xrpl/xaman-status/${payloadUuid}`)
+          const statusData = await statusRes.json().catch(() => ({}))
+          if (!statusRes.ok) continue
+          if (statusData.rejected) {
+            setError('Payment request was rejected in Xaman')
+            setStatus('error')
+            return
+          }
+          if (statusData.resolved && statusData.txHash) {
+            await settleWithPaymentProof(String(statusData.txHash), 'driver-exit-pay-xrpl')
+            return
+          }
+        }
+        setError('Timed out waiting for Xaman confirmation. You can paste tx hash manually.')
+        setStatus('error')
+      } catch {
+        setError('Network error')
+        setStatus('error')
+      }
+      return
+    }
 
     const usdcAddress = USDC_ADDRESSES[x402.network]
     if (!usdcAddress) {
@@ -66,7 +184,7 @@ export function PaymentPrompt({
     setError(null)
 
     try {
-      // Step 1: Send USDC transfer via wallet
+      // Step 1: Send EVM token transfer via wallet
       const txHash = await writeContractAsync({
         address: usdcAddress,
         abi: ERC20_TRANSFER_ABI,
@@ -75,26 +193,7 @@ export function PaymentPrompt({
       })
 
       // Step 2: Confirm the exit with the API (X-PAYMENT header)
-      setStatus('settling')
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
-      const res = await fetch(`${apiUrl}/api/gate/exit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-PAYMENT': txHash,
-          'Idempotency-Key': newIdempotencyKey(`driver-exit-pay-${lotId}-${plateNumber}`),
-        },
-        body: JSON.stringify({ plateNumber, lotId }),
-      })
-
-      if (res.ok) {
-        setStatus('done')
-        onPaid()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        setError(data.error || 'Settlement failed')
-        setStatus('error')
-      }
+      await settleWithPaymentProof(txHash, 'driver-exit-pay-evm')
     } catch (err: any) {
       // User rejected tx or tx failed
       const msg = err?.shortMessage || err?.message || 'Transaction failed'
@@ -182,13 +281,64 @@ export function PaymentPrompt({
                 className="block w-full rounded-lg border-2 border-parker-600 px-4 py-3 text-center font-medium text-parker-600 transition hover:bg-parker-50 disabled:opacity-50"
               >
                 {status === 'sending'
-                  ? 'Confirm in wallet...'
+                  ? (isXrplRail ? 'Opening Xaman...' : 'Confirm in wallet...')
                   : status === 'confirming'
-                    ? 'Waiting for confirmation...'
+                    ? (isXrplRail ? 'Waiting for Xaman confirmation...' : 'Waiting for confirmation...')
                     : status === 'settling'
                       ? 'Opening gate...'
-                      : `Pay with ${paymentOptions.x402.token}`}
+                      : isXrplRail
+                        ? (xrplTxHash.trim()
+                            ? 'Confirm XRPL Tx Hash'
+                            : xamanAvailable === false
+                              ? 'Confirm XRPL Tx Hash'
+                              : 'Pay with Xaman')
+                        : `Pay with ${paymentOptions.x402.token}`}
               </button>
+            )}
+
+            {paymentOptions.x402 && isXrplRail && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-xs text-gray-600">
+                  Send {paymentOptions.x402.amount} {paymentOptions.x402.token} on {paymentOptions.x402.network} to:
+                </p>
+                <p className="mt-1 break-all font-mono text-xs text-gray-800">{paymentOptions.x402.receiver}</p>
+                {xamanAvailable !== false && (
+                  <>
+                    <a
+                      href={buildXamanPaymentURI({
+                        receiver: paymentOptions.x402.receiver,
+                        amount: paymentOptions.x402.amount,
+                        currency: paymentOptions.x402.token,
+                        network: paymentOptions.x402.network,
+                      })}
+                      className="mt-2 inline-flex items-center gap-2 text-xs text-parker-700 underline hover:text-parker-900"
+                    >
+                      <img src={XAMAN_LOGO_URL} alt="Xaman" className="h-4 w-auto" />
+                      Open in Xaman
+                    </a>
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Xaman is the recommended wallet for this flow. If deep-link handoff fails, pay manually in Xaman and paste the tx hash below.
+                    </p>
+                  </>
+                )}
+                {xamanAvailable === false && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Xaman auto-flow is not configured on this deployment. Complete payment in wallet and paste the tx hash below.
+                  </p>
+                )}
+                {xamanAvailable !== false && xamanQrPng && (
+                  <div className="mt-2 flex justify-center">
+                    <img src={xamanQrPng} alt="Xaman payment QR" className="h-36 w-36 rounded border border-gray-200 bg-white p-1" />
+                  </div>
+                )}
+                <label className="mt-3 block text-xs font-medium text-gray-700">XRPL transaction hash</label>
+                <input
+                  value={xrplTxHash}
+                  onChange={(e) => setXrplTxHash(e.target.value)}
+                  placeholder="Paste 64-char tx hash"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-2 text-xs font-mono focus:border-parker-500 focus:outline-none"
+                />
+              </div>
             )}
 
             {/* Dev-only: simulate payment without real USDC */}

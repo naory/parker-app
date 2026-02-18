@@ -14,9 +14,14 @@ import {
 } from '../services/hedera'
 import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
-import { addPendingPayment, removePendingPayment } from '../services/paymentWatcher'
+import { addPendingPayment, getPendingPaymentByPlateLot, removePendingPayment } from '../services/paymentWatcher'
 import { failedExitsTotal, logger, paymentFailuresTotal } from '../services/observability'
 import type { PaymentRequired } from '@parker/x402'
+import {
+  createXamanPayloadForPendingPayment,
+  getXamanPayloadStatus,
+  isXamanConfigured,
+} from '../services/xaman'
 
 export const gateRouter = Router()
 
@@ -63,6 +68,64 @@ async function resolvePlate(
 function hashIdempotencyPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
+
+// POST /api/gate/xrpl/xaman-intent — Create Xaman payload for pending XRPL payment
+gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
+  try {
+    if (!X402_NETWORK.startsWith('xrpl:')) {
+      return res.status(400).json({ error: 'XRPL rail is not active for this deployment' })
+    }
+    if (!isXamanConfigured()) {
+      return res.status(503).json({ error: 'Xaman is not configured on the server' })
+    }
+
+    const plateRaw = String(req.body?.plateNumber || '')
+    const lotId = String(req.body?.lotId || '')
+    if (!plateRaw || !lotId) {
+      return res.status(400).json({ error: 'plateNumber and lotId are required' })
+    }
+
+    const plate = normalizePlate(plateRaw)
+    const pending = getPendingPaymentByPlateLot(plate, lotId)
+    if (!pending) {
+      return res.status(404).json({
+        error: 'No pending XRPL payment found. Request /api/gate/exit first.',
+      })
+    }
+
+    const payload = await createXamanPayloadForPendingPayment(pending)
+    return res.json(payload)
+  } catch (error) {
+    console.error('Failed to create Xaman payload:', error)
+    return res.status(500).json({ error: 'Failed to create Xaman payload' })
+  }
+})
+
+// GET /api/gate/xrpl/xaman-status/:payloadUuid — Poll Xaman payload state
+gateRouter.get('/xrpl/xaman-status/:payloadUuid', async (req, res) => {
+  try {
+    if (!X402_NETWORK.startsWith('xrpl:')) {
+      return res.status(400).json({ error: 'XRPL rail is not active for this deployment' })
+    }
+    const payloadUuid = req.params.payloadUuid
+    if (!payloadUuid) {
+      return res.status(400).json({ error: 'payloadUuid is required' })
+    }
+    const status = await getXamanPayloadStatus(payloadUuid)
+    return res.json(status)
+  } catch (error) {
+    console.error('Failed to fetch Xaman payload status:', error)
+    return res.status(500).json({ error: 'Failed to fetch Xaman payload status' })
+  }
+})
+
+// GET /api/gate/xrpl/xaman-config — Check whether Xaman flow is available
+gateRouter.get('/xrpl/xaman-config', (_req, res) => {
+  res.json({
+    available: X402_NETWORK.startsWith('xrpl:') && isXamanConfigured(),
+    network: X402_NETWORK,
+  })
+})
 
 // POST /api/gate/entry — Process vehicle entry
 // Requires header: Idempotency-Key
@@ -459,7 +522,10 @@ gateRouter.post('/exit', async (req, res) => {
     const transfer = (req as any).paymentTransfer as import('@parker/x402').ERC20TransferResult | undefined
     if (transfer) {
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
-      if (expectedReceiver && transfer.to.toLowerCase() !== expectedReceiver.toLowerCase()) {
+      const sameReceiver = X402_NETWORK.startsWith('xrpl:')
+        ? transfer.to === expectedReceiver
+        : transfer.to.toLowerCase() === expectedReceiver.toLowerCase()
+      if (expectedReceiver && !sameReceiver) {
         paymentFailuresTotal.inc({ reason: 'receiver_mismatch' })
         return reply(400, {
           error: 'Payment receiver mismatch',

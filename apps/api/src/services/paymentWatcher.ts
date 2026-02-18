@@ -53,6 +53,15 @@ export function removePendingPayment(sessionId: string) {
   }
 }
 
+export function getPendingPaymentByPlateLot(plate: string, lotId: string): PendingPayment | null {
+  for (const pending of pendingPayments.values()) {
+    if (pending.plate === plate && pending.lotId === lotId) {
+      return pending
+    }
+  }
+  return null
+}
+
 // ---- ERC-20 Transfer ABI ----
 
 const ERC20_TRANSFER_EVENT = parseAbi([

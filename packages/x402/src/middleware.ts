@@ -1,6 +1,7 @@
 import type { RequestHandler, Request, Response, NextFunction } from 'express'
 import type { PublicClient } from 'viem'
 import { verifyERC20Transfer, type ERC20TransferResult } from './verify'
+import type { SettlementAdapter } from './adapter'
 
 /**
  * x402 Payment Middleware for Parker.
@@ -25,6 +26,8 @@ export interface PaymentMiddlewareOptions {
   receiverWallet?: string
   /** viem PublicClient for on-chain tx verification. If omitted, header is trusted (dev mode). */
   publicClient?: PublicClient
+  /** Optional settlement adapter (e.g. XRPL) to verify payment proofs. */
+  settlementAdapter?: SettlementAdapter
 }
 
 export interface PaymentRequired {
@@ -46,6 +49,7 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
     token: defaultToken = 'USDC',
     receiverWallet: defaultReceiver = process.env.LOT_OPERATOR_WALLET || '0x0',
     publicClient,
+    settlementAdapter,
   } = options
 
   const middleware: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
@@ -58,6 +62,19 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
         console.warn(`[x402] Dev mode — accepting simulated payment`)
         ;(req as any).paymentVerified = true
         ;(req as any).paymentTxHash = paymentHeader
+      } else if (settlementAdapter) {
+        // Custom settlement adapter mode (e.g. XRPL)
+        try {
+          const transfer = await settlementAdapter.verifyPayment(paymentHeader)
+          ;(req as any).paymentVerified = true
+          ;(req as any).paymentTxHash = paymentHeader
+          ;(req as any).paymentTransfer = transfer
+        } catch (err) {
+          return res.status(400).json({
+            error: 'Payment verification failed',
+            details: (err as Error).message,
+          })
+        }
       } else if (publicClient) {
         // On-chain verification mode
         if (!TX_HASH_REGEX.test(paymentHeader)) {
