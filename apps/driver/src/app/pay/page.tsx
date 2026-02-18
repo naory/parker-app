@@ -2,15 +2,21 @@
 
 import { Suspense, useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { buildXamanPaymentURI, isValidXrplTxHash, isXrplNetwork, XAMAN_LOGO_URL } from '@parker/core'
+import {
+  buildXamanPaymentURI,
+  isValidXrplTxHash,
+  isXrplNetwork,
+  XAMAN_LOGO_URL,
+} from '@parker/core'
 import type { PaymentOptions } from '@parker/core'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
 function newIdempotencyKey(prefix: string): string {
-  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2)
+  const rand =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
   return `${prefix}-${Date.now()}-${rand}`
 }
 
@@ -241,9 +247,7 @@ function PayContent() {
           </div>
         )}
 
-        {error && (
-          <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
-        )}
+        {error && <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
         {status === 'done' ? (
           <div className="mt-4 rounded-lg bg-green-50 p-4 text-center font-medium text-green-700">
@@ -262,13 +266,16 @@ function PayContent() {
                 </a>
               )}
 
-              {paymentOptions.x402 && (
-                isXrplNetwork(paymentOptions.x402.network) ? (
+              {paymentOptions.x402 &&
+                (isXrplNetwork(paymentOptions.x402.network) ? (
                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                     <p className="text-sm text-gray-600">
-                      Send {paymentOptions.x402.amount} {paymentOptions.x402.token} on {paymentOptions.x402.network} to:
+                      Send {paymentOptions.x402.amount} {paymentOptions.x402.token} on{' '}
+                      {paymentOptions.x402.network} to:
                     </p>
-                    <p className="mt-1 break-all font-mono text-xs text-gray-800">{paymentOptions.x402.receiver}</p>
+                    <p className="mt-1 break-all font-mono text-xs text-gray-800">
+                      {paymentOptions.x402.receiver}
+                    </p>
                     {xamanAvailable !== false && (
                       <a
                         href={buildXamanPaymentURI({
@@ -284,7 +291,8 @@ function PayContent() {
                       </a>
                     )}
                     <p className="mt-1 text-[11px] text-gray-500">
-                      Xaman is the recommended wallet for this flow. If deep-link handoff fails, pay manually and confirm with the transaction hash.
+                      Xaman is the recommended wallet for this flow. If deep-link handoff fails, pay
+                      manually and confirm with the transaction hash.
                     </p>
                     {xamanAvailable !== false ? (
                       <button
@@ -297,15 +305,22 @@ function PayContent() {
                       </button>
                     ) : (
                       <p className="mt-2 text-[11px] text-gray-500">
-                        Xaman auto-flow is not configured on this deployment. Complete payment in wallet and confirm with tx hash below.
+                        Xaman auto-flow is not configured on this deployment. Complete payment in
+                        wallet and confirm with tx hash below.
                       </p>
                     )}
                     {xamanAvailable !== false && xamanQrPng && (
                       <div className="mt-3 flex justify-center">
-                        <img src={xamanQrPng} alt="Xaman payment QR" className="h-36 w-36 rounded border border-gray-200 bg-white p-1" />
+                        <img
+                          src={xamanQrPng}
+                          alt="Xaman payment QR"
+                          className="h-36 w-36 rounded border border-gray-200 bg-white p-1"
+                        />
                       </div>
                     )}
-                    <label className="mt-3 block text-xs font-medium text-gray-700">XRPL transaction hash</label>
+                    <label className="mt-3 block text-xs font-medium text-gray-700">
+                      XRPL transaction hash
+                    </label>
                     <input
                       value={xrplTxHash}
                       onChange={(e) => setXrplTxHash(e.target.value)}
@@ -324,8 +339,7 @@ function PayContent() {
                   <p className="text-center text-sm text-gray-500">
                     To pay with {paymentOptions.x402.token}, open the Parker app on your phone.
                   </p>
-                )
-              )}
+                ))}
 
               {process.env.NODE_ENV === 'development' && (
                 <button

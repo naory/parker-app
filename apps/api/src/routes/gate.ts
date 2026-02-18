@@ -14,7 +14,11 @@ import {
 } from '../services/hedera'
 import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
-import { addPendingPayment, getPendingPaymentByPlateLot, removePendingPayment } from '../services/paymentWatcher'
+import {
+  addPendingPayment,
+  getPendingPaymentByPlateLot,
+  removePendingPayment,
+} from '../services/paymentWatcher'
 import { failedExitsTotal, logger, paymentFailuresTotal } from '../services/observability'
 import type { PaymentRequired } from '@parker/x402'
 import {
@@ -178,7 +182,9 @@ gateRouter.post('/entry', async (req, res) => {
       return res.status(begin.responseCode).json(begin.responseBody)
     }
     if (begin.status === 'in_progress') {
-      return res.status(409).json({ error: 'A request with this Idempotency-Key is already in progress' })
+      return res
+        .status(409)
+        .json({ error: 'A request with this Idempotency-Key is already in progress' })
     }
     if (begin.status === 'conflict') {
       return res.status(409).json({
@@ -338,7 +344,9 @@ gateRouter.post('/exit', async (req, res) => {
       return res.status(begin.responseCode).json(begin.responseBody)
     }
     if (begin.status === 'in_progress') {
-      return res.status(409).json({ error: 'A request with this Idempotency-Key is already in progress' })
+      return res
+        .status(409)
+        .json({ error: 'A request with this Idempotency-Key is already in progress' })
     }
     if (begin.status === 'conflict') {
       return res.status(409).json({
@@ -388,10 +396,19 @@ gateRouter.post('/exit', async (req, res) => {
 
       const durationMs = Date.now() - session.entryTime.getTime()
       durationMinutes = durationMs / (1000 * 60)
-      fee = calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined, lot.gracePeriodMinutes ?? 0)
+      fee = calculateFee(
+        durationMinutes,
+        lot.ratePerHour,
+        lot.billingMinutes,
+        lot.maxDailyFee ?? undefined,
+        lot.gracePeriodMinutes ?? 0,
+      )
     } catch (dbError) {
       // DB unreachable — try Mirror Node fallback
-      console.warn('[exit] DB lookup failed, attempting Mirror Node fallback:', (dbError as Error).message)
+      console.warn(
+        '[exit] DB lookup failed, attempting Mirror Node fallback:',
+        (dbError as Error).message,
+      )
 
       if (!isHederaEnabled()) {
         return reply(503, { error: 'Database unavailable and Hedera fallback not configured' })
@@ -424,12 +441,20 @@ gateRouter.post('/exit', async (req, res) => {
       const entryTimeMs = nftSession.entryTime * 1000
       durationMinutes = (Date.now() - entryTimeMs) / (1000 * 60)
       fee = lot
-        ? calculateFee(durationMinutes, lot.ratePerHour, lot.billingMinutes, lot.maxDailyFee ?? undefined, lot.gracePeriodMinutes ?? 0)
+        ? calculateFee(
+            durationMinutes,
+            lot.ratePerHour,
+            lot.billingMinutes,
+            lot.maxDailyFee ?? undefined,
+            lot.gracePeriodMinutes ?? 0,
+          )
         : 0 // Can't calculate fee without lot config — let payment handle it
 
       usingFallback = true
       fallbackSerial = nftSession.serial
-      console.log(`[exit] Mirror Node fallback: found NFT serial=${nftSession.serial}, duration=${Math.round(durationMinutes)}m`)
+      console.log(
+        `[exit] Mirror Node fallback: found NFT serial=${nftSession.serial}, duration=${Math.round(durationMinutes)}m`,
+      )
     }
 
     const currency = lot?.currency || 'USD'
@@ -454,7 +479,12 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
 
-      if (!usingFallback && lot?.paymentMethods.includes('stripe') && isStripeEnabled() && session) {
+      if (
+        !usingFallback &&
+        lot?.paymentMethods.includes('stripe') &&
+        isStripeEnabled() &&
+        session
+      ) {
         try {
           const { checkoutUrl } = await createParkingCheckout(session, lot, fee)
           paymentOptions.stripe = { checkoutUrl }
@@ -503,7 +533,13 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       return reply(200, {
-        session: session || { id: sessionId, plateNumber: plate, lotId, entryTime: new Date((fallbackSerial ? Date.now() - durationMinutes * 60000 : Date.now())), status: 'active' as const },
+        session: session || {
+          id: sessionId,
+          plateNumber: plate,
+          lotId,
+          entryTime: new Date(fallbackSerial ? Date.now() - durationMinutes * 60000 : Date.now()),
+          status: 'active' as const,
+        },
         fee,
         currency,
         durationMinutes: Math.round(durationMinutes),
@@ -519,7 +555,9 @@ gateRouter.post('/exit', async (req, res) => {
     removePendingPayment(sessionId)
 
     // Validate on-chain transfer details (when available)
-    const transfer = (req as any).paymentTransfer as import('@parker/x402').ERC20TransferResult | undefined
+    const transfer = (req as any).paymentTransfer as
+      | import('@parker/x402').ERC20TransferResult
+      | undefined
     if (transfer) {
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       const sameReceiver = X402_NETWORK.startsWith('xrpl:')
@@ -539,9 +577,10 @@ gateRouter.post('/exit', async (req, res) => {
       const expectedAmount = BigInt(Math.round(fee * 10 ** stablecoinDecimals))
       if (expectedAmount > 0n) {
         const tolerance = expectedAmount / 100n // 1%
-        const diff = transfer.amount > expectedAmount
-          ? transfer.amount - expectedAmount
-          : expectedAmount - transfer.amount
+        const diff =
+          transfer.amount > expectedAmount
+            ? transfer.amount - expectedAmount
+            : expectedAmount - transfer.amount
         if (diff > tolerance) {
           paymentFailuresTotal.inc({ reason: 'amount_mismatch' })
           return reply(400, {
@@ -581,7 +620,10 @@ gateRouter.post('/exit', async (req, res) => {
           feeCurrency: currency,
         })
       } catch (dbErr) {
-        console.warn('[exit] DB close failed during fallback — NFT burned, gate will open:', (dbErr as Error).message)
+        console.warn(
+          '[exit] DB close failed during fallback — NFT burned, gate will open:',
+          (dbErr as Error).message,
+        )
       }
     }
 
@@ -704,11 +746,23 @@ gateRouter.get('/lot/:lotId/sessions', async (req, res) => {
 // PUT /api/gate/lot/:lotId — Update lot settings
 gateRouter.put('/lot/:lotId', async (req, res) => {
   try {
-    const { name, address, capacity, ratePerHour, billingMinutes, maxDailyFee, gracePeriodMinutes, currency, paymentMethods } = req.body
+    const {
+      name,
+      address,
+      capacity,
+      ratePerHour,
+      billingMinutes,
+      maxDailyFee,
+      gracePeriodMinutes,
+      currency,
+      paymentMethods,
+    } = req.body
 
     // Parse numeric fields — allow 0 as a valid value (only skip if not provided)
-    const parseOptionalInt = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseInt(String(v)) : undefined
-    const parseOptionalFloat = (v: unknown) => v !== undefined && v !== null && v !== '' ? parseFloat(String(v)) : undefined
+    const parseOptionalInt = (v: unknown) =>
+      v !== undefined && v !== null && v !== '' ? parseInt(String(v)) : undefined
+    const parseOptionalFloat = (v: unknown) =>
+      v !== undefined && v !== null && v !== '' ? parseFloat(String(v)) : undefined
 
     const parsedCapacity = parseOptionalInt(capacity)
     const parsedRate = parseOptionalFloat(ratePerHour)

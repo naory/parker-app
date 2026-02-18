@@ -113,7 +113,7 @@ export async function createXamanPayloadForPendingPayment(
     throw new Error(`Xaman payload creation failed (${res.status})`)
   }
 
-  const json = await res.json() as {
+  const json = (await res.json()) as {
     uuid?: string
     next?: { always?: string }
     refs?: { qr_png?: string }
@@ -148,7 +148,7 @@ export async function getXamanPayloadStatus(payloadUuid: string): Promise<XamanP
     throw new Error(`Xaman payload status fetch failed (${res.status})`)
   }
 
-  const json = await res.json() as {
+  const json = (await res.json()) as {
     meta?: { resolved?: boolean; signed?: boolean }
     response?: { txid?: string }
   }

@@ -20,9 +20,10 @@ import {
 import type { PaymentOptions } from '@parker/core'
 
 function newIdempotencyKey(prefix: string): string {
-  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2)
+  const rand =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
   return `${prefix}-${Date.now()}-${rand}`
 }
 
@@ -53,33 +54,36 @@ export default function GateView() {
   const { addEntry, removeExit, getSession, sessionCount } = useSessionCache()
 
   // Real-time gate events via WebSocket
-  const handleGateEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
-    if (event.type === 'entry') {
-      const plate = event.plate as string
-      if (plate) setLastPlate(plate)
-      // Cache the entry for offline resilience
-      addEntry(event)
-    }
-    if (event.type === 'exit') {
-      const plate = event.plate as string
-      if (plate) setLastPlate(plate)
-      // Remove from local cache
-      removeExit(event)
-      // Payment confirmed (from Stripe webhook or x402) — open the gate
-      setGateOpen(true)
-      setTimeout(() => setGateOpen(false), 5000)
-      const fee = event.fee as number | undefined
-      const currency = (event.currency as string) || ''
-      const method = (event.paymentMethod as string) || ''
-      setLastResult({
-        success: true,
-        message: `Payment received${method ? ` (${method})` : ''} — ${fee?.toFixed(2)} ${currency}. Gate open.`,
-        fee,
-        currency,
-        waitingForPayment: false,
-      })
-    }
-  }, [addEntry, removeExit])
+  const handleGateEvent = useCallback(
+    (event: { type: string; [key: string]: unknown }) => {
+      if (event.type === 'entry') {
+        const plate = event.plate as string
+        if (plate) setLastPlate(plate)
+        // Cache the entry for offline resilience
+        addEntry(event)
+      }
+      if (event.type === 'exit') {
+        const plate = event.plate as string
+        if (plate) setLastPlate(plate)
+        // Remove from local cache
+        removeExit(event)
+        // Payment confirmed (from Stripe webhook or x402) — open the gate
+        setGateOpen(true)
+        setTimeout(() => setGateOpen(false), 5000)
+        const fee = event.fee as number | undefined
+        const currency = (event.currency as string) || ''
+        const method = (event.paymentMethod as string) || ''
+        setLastResult({
+          success: true,
+          message: `Payment received${method ? ` (${method})` : ''} — ${fee?.toFixed(2)} ${currency}. Gate open.`,
+          fee,
+          currency,
+          waitingForPayment: false,
+        })
+      }
+    },
+    [addEntry, removeExit],
+  )
 
   const gateApiKey = process.env.NEXT_PUBLIC_GATE_API_KEY || null
   const { connected: wsConnected } = useGateSocket(lotId, handleGateEvent, gateApiKey)
@@ -161,7 +165,10 @@ export default function GateView() {
       })
       const intentData = await intentRes.json().catch(() => ({}))
       if (!intentRes.ok || !intentData.payloadUuid) {
-        setLastResult({ success: false, message: intentData.error || 'Failed to create Xaman intent' })
+        setLastResult({
+          success: false,
+          message: intentData.error || 'Failed to create Xaman intent',
+        })
         return
       }
       if (intentData.qrPng) {
@@ -283,12 +290,16 @@ export default function GateView() {
           removeExit({ plate })
           return
         }
-        setLastResult({ success: false, message: 'Network error — no cached session found for this plate' })
+        setLastResult({
+          success: false,
+          message: 'Network error — no cached session found for this plate',
+        })
       } else {
         // Entry: can't validate driver/lot remotely — warn operator
         setLastResult({
           success: false,
-          message: 'Network error — cannot verify driver registration. Check connectivity and retry.',
+          message:
+            'Network error — cannot verify driver registration. Check connectivity and retry.',
         })
       }
     }
@@ -300,9 +311,7 @@ export default function GateView() {
         <div className="flex items-center gap-2">
           <div>
             <h1 className="text-2xl font-light text-gray-400">Parking Lot Gate</h1>
-            {lotAddress && (
-              <p className="text-sm text-gray-500">{lotAddress}</p>
-            )}
+            {lotAddress && <p className="text-sm text-gray-500">{lotAddress}</p>}
           </div>
           <span
             className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-gray-300'}`}
@@ -323,9 +332,7 @@ export default function GateView() {
           <button
             onClick={() => setMode('entry')}
             className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-              mode === 'entry'
-                ? 'bg-green-500 text-white'
-                : 'text-gray-600 hover:text-gray-800'
+              mode === 'entry' ? 'bg-green-500 text-white' : 'text-gray-600 hover:text-gray-800'
             }`}
           >
             Entry
@@ -333,9 +340,7 @@ export default function GateView() {
           <button
             onClick={() => setMode('exit')}
             className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-              mode === 'exit'
-                ? 'bg-red-500 text-white'
-                : 'text-gray-600 hover:text-gray-800'
+              mode === 'exit' ? 'bg-red-500 text-white' : 'text-gray-600 hover:text-gray-800'
             }`}
           >
             Exit
@@ -370,7 +375,9 @@ export default function GateView() {
                 <>
                   <div className="mt-2 flex items-center gap-2">
                     <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
-                    <span className="text-xs">Gate will open automatically when payment is confirmed</span>
+                    <span className="text-xs">
+                      Gate will open automatically when payment is confirmed
+                    </span>
                   </div>
 
                   {/* Payment method selector */}
@@ -428,10 +435,13 @@ export default function GateView() {
                     <div className="mt-4 flex flex-col items-center gap-2">
                       {isXrplNetwork(lastResult.paymentOptions.x402.network) ? (
                         <>
-                          <p className="text-xs text-yellow-600">Send on XRPL, then paste tx hash:</p>
+                          <p className="text-xs text-yellow-600">
+                            Send on XRPL, then paste tx hash:
+                          </p>
                           <div className="w-full rounded-lg border border-yellow-200 bg-white p-3">
                             <p className="text-xs text-gray-600">
-                              Amount: {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token}
+                              Amount: {lastResult.paymentOptions.x402.amount}{' '}
+                              {lastResult.paymentOptions.x402.token}
                             </p>
                             <p className="text-xs text-gray-600">
                               Network: {lastResult.paymentOptions.x402.network}
@@ -449,17 +459,24 @@ export default function GateView() {
                                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-parker-600 px-4 py-2 text-xs font-medium text-parker-700 hover:bg-parker-50 disabled:opacity-50"
                               >
                                 <img src={XAMAN_LOGO_URL} alt="Xaman" className="h-4 w-auto" />
-                                {xamanPreparing ? 'Waiting for Xaman...' : 'Generate Xaman QR / Start Payment'}
+                                {xamanPreparing
+                                  ? 'Waiting for Xaman...'
+                                  : 'Generate Xaman QR / Start Payment'}
                               </button>
                             )}
                             {xamanAvailable === false && (
                               <p className="mt-3 text-center text-[11px] text-yellow-700">
-                                Xaman auto-flow is not configured on this deployment. Use manual payment and tx-hash confirmation below.
+                                Xaman auto-flow is not configured on this deployment. Use manual
+                                payment and tx-hash confirmation below.
                               </p>
                             )}
                             <div className="mt-3 flex justify-center rounded-lg bg-white p-2">
                               {xamanAvailable !== false && xamanQrPng ? (
-                                <img src={xamanQrPng} alt="Xaman payment QR" className="h-[180px] w-[180px]" />
+                                <img
+                                  src={xamanQrPng}
+                                  alt="Xaman payment QR"
+                                  className="h-[180px] w-[180px]"
+                                />
                               ) : (
                                 <QRCodeSVG
                                   value={buildXamanPaymentURI({
@@ -473,10 +490,13 @@ export default function GateView() {
                               )}
                             </div>
                             <p className="mt-1 text-center text-[11px] text-yellow-700">
-                              {xamanAvailable === false ? 'Pay manually in wallet and paste tx hash.' : 'Scan with Xaman (recommended) or pay manually.'}
+                              {xamanAvailable === false
+                                ? 'Pay manually in wallet and paste tx hash.'
+                                : 'Scan with Xaman (recommended) or pay manually.'}
                             </p>
                             <p className="mt-1 text-center text-[11px] text-yellow-700">
-                              If scan/deep-link handoff fails, complete payment in Xaman and paste the tx hash below.
+                              If scan/deep-link handoff fails, complete payment in Xaman and paste
+                              the tx hash below.
                             </p>
                             <input
                               value={paymentProof}
@@ -488,10 +508,17 @@ export default function GateView() {
                               onClick={() => {
                                 if (!lastResult.plate || !lastResult.lotId) return
                                 if (!isValidXrplTxHash(paymentProof)) {
-                                  setLastResult({ success: false, message: 'Enter a valid XRPL transaction hash' })
+                                  setLastResult({
+                                    success: false,
+                                    message: 'Enter a valid XRPL transaction hash',
+                                  })
                                   return
                                 }
-                                confirmManualPayment(paymentProof.trim(), lastResult.plate, lastResult.lotId)
+                                confirmManualPayment(
+                                  paymentProof.trim(),
+                                  lastResult.plate,
+                                  lastResult.lotId,
+                                )
                               }}
                               disabled={paymentConfirming}
                               className="mt-3 w-full rounded-lg border-2 border-parker-600 px-4 py-2 text-xs font-medium text-parker-700 hover:bg-parker-50 disabled:opacity-50"
@@ -506,7 +533,8 @@ export default function GateView() {
                           <div className="rounded-lg bg-white p-3">
                             <QRCodeSVG
                               value={buildERC20TransferURI({
-                                tokenAddress: USDC_ADDRESSES[lastResult.paymentOptions.x402.network] || '',
+                                tokenAddress:
+                                  USDC_ADDRESSES[lastResult.paymentOptions.x402.network] || '',
                                 to: lastResult.paymentOptions.x402.receiver,
                                 amount: lastResult.paymentOptions.x402.amount,
                                 chainId: lastResult.paymentOptions.x402.network,
@@ -515,7 +543,9 @@ export default function GateView() {
                             />
                           </div>
                           <p className="text-xs text-yellow-500">
-                            {lastResult.paymentOptions.x402.amount} {lastResult.paymentOptions.x402.token} on {lastResult.paymentOptions.x402.network}
+                            {lastResult.paymentOptions.x402.amount}{' '}
+                            {lastResult.paymentOptions.x402.token} on{' '}
+                            {lastResult.paymentOptions.x402.network}
                           </p>
                         </>
                       )}

@@ -43,7 +43,9 @@ const pendingPayments = new Map<string, PendingPayment>()
 
 export function addPendingPayment(pending: PendingPayment) {
   pendingPayments.set(pending.sessionId, pending)
-  console.log(`[paymentWatcher] Registered pending payment: session=${pending.sessionId}, amount=${pending.expectedAmount}, receiver=${pending.receiverWallet}`)
+  console.log(
+    `[paymentWatcher] Registered pending payment: session=${pending.sessionId}, amount=${pending.expectedAmount}, receiver=${pending.receiverWallet}`,
+  )
 }
 
 export function removePendingPayment(sessionId: string) {
@@ -134,14 +136,15 @@ async function handleTransferEvent(log: Log) {
     if (expectedSmallestUnit === 0n) continue
 
     const tolerance = expectedSmallestUnit / 100n // 1%
-    const diff = value > expectedSmallestUnit
-      ? value - expectedSmallestUnit
-      : expectedSmallestUnit - value
+    const diff =
+      value > expectedSmallestUnit ? value - expectedSmallestUnit : expectedSmallestUnit - value
 
     if (diff > tolerance) continue
 
     // Match found — settle
-    console.log(`[paymentWatcher] On-chain payment matched: session=${sessionId}, tx=${log.transactionHash}`)
+    console.log(
+      `[paymentWatcher] On-chain payment matched: session=${sessionId}, tx=${log.transactionHash}`,
+    )
     pendingPayments.delete(sessionId)
 
     try {
@@ -197,7 +200,9 @@ async function settleSession(pending: PendingPayment) {
     // WS notifications are best-effort
   }
 
-  console.log(`[paymentWatcher] Session settled: session=${sessionId}, plate=${plate}, fee=${fee} ${feeCurrency}`)
+  console.log(
+    `[paymentWatcher] Session settled: session=${sessionId}, plate=${plate}, fee=${fee} ${feeCurrency}`,
+  )
 }
 
 // ---- Helpers ----

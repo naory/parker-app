@@ -9,6 +9,7 @@
 ## 1. Problem Statement
 
 Centralized parking apps (Tango, Pango) suffer from:
+
 - Frequent communication failures between app and parking lot systems
 - Single point of failure in ticket validation
 - Opaque fee calculation
@@ -18,6 +19,7 @@ Centralized parking apps (Tango, Pango) suffer from:
 ## 2. Solution
 
 A decentralized parking system where:
+
 - Each parking event is an on-chain NFT with immutable timestamps
 - Payment is handled via the x402 protocol (HTTP-native, proof-based settlement across supported rails)
 - Verification is hybrid: PostgreSQL is the fast operational path, with Hedera Mirror Node fallback for resilience
@@ -31,6 +33,7 @@ Parker is a multi-country, currency-agnostic **platform** designed to be white-l
 - **Regional** — e.g., a pan-European operator deploys with `DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB`. Lots may use EUR or GBP (per-lot config), ALPR tries EU plate formats, and the driver app shows the relevant countries.
 
 This `DEPLOYMENT_COUNTRIES` env var is the single config knob that scopes:
+
 1. Driver registration (country picker visibility and options)
 2. ALPR plate format detection (which country normalizers to apply)
 3. Seed data and demo configuration
@@ -71,6 +74,7 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 ### 3.2 Component Breakdown
 
 #### Parker Backend (API Server)
+
 - Express.js with x402 payment middleware
 - Interfaces with Hedera HTS (`@hashgraph/sdk`) and optional Base (`viem`)
 - ALPR processing pipeline
@@ -78,6 +82,7 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 - PostgreSQL for off-chain indexing (fast queries, plate lookups)
 
 #### Driver App (PWA)
+
 - Mobile-first Next.js progressive web app
 - Wallet integration (Coinbase Smart Wallet / WalletConnect)
 - Profile management
@@ -85,6 +90,7 @@ Currency, pricing, and payment methods remain per-lot settings — a regional de
 - Payment history
 
 #### Gate App (PWA)
+
 - Tablet/kiosk-optimized Next.js app
 - Camera integration for ALPR
 - Real-time entry/exit processing
@@ -135,12 +141,14 @@ contract DriverRegistry {
 Parker's parking session NFT is implemented on **Hedera Token Service (HTS)** as a native NFT collection (not as a Solidity ERC-721 contract on Base).
 
 Active implementation:
+
 - Entry: API mints one HTS NFT serial per parking session
 - Exit: API burns the serial after payment confirmation
 - Metadata: `plateHash`, `lotId`, and `entryTime` are packed and encrypted with AES-256-GCM before minting
 - Mirror Node fallback: API decrypts metadata and matches `hashPlate(plate)` for DB-down recovery
 
 Notes:
+
 - `contracts/ParkingNFT.sol` exists as a legacy/reference contract from earlier EVM design exploration
 - Production parking-session flow uses HTS mint/burn via `packages/hedera`
 
@@ -162,17 +170,20 @@ Fees are calculated in the lot's configured currency (ISO 4217). Each lot define
 ## 5. ALPR (License Plate Recognition)
 
 ### 5.1 MVP Approach
+
 - **Phone camera** simulates gate camera (MVP)
 - Capture image → send to backend → OCR pipeline
 - Use Google Cloud Vision API or OpenALPR for plate detection
 - Country-aware plate normalization (IL, US, EU formats supported)
 
 ### 5.2 Pipeline
+
 ```
 Camera Frame → Preprocessing (crop, contrast) → OCR API → Plate String → Normalize → Lookup
 ```
 
 ### 5.3 Production Approach
+
 - Dedicated ALPR cameras (e.g., Hikvision with built-in ALPR)
 - Direct API integration with camera hardware
 - Edge processing for low latency
@@ -180,7 +191,9 @@ Camera Frame → Preprocessing (crop, contrast) → OCR API → Plate String →
 ## 6. x402 Payment Integration
 
 ### 6.1 Overview
+
 Parker supports two parallel payment rails per lot, both optional:
+
 - **x402 (crypto)** — HTTP 402 protocol with network-aware settlement verification:
   - **EVM rail (Base)**: ERC-20 transfer verification via viem
   - **XRPL rail**: XRPL `Payment` transaction verification via settlement adapter
@@ -189,6 +202,7 @@ Parker supports two parallel payment rails per lot, both optional:
 Both rails result in the same outcome: session closed in DB, NFT burned on Hedera, gate opened.
 
 ### 6.2 Payment Flow
+
 ```
 1. Gate app calls: POST /api/gate/exit
 2. Backend calculates fee in the lot's local currency
@@ -204,27 +218,33 @@ Both rails result in the same outcome: session closed in DB, NFT burned on Heder
 ```
 
 ### 6.3 Server Integration
+
 ```typescript
 // x402 middleware intercepts exit route
-app.use('/api/gate/exit', createPaymentMiddleware({
-  network: process.env.X402_NETWORK || 'base-sepolia',
-  token: process.env.X402_STABLECOIN || 'USDC',
-  receiverWallet: process.env.LOT_OPERATOR_WALLET,
-  publicClient,       // EVM rail
-  settlementAdapter,  // XRPL rail
-}));
+app.use(
+  '/api/gate/exit',
+  createPaymentMiddleware({
+    network: process.env.X402_NETWORK || 'base-sepolia',
+    token: process.env.X402_STABLECOIN || 'USDC',
+    receiverWallet: process.env.LOT_OPERATOR_WALLET,
+    publicClient, // EVM rail
+    settlementAdapter, // XRPL rail
+  }),
+)
 
 // Stripe webhook (raw body for signature verification)
-app.use('/api/webhooks', webhooksRouter);
+app.use('/api/webhooks', webhooksRouter)
 ```
 
 ### 6.4 Multi-Currency Design
+
 - Each lot defines its own `currency` (ISO 4217) and `paymentMethods` array
 - Stripe charges in the lot's native currency directly (USD, EUR, GBP, etc.)
 - x402 converts local currency fees to stablecoin via `FX_RATE_{FROM}_{TO}` env vars
 - Pricing service supports bidirectional FX lookup (direct or inverse rate)
 
 ### 6.5 XRPL Wallet Compatibility
+
 - UX is Xaman-first for XRPL settlement
 - QR/deep-link support still depends on device/browser handoff behavior
 - Driver and gate UIs always provide manual fallback: submit XRPL transaction hash
@@ -235,33 +255,39 @@ app.use('/api/webhooks', webhooksRouter);
 ### 7.1 Screens
 
 **Onboarding:**
+
 1. Welcome / value prop
 2. Connect wallet (Coinbase Smart Wallet — passkey-based, no seed phrase)
 3. Register vehicle (plate, country, make, model)
 4. Link payment method (wallet already connected + optional card)
 
 **Main Dashboard:**
+
 - Active session card (if parked): lot name, address (linked to Google Maps), duration timer, estimated cost
 - "Not parked" state when idle
 - Quick actions: view history, edit profile
 
 **Session Detail:**
+
 - Lot name and address with Google Maps link
 - Entry time, current duration
 - Real-time cost estimate
 - NFT token ID
 
 **History:**
+
 - List of past sessions with date, lot, duration, amount paid
 - Each session links to on-chain NFT (block explorer)
 
 **Profile:**
+
 - Vehicle details
 - Wallet address
 - Payment methods
 - Settings (notifications, currency display)
 
 ### 7.2 Notifications
+
 - Entry detected: "You parked at [Lot Name], [Address] at [Time]"
 - Approaching max time (if lot has limits): "You've been parked for 4h"
 - Payment charged: "12.00 EUR charged for 2h 15m at [Lot Name]"
@@ -271,6 +297,7 @@ app.use('/api/webhooks', webhooksRouter);
 ### 8.1 Screens
 
 **Live Gate View:**
+
 - Camera feed with ALPR overlay
 - Lot name and address in header (fetched from lot status API on mount)
 - Last detected plate + driver status
@@ -278,26 +305,31 @@ app.use('/api/webhooks', webhooksRouter);
 - Manual plate entry (fallback)
 
 **Session Manager:**
+
 - List of active sessions in this lot
 - Search by plate
 - Manual session end (for disputes)
 
 **Operator Dashboard:**
+
 - Current occupancy (cars in / capacity)
 - Revenue today / this week / this month
 - Average session duration
 - Unregistered vehicle count
 
 **Settings:**
+
 - Lot ID and name
 - Pricing configuration (rate, billing increment, max daily fee)
 - Camera configuration
 - Authorized operators
 
 ### 8.2 Gate Hardware Integration (Future)
+
 ```
 Gate App ←WebSocket→ Parker Backend ←API→ Gate Controller (relay/GPIO)
 ```
+
 MVP: gate is simulated (green/red screen indicator)
 
 ## 9. Data Models
@@ -354,6 +386,7 @@ CREATE TABLE lots (
 ## 10. API Endpoints
 
 ### Driver API
+
 ```
 POST   /api/drivers/register        — Register new driver + vehicle
 GET    /api/drivers/:plate           — Get driver profile
@@ -365,6 +398,7 @@ GET    /api/sessions/history/:plate  — Get session history
 ```
 
 ### Gate API
+
 ```
 POST   /api/gate/entry               — Process vehicle entry (plate image or string)
 POST   /api/gate/exit                 — Process vehicle exit + return payment options
@@ -375,11 +409,13 @@ PUT    /api/gate/lot/:lotId           — Update lot settings (rates, currency, 
 ```
 
 ### Webhooks
+
 ```
 POST   /api/webhooks/stripe           — Stripe payment confirmation (closes session + burns NFT)
 ```
 
 ### WebSocket Events
+
 ```
 WS     /ws/gate/:lotId               — Real-time gate events (entry, exit with payment method)
 WS     /ws/driver/:plate             — Real-time session updates for driver
@@ -434,6 +470,7 @@ DB-down exit:
 ```
 
 The Mirror Node query verifies:
+
 1. **NFT existence** — proves the car entered and has an active parking session
 2. **NFT metadata** — contains `plateHash` (keccak256), lot ID, and entry timestamp (enough to calculate the fee)
 3. **NFT not burned** — confirms the session hasn't already been closed
@@ -456,6 +493,7 @@ This gives the gate **offline-capable exit validation** — the strongest resili
 ### 11.4 Entry Order: Write-Ahead NFT
 
 Entry order (implemented):
+
 ```
 1. Hedera: mint NFT (contains plateHash, lot ID, entry time in metadata)
 2. DB: create session record (includes Hedera serial number)
@@ -466,13 +504,13 @@ With write-ahead, the Hedera NFT is the authoritative proof of entry. The DB is 
 
 ### 11.5 Implementation Status
 
-| Component | Effort | Impact | Priority | Status |
-|-----------|--------|--------|----------|--------|
-| Write-ahead NFT (entry order swap) | Low | High — enables all fallback paths | P0 | **Done** |
-| Mirror Node fallback in exit route | Medium | High — DB-down resilience | P1 | **Done** |
-| Gate-side session cache | Medium | Very high — offline capability | P1 | **Done** |
-| DB sync queue (reconciliation) | Medium | Medium — data consistency after outage | P2 | Planned |
-| Health-check circuit breaker (auto-switch to fallback) | Low | Medium — smooth degradation | P2 | Planned |
+| Component                                              | Effort | Impact                                 | Priority | Status   |
+| ------------------------------------------------------ | ------ | -------------------------------------- | -------- | -------- |
+| Write-ahead NFT (entry order swap)                     | Low    | High — enables all fallback paths      | P0       | **Done** |
+| Mirror Node fallback in exit route                     | Medium | High — DB-down resilience              | P1       | **Done** |
+| Gate-side session cache                                | Medium | Very high — offline capability         | P1       | **Done** |
+| DB sync queue (reconciliation)                         | Medium | Medium — data consistency after outage | P2       | Planned  |
+| Health-check circuit breaker (auto-switch to fallback) | Low    | Medium — smooth degradation            | P2       | Planned  |
 
 ## 12. Security & Privacy
 
@@ -492,20 +530,24 @@ Off-chain (PostgreSQL — access-controlled):
 ```
 
 The plate number is first hashed using `keccak256` (via `hashPlate()` from `@parker/core`), then packed with `lotId` and `entryTime`, and finally encrypted with **AES-256-GCM** (`NFT_ENCRYPTION_KEY`) before minting. A third party scanning the Mirror Node sees ciphertext bytes, not readable fields. They cannot:
+
 - Reverse a hash to get a plate number
 - Link two parking sessions to the same vehicle (without already knowing the plate)
 - Build a location history for a driver
 
 The API server correlates NFTs to sessions in fallback mode by:
+
 1. computing `hashPlate(plate)` from the gate scan
 2. decrypting candidate NFT metadata with `NFT_ENCRYPTION_KEY`
 3. matching decrypted `plateHash`
 
 **What remains public on-chain:**
+
 - Mint/burn transaction history and token serial lifecycle
 - Encrypted metadata payload bytes (not plaintext fields)
 
 **What is NOT on-chain:**
+
 - Plate numbers (only hashes)
 - Driver identity, wallet address (not in NFT metadata)
 - Fee amounts, payment details
@@ -522,6 +564,7 @@ The API server correlates NFTs to sessions in fallback mode by:
 ## 13. MVP Scope (Phase 1)
 
 **In scope:**
+
 - [ ] Driver registration (web app + wallet connect)
 - [ ] Phone camera ALPR (simulates gate camera)
 - [ ] Parking NFT minting on entry
@@ -532,6 +575,7 @@ The API server correlates NFTs to sessions in fallback mode by:
 - [ ] Deploy on Base Sepolia (testnet)
 
 **Out of scope (Phase 2+):**
+
 - Resilience: DB sync queue, health-check circuit breaker (see §11 — layers 1-3 are implemented)
 - Physical gate hardware integration
 - Multi-lot network
@@ -544,13 +588,13 @@ The API server correlates NFTs to sessions in fallback mode by:
 
 ## 14. Development Plan
 
-| Phase | Duration | Deliverables |
-|-------|----------|-------------|
-| 1. Foundation | Week 1-2 | Smart contracts, deploy testnet, project scaffolding |
-| 2. Driver App | Week 3-4 | Registration, wallet connect, session view, history |
-| 3. Gate App | Week 5-6 | ALPR integration, entry/exit flow, operator dashboard |
-| 4. Payments | Week 7 | x402 integration, fee calculation, settlement |
-| 5. Polish & Test | Week 8 | E2E testing, UI polish, documentation |
+| Phase            | Duration | Deliverables                                          |
+| ---------------- | -------- | ----------------------------------------------------- |
+| 1. Foundation    | Week 1-2 | Smart contracts, deploy testnet, project scaffolding  |
+| 2. Driver App    | Week 3-4 | Registration, wallet connect, session view, history   |
+| 3. Gate App      | Week 5-6 | ALPR integration, entry/exit flow, operator dashboard |
+| 4. Payments      | Week 7   | x402 integration, fee calculation, settlement         |
+| 5. Polish & Test | Week 8   | E2E testing, UI polish, documentation                 |
 
 ## 15. Open Questions
 

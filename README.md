@@ -20,6 +20,7 @@ For operational and fallback scenarios, see `docs/use-cases.md`.
 Parker is multi-country and currency-agnostic at the platform level. In practice, each operator scopes its own deployment to a target market (single country or region) and configures lots within that deployment.
 
 The `DEPLOYMENT_COUNTRIES` environment variable controls:
+
 - **Driver registration** — only countries in the deployment are shown; single-country deployments auto-select and hide the picker
 - **ALPR** — plate format validation is restricted to the deployment's country patterns
 - **Currency & payments** — each lot configures its own currency, but all lots in a deployment typically share the same local currency and FX rate
@@ -53,12 +54,14 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 ```
 
 **Hedera-first + dual-rail architecture (with optional Base components):**
+
 - **Hedera** — Parking session NFTs via native Token Service (mint on entry, burn on exit)
 - **x402 crypto rail** — settlement can run on Base (EVM) or XRPL (selected via `X402_NETWORK`)
 - **Base Sepolia (optional per deployment)** — DriverRegistry sync and optional EVM x402 settlement
 - **Stripe** — Credit card payments in the lot's local currency (any Stripe-supported currency)
 
 ### Entry Flow
+
 1. Car arrives at gate
 2. Gate camera captures plate image, ALPR extracts plate number via Google Vision API
 3. API checks if plate belongs to a registered driver
@@ -67,6 +70,7 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 6. Gate opens
 
 ### Exit Flow
+
 1. Car approaches exit, plate scanned again
 2. System finds active parking session and calculates fee in the lot's local currency
 3. API returns **payment options** based on lot config:
@@ -79,21 +83,22 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 
 Following the [Hedera pragmatic design patterns](https://hedera.com/blog/pragmatic-blockchain-design-patterns-integrating-blockchain-into-business-processes/) and the same hybrid model used by [MINGO Tickets](https://mingoapps.com/), Parker uses a layered resilience strategy:
 
-| Layer | Source | When |
-|-------|--------|------|
-| **1. PostgreSQL** | Fast path for all operations | Default — DB is up |
-| **2. Hedera Mirror Node** | Read-only fallback — verifies NFT exists + reads entry metadata | DB unreachable |
-| **3. Gate-side cache** | Local session cache built from WebSocket events | Both DB and Mirror Node down |
+| Layer                     | Source                                                          | When                         |
+| ------------------------- | --------------------------------------------------------------- | ---------------------------- |
+| **1. PostgreSQL**         | Fast path for all operations                                    | Default — DB is up           |
+| **2. Hedera Mirror Node** | Read-only fallback — verifies NFT exists + reads entry metadata | DB unreachable               |
+| **3. Gate-side cache**    | Local session cache built from WebSocket events                 | Both DB and Mirror Node down |
 
 **Why not make Hedera the primary?** Blockchain consensus is fast (~3-5s on Hedera) but PostgreSQL is faster (~1ms). At a busy parking gate, every second matters. The DB handles the operational speed; Hedera provides the trust guarantee and fallback. This matches how MINGO uses Hedera as an "invisible trust layer" rather than the operational database.
 
-**Key design principle:** The Hedera NFT is minted *before* the DB write on entry (write-ahead). This means the on-chain record is always the leading indicator — if the DB loses a record, the NFT on Hedera proves the car is parked. See `SPEC.md` §11 for the full resilience architecture.
+**Key design principle:** The Hedera NFT is minted _before_ the DB write on entry (write-ahead). This means the on-chain record is always the leading indicator — if the DB loses a record, the NFT on Hedera proves the car is parked. See `SPEC.md` §11 for the full resilience architecture.
 
 ## Architecture
 
 The app has three main components:
 
 ### 🚗 Driver App (PWA)
+
 - Register with license plate, country, car make/model — off-chain via API, with optional on-chain sync to `DriverRegistry` on Base
 - Coinbase Smart Wallet integration (passkey-based, no seed phrase)
 - Live dashboard with active parking session card (lot name, address with Google Maps link, real-time duration timer + estimated cost)
@@ -102,6 +107,7 @@ The app has three main components:
 - Real-time WebSocket updates when sessions start/end
 
 ### 🚧 Gate App (PWA)
+
 - Camera feed with ALPR overlay — captures frame, sends to scan API, gets plate back
 - Lot name and address displayed in header (fetched from lot status API)
 - Entry/exit mode toggle with manual plate input fallback
@@ -113,6 +119,7 @@ The app has three main components:
 - **Offline-capable**: local session cache built from WebSocket events — if the API is unreachable, the gate can still validate exits from its cache and open the gate (payment deferred)
 
 ### 🔧 API Server
+
 - Express.js with PostgreSQL for off-chain indexing
 - ALPR pipeline via `@parker/alpr` (Google Cloud Vision)
 - **Hedera integration** via `@parker/hedera` (`@hashgraph/sdk`) — mints parking NFTs on entry, burns on exit
@@ -126,20 +133,20 @@ The app has three main components:
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Monorepo | pnpm workspaces + Turborepo |
-| Frontend | Next.js 14 (PWA, mobile-first, Tailwind CSS) |
-| Driver Wallet | Coinbase Smart Wallet via wagmi |
-| Payments (crypto) | x402 protocol (Base EVM and XRPL settlement rails) |
-| Payments (card) | Stripe Checkout (any Stripe-supported currency) |
-| Parking NFTs | Hedera Token Service (native HTS, `@hashgraph/sdk`) |
-| Driver Registry (optional) | Solidity 0.8.20 + Hardhat (Base Sepolia) |
-| ALPR | Google Cloud Vision API |
-| Backend | Node.js + Express + TypeScript |
-| Database | PostgreSQL 16 (Docker) |
-| Real-time | WebSocket (ws) |
-| Blockchain Clients | `@hashgraph/sdk` (Hedera) + viem (Base) |
+| Layer                      | Technology                                          |
+| -------------------------- | --------------------------------------------------- |
+| Monorepo                   | pnpm workspaces + Turborepo                         |
+| Frontend                   | Next.js 14 (PWA, mobile-first, Tailwind CSS)        |
+| Driver Wallet              | Coinbase Smart Wallet via wagmi                     |
+| Payments (crypto)          | x402 protocol (Base EVM and XRPL settlement rails)  |
+| Payments (card)            | Stripe Checkout (any Stripe-supported currency)     |
+| Parking NFTs               | Hedera Token Service (native HTS, `@hashgraph/sdk`) |
+| Driver Registry (optional) | Solidity 0.8.20 + Hardhat (Base Sepolia)            |
+| ALPR                       | Google Cloud Vision API                             |
+| Backend                    | Node.js + Express + TypeScript                      |
+| Database                   | PostgreSQL 16 (Docker)                              |
+| Real-time                  | WebSocket (ws)                                      |
+| Blockchain Clients         | `@hashgraph/sdk` (Hedera) + viem (Base)             |
 
 ## Quick Start
 
@@ -174,6 +181,7 @@ pnpm dev
 ```
 
 This starts:
+
 - **API** on `http://localhost:3001`
 - **Driver app** on `http://localhost:3000`
 - **Gate app** on `http://localhost:3002`
@@ -214,6 +222,7 @@ The database is auto-seeded with two demo lots and a test driver. Each lot has i
 ### Try It Now (Seed Data)
 
 Use the default seeded values:
+
 - `lotId=lot-01`
 - `plateNumber=1234567`
 
@@ -232,6 +241,7 @@ curl -X POST http://localhost:3001/api/gate/exit \
 ```
 
 Where to look:
+
 - **Gate UI:** `http://localhost:3002` (live entry/exit status + cache badge)
 - **Driver UI:** `http://localhost:3000` (active session, payment flow, history)
 - **Hedera NFT:** in Driver history, click the Hashscan link (set `NEXT_PUBLIC_HEDERA_TOKEN_ID` in `apps/driver/.env` to enable links)
@@ -256,6 +266,7 @@ pnpm --filter @parker/hedera setup
 Parker supports two payment rails per lot, both optional:
 
 **Stripe (credit card)** — charges in the lot's configured currency (USD, EUR, GBP, etc.):
+
 ```bash
 # Add to apps/api/.env:
 STRIPE_SECRET_KEY=sk_test_...
@@ -265,6 +276,7 @@ STRIPE_CANCEL_URL=http://localhost:3000/payment/cancel
 ```
 
 **x402 (crypto rails)** — converts the lot's local currency fee via FX and verifies settlement proof on the selected rail:
+
 ```bash
 # Add to apps/api/.env:
 X402_STABLECOIN=USDC
@@ -285,6 +297,7 @@ FX_RATE_GBP_USD=1.27
 ```
 
 Supported examples:
+
 - `X402_NETWORK=base-sepolia` (EVM, ERC-20 transfer verification)
 - `X402_NETWORK=xrpl:testnet` (XRPL, tx-hash verification via adapter)
 
@@ -358,48 +371,54 @@ parker-app/
 ## API Endpoints
 
 ### Driver API
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/drivers/register` | Register new driver + vehicle |
-| GET | `/api/drivers/wallet/:address` | Look up driver by wallet address |
-| GET | `/api/drivers/:plate` | Get driver profile by plate |
-| PUT | `/api/drivers/:plate` | Update driver profile |
-| DELETE | `/api/drivers/:plate` | Deactivate driver |
+
+| Method | Path                           | Description                      |
+| ------ | ------------------------------ | -------------------------------- |
+| POST   | `/api/drivers/register`        | Register new driver + vehicle    |
+| GET    | `/api/drivers/wallet/:address` | Look up driver by wallet address |
+| GET    | `/api/drivers/:plate`          | Get driver profile by plate      |
+| PUT    | `/api/drivers/:plate`          | Update driver profile            |
+| DELETE | `/api/drivers/:plate`          | Deactivate driver                |
 
 ### Session API
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/sessions/active/:plate` | Get active parking session |
-| GET | `/api/sessions/history/:plate` | Get session history |
+
+| Method | Path                           | Description                |
+| ------ | ------------------------------ | -------------------------- |
+| GET    | `/api/sessions/active/:plate`  | Get active parking session |
+| GET    | `/api/sessions/history/:plate` | Get session history        |
 
 ### Gate API
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/gate/entry` | Process vehicle entry (plate string or image). Requires `Idempotency-Key` header |
-| POST | `/api/gate/exit` | Process vehicle exit + return payment options (x402 + Stripe). Requires `Idempotency-Key` header |
-| POST | `/api/gate/xrpl/xaman-intent` | Create Xaman payload for pending XRPL payment (Xaman-first flow) |
-| GET | `/api/gate/xrpl/xaman-status/:payloadUuid` | Poll Xaman payload resolution and get XRPL tx hash |
-| POST | `/api/gate/scan` | ALPR: upload image, get plate number |
-| GET | `/api/gate/lot/:lotId/status` | Lot occupancy, config, currency, payment methods |
-| GET | `/api/gate/lot/:lotId/sessions` | Active sessions list |
-| PUT | `/api/gate/lot/:lotId` | Update lot settings (rates, currency, payment methods) |
+
+| Method | Path                                       | Description                                                                                      |
+| ------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| POST   | `/api/gate/entry`                          | Process vehicle entry (plate string or image). Requires `Idempotency-Key` header                 |
+| POST   | `/api/gate/exit`                           | Process vehicle exit + return payment options (x402 + Stripe). Requires `Idempotency-Key` header |
+| POST   | `/api/gate/xrpl/xaman-intent`              | Create Xaman payload for pending XRPL payment (Xaman-first flow)                                 |
+| GET    | `/api/gate/xrpl/xaman-status/:payloadUuid` | Poll Xaman payload resolution and get XRPL tx hash                                               |
+| POST   | `/api/gate/scan`                           | ALPR: upload image, get plate number                                                             |
+| GET    | `/api/gate/lot/:lotId/status`              | Lot occupancy, config, currency, payment methods                                                 |
+| GET    | `/api/gate/lot/:lotId/sessions`            | Active sessions list                                                                             |
+| PUT    | `/api/gate/lot/:lotId`                     | Update lot settings (rates, currency, payment methods)                                           |
 
 ### Webhooks
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/webhooks/stripe` | Stripe payment confirmation (closes session + burns NFT) |
+
+| Method | Path                   | Description                                              |
+| ------ | ---------------------- | -------------------------------------------------------- |
+| POST   | `/api/webhooks/stripe` | Stripe payment confirmation (closes session + burns NFT) |
 
 ### Health & Observability
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/healthz` | Liveness probe (basic process health) |
-| GET | `/readyz` | Readiness probe (DB + Hedera + Mirror Node + payment rail config) |
-| GET | `/metrics` | In-memory metrics snapshot (mint/burn latency, mirror lag, failures) |
+
+| Method | Path       | Description                                                          |
+| ------ | ---------- | -------------------------------------------------------------------- |
+| GET    | `/healthz` | Liveness probe (basic process health)                                |
+| GET    | `/readyz`  | Readiness probe (DB + Hedera + Mirror Node + payment rail config)    |
+| GET    | `/metrics` | In-memory metrics snapshot (mint/burn latency, mirror lag, failures) |
 
 ### WebSocket
-| Path | Description |
-|------|-------------|
-| `/ws/gate/:lotId` | Real-time gate events (entry/exit) |
+
+| Path                | Description                          |
+| ------------------- | ------------------------------------ |
+| `/ws/gate/:lotId`   | Real-time gate events (entry/exit)   |
 | `/ws/driver/:plate` | Real-time session updates for driver |
 
 ## Privacy & Security
@@ -409,6 +428,7 @@ parker-app/
 For a focused adversarial analysis (replay attacks, cloned tickets, plate spoofing, race conditions, gate offline behavior, and payment disputes), see `THREAT_MODEL.md`.
 
 Observability highlights:
+
 - Structured JSON logs with request context (`request_id`, `session_id`, `lot_id`)
 - Core metrics for mint/burn latency, mirror lag, failed exits, and payment failures
 - Tracing is intentionally deferred for now (**TODO**) and will be added in a later phase.

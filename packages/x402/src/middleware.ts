@@ -82,10 +82,7 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
         }
 
         try {
-          const transfer = await verifyERC20Transfer(
-            publicClient,
-            paymentHeader as `0x${string}`,
-          )
+          const transfer = await verifyERC20Transfer(publicClient, paymentHeader as `0x${string}`)
           ;(req as any).paymentVerified = true
           ;(req as any).paymentTxHash = paymentHeader
           ;(req as any).paymentTransfer = transfer
@@ -97,7 +94,9 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
         }
       } else {
         // Dev mode: trust the header
-        console.warn(`[x402] No publicClient — trusting X-PAYMENT header without on-chain verification`)
+        console.warn(
+          `[x402] No publicClient — trusting X-PAYMENT header without on-chain verification`,
+        )
         ;(req as any).paymentVerified = true
         ;(req as any).paymentTxHash = paymentHeader
       }

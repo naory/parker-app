@@ -42,16 +42,20 @@ export function createApp() {
   const x402Network = process.env.X402_NETWORK || 'base-sepolia'
   const isXrplRail = x402Network.startsWith('xrpl:')
   const publicClient = !isXrplRail && isBaseEnabled() ? getPublicClient() : undefined
-  const settlementAdapter = isXrplRail && process.env.XRPL_RPC_URL
-    ? createXrplSettlementAdapter({ serverUrl: process.env.XRPL_RPC_URL })
-    : undefined
-  app.use('/api/gate/exit', createPaymentMiddleware({
-    network: x402Network,
-    token: process.env.X402_STABLECOIN || 'USDC',
-    receiverWallet: process.env.LOT_OPERATOR_WALLET,
-    publicClient,
-    settlementAdapter,
-  }))
+  const settlementAdapter =
+    isXrplRail && process.env.XRPL_RPC_URL
+      ? createXrplSettlementAdapter({ serverUrl: process.env.XRPL_RPC_URL })
+      : undefined
+  app.use(
+    '/api/gate/exit',
+    createPaymentMiddleware({
+      network: x402Network,
+      token: process.env.X402_STABLECOIN || 'USDC',
+      receiverWallet: process.env.LOT_OPERATOR_WALLET,
+      publicClient,
+      settlementAdapter,
+    }),
+  )
 
   // Basic health check (liveness)
   app.get('/healthz', (_req, res) => {

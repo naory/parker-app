@@ -9,40 +9,40 @@
 
 ### ✅ Implemented
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| On-chain components (DriverRegistry + Hedera HTS parking NFT collection) | ✅ Complete | DriverRegistry Solidity contract + HTS mint/burn integration |
-| Driver registration API | ✅ Complete | CRUD routes, plate normalization |
-| Parking session management API | ✅ Complete | Entry/exit flow with fee calculation |
-| Gate API (entry, exit, scan, lot CRUD) | ✅ Complete | Full ALPR integration path |
-| ALPR package (normalize + recognize) | ✅ Complete | Google Cloud Vision, IL/US/EU formats |
-| x402 payment middleware | ✅ Complete | 402 flow with network-aware verification (EVM via viem, XRPL via settlement adapter) |
-| x402 client (driver-side) | ✅ Complete | EVM auto-retry + XRPL manual tx-hash confirmation fallback |
-| Stripe payment integration | ✅ Complete | Checkout + webhook flow with NFT burn |
-| Hedera NFT minting/burning | ✅ Complete | HTS-based, with mirror node queries + AES-256-GCM encrypted metadata |
-| Multi-currency pricing service | ✅ Complete | FX rate conversion, per-lot currency |
-| WebSocket real-time events | ✅ Complete | Gate + driver notification channels |
-| Driver App (Next.js PWA) | ✅ Complete | Register, profile, history, session, onboarding, pay pages |
-| Gate App (Next.js PWA) | ✅ Complete | Dashboard, sessions, settings, camera feed, QR fallback |
-| Off-chain DB layer (PostgreSQL) | ✅ Complete | Drivers, sessions, lots tables |
-| Deployment model (multi-country) | ✅ Complete | DEPLOYMENT_COUNTRIES env-based scoping |
-| Wallet auth (EIP-4361 / SIWE) | ✅ Complete | JWT-based auth with nonce, signature verification; dev fallback via x-wallet-address |
-| Contract deployment (optional Base Sepolia components) | ✅ Complete | DriverRegistry at `0x3Af5...62Ab`, Hedera NFT collection `0.0.7933460` |
-| Driver app wallet connect | ✅ Complete | Wagmi + Coinbase Smart Wallet, AuthProvider with SIWE sign-in |
-| Gate offline resilience | ✅ Complete | Session cache in `useSessionCache` hook, 24h TTL, gate opens when API unreachable |
-| Gate exit QR code fallback | ✅ Complete | QR code with payment details when WebSocket is unreliable |
-| NFT viewer in parking history | ✅ Complete | Links to hashscan.io for each completed session |
-| Lot grace period | ✅ Complete | `grace_period_minutes` setting, cars exiting within window not charged |
-| Rate limiting | ✅ Complete | Three tiers via express-rate-limit (strict/medium/standard), skipped in test env |
-| WebSocket authentication | ✅ Complete | JWT + gate API key auth on upgrade, skipped in dev mode |
-| API tests | ✅ Complete | 84 tests (vitest + supertest) covering auth, drivers, gate, sessions, paymentWatcher |
-| x402 package tests | ✅ Complete | 18 tests for middleware + client + on-chain verify |
+| Feature                                                                  | Status      | Notes                                                                                |
+| ------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------ |
+| On-chain components (DriverRegistry + Hedera HTS parking NFT collection) | ✅ Complete | DriverRegistry Solidity contract + HTS mint/burn integration                         |
+| Driver registration API                                                  | ✅ Complete | CRUD routes, plate normalization                                                     |
+| Parking session management API                                           | ✅ Complete | Entry/exit flow with fee calculation                                                 |
+| Gate API (entry, exit, scan, lot CRUD)                                   | ✅ Complete | Full ALPR integration path                                                           |
+| ALPR package (normalize + recognize)                                     | ✅ Complete | Google Cloud Vision, IL/US/EU formats                                                |
+| x402 payment middleware                                                  | ✅ Complete | 402 flow with network-aware verification (EVM via viem, XRPL via settlement adapter) |
+| x402 client (driver-side)                                                | ✅ Complete | EVM auto-retry + XRPL manual tx-hash confirmation fallback                           |
+| Stripe payment integration                                               | ✅ Complete | Checkout + webhook flow with NFT burn                                                |
+| Hedera NFT minting/burning                                               | ✅ Complete | HTS-based, with mirror node queries + AES-256-GCM encrypted metadata                 |
+| Multi-currency pricing service                                           | ✅ Complete | FX rate conversion, per-lot currency                                                 |
+| WebSocket real-time events                                               | ✅ Complete | Gate + driver notification channels                                                  |
+| Driver App (Next.js PWA)                                                 | ✅ Complete | Register, profile, history, session, onboarding, pay pages                           |
+| Gate App (Next.js PWA)                                                   | ✅ Complete | Dashboard, sessions, settings, camera feed, QR fallback                              |
+| Off-chain DB layer (PostgreSQL)                                          | ✅ Complete | Drivers, sessions, lots tables                                                       |
+| Deployment model (multi-country)                                         | ✅ Complete | DEPLOYMENT_COUNTRIES env-based scoping                                               |
+| Wallet auth (EIP-4361 / SIWE)                                            | ✅ Complete | JWT-based auth with nonce, signature verification; dev fallback via x-wallet-address |
+| Contract deployment (optional Base Sepolia components)                   | ✅ Complete | DriverRegistry at `0x3Af5...62Ab`, Hedera NFT collection `0.0.7933460`               |
+| Driver app wallet connect                                                | ✅ Complete | Wagmi + Coinbase Smart Wallet, AuthProvider with SIWE sign-in                        |
+| Gate offline resilience                                                  | ✅ Complete | Session cache in `useSessionCache` hook, 24h TTL, gate opens when API unreachable    |
+| Gate exit QR code fallback                                               | ✅ Complete | QR code with payment details when WebSocket is unreliable                            |
+| NFT viewer in parking history                                            | ✅ Complete | Links to hashscan.io for each completed session                                      |
+| Lot grace period                                                         | ✅ Complete | `grace_period_minutes` setting, cars exiting within window not charged               |
+| Rate limiting                                                            | ✅ Complete | Three tiers via express-rate-limit (strict/medium/standard), skipped in test env     |
+| WebSocket authentication                                                 | ✅ Complete | JWT + gate API key auth on upgrade, skipped in dev mode                              |
+| API tests                                                                | ✅ Complete | 84 tests (vitest + supertest) covering auth, drivers, gate, sessions, paymentWatcher |
+| x402 package tests                                                       | ✅ Complete | 18 tests for middleware + client + on-chain verify                                   |
 
 ### ❌ Not Yet Implemented
 
-| Feature | SPEC Reference | Gap |
-|---------|---------------|-----|
-| Optional on-chain driver registration sync | §4.1 | DB-only; register endpoint doesn't call `DriverRegistry.register()` on-chain |
+| Feature                                    | SPEC Reference | Gap                                                                          |
+| ------------------------------------------ | -------------- | ---------------------------------------------------------------------------- |
+| Optional on-chain driver registration sync | §4.1           | DB-only; register endpoint doesn't call `DriverRegistry.register()` on-chain |
 
 ---
 
@@ -130,15 +130,15 @@
 
 ## 4. Security Considerations
 
-| Risk | Severity | Status |
-|------|----------|--------|
-| ~~No wallet auth~~ | ~~Critical~~ | ✅ Fixed — EIP-4361 SIWE implemented |
-| ~~WebSocket has no auth~~ | ~~High~~ | ✅ Fixed — JWT + gate API key auth on WS upgrade |
-| ~~ALPR endpoint has no rate limit~~ | ~~High~~ | ✅ Fixed — three-tier rate limiting via express-rate-limit |
-| ~~x402 payment verification is MVP-only~~ | ~~Critical~~ | ✅ Fixed — network-aware x402 verification (EVM + XRPL) |
-| Plate numbers in plaintext in DB | **Medium** | Acceptable for off-chain index (per SPEC §11), add access control on query endpoints |
-| NFT metadata encrypted on-chain | **Safe** | ✅ AES-256-GCM encryption prevents on-chain plate tracking |
-| Stripe webhook secret in env | **Low** | ✅ Verified via signature |
-| No CORS restriction in dev | **Low** | `CORS_ORIGIN` defaults to `*` — restrict in production |
-| No HTTPS enforcement | **Medium** | Add HSTS headers, redirect HTTP→HTTPS in production |
-| SQL injection via pg parameterized queries | **Safe** | All queries use `$1` parameterization ✅ |
+| Risk                                       | Severity     | Status                                                                               |
+| ------------------------------------------ | ------------ | ------------------------------------------------------------------------------------ |
+| ~~No wallet auth~~                         | ~~Critical~~ | ✅ Fixed — EIP-4361 SIWE implemented                                                 |
+| ~~WebSocket has no auth~~                  | ~~High~~     | ✅ Fixed — JWT + gate API key auth on WS upgrade                                     |
+| ~~ALPR endpoint has no rate limit~~        | ~~High~~     | ✅ Fixed — three-tier rate limiting via express-rate-limit                           |
+| ~~x402 payment verification is MVP-only~~  | ~~Critical~~ | ✅ Fixed — network-aware x402 verification (EVM + XRPL)                              |
+| Plate numbers in plaintext in DB           | **Medium**   | Acceptable for off-chain index (per SPEC §11), add access control on query endpoints |
+| NFT metadata encrypted on-chain            | **Safe**     | ✅ AES-256-GCM encryption prevents on-chain plate tracking                           |
+| Stripe webhook secret in env               | **Low**      | ✅ Verified via signature                                                            |
+| No CORS restriction in dev                 | **Low**      | `CORS_ORIGIN` defaults to `*` — restrict in production                               |
+| No HTTPS enforcement                       | **Medium**   | Add HSTS headers, redirect HTTP→HTTPS in production                                  |
+| SQL injection via pg parameterized queries | **Safe**     | All queries use `$1` parameterization ✅                                             |

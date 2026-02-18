@@ -26,9 +26,10 @@ const ERC20_TRANSFER_ABI = [
 ] as const
 
 function newIdempotencyKey(prefix: string): string {
-  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2)
+  const rand =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
   return `${prefix}-${Date.now()}-${rand}`
 }
 
@@ -53,7 +54,9 @@ export function PaymentPrompt({
   onDismiss,
   onPaid,
 }: PaymentPromptProps) {
-  const [status, setStatus] = useState<'idle' | 'sending' | 'confirming' | 'settling' | 'done' | 'error'>('idle')
+  const [status, setStatus] = useState<
+    'idle' | 'sending' | 'confirming' | 'settling' | 'done' | 'error'
+  >('idle')
   const [error, setError] = useState<string | null>(null)
   const [xrplTxHash, setXrplTxHash] = useState('')
   const [xamanQrPng, setXamanQrPng] = useState<string | null>(null)
@@ -104,7 +107,9 @@ export function PaymentPrompt({
 
     if (isXrplRail) {
       if (xamanAvailable === false && xrplTxHash.trim().length === 0) {
-        setError('Xaman auto-flow is unavailable. Pay in wallet and paste the XRPL transaction hash.')
+        setError(
+          'Xaman auto-flow is unavailable. Pay in wallet and paste the XRPL transaction hash.',
+        )
         return
       }
       // If tx hash already provided manually, confirm directly.
@@ -238,9 +243,7 @@ export function PaymentPrompt({
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
       <div className="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-2xl sm:rounded-2xl">
         <h2 className="text-xl font-bold text-gray-900">Payment Required</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          You parked for {durationMinutes} minutes
-        </p>
+        <p className="mt-1 text-sm text-gray-500">You parked for {durationMinutes} minutes</p>
 
         <div className="mt-4 rounded-lg bg-parker-50 p-4 text-center">
           <p className="text-3xl font-bold text-parker-800">
@@ -253,11 +256,7 @@ export function PaymentPrompt({
           )}
         </div>
 
-        {error && (
-          <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+        {error && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
         {status === 'done' ? (
           <div className="mt-4 rounded-lg bg-green-50 p-4 text-center text-green-700 font-medium">
@@ -281,17 +280,21 @@ export function PaymentPrompt({
                 className="block w-full rounded-lg border-2 border-parker-600 px-4 py-3 text-center font-medium text-parker-600 transition hover:bg-parker-50 disabled:opacity-50"
               >
                 {status === 'sending'
-                  ? (isXrplRail ? 'Opening Xaman...' : 'Confirm in wallet...')
+                  ? isXrplRail
+                    ? 'Opening Xaman...'
+                    : 'Confirm in wallet...'
                   : status === 'confirming'
-                    ? (isXrplRail ? 'Waiting for Xaman confirmation...' : 'Waiting for confirmation...')
+                    ? isXrplRail
+                      ? 'Waiting for Xaman confirmation...'
+                      : 'Waiting for confirmation...'
                     : status === 'settling'
                       ? 'Opening gate...'
                       : isXrplRail
-                        ? (xrplTxHash.trim()
+                        ? xrplTxHash.trim()
+                          ? 'Confirm XRPL Tx Hash'
+                          : xamanAvailable === false
                             ? 'Confirm XRPL Tx Hash'
-                            : xamanAvailable === false
-                              ? 'Confirm XRPL Tx Hash'
-                              : 'Pay with Xaman')
+                            : 'Pay with Xaman'
                         : `Pay with ${paymentOptions.x402.token}`}
               </button>
             )}
@@ -299,9 +302,12 @@ export function PaymentPrompt({
             {paymentOptions.x402 && isXrplRail && (
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <p className="text-xs text-gray-600">
-                  Send {paymentOptions.x402.amount} {paymentOptions.x402.token} on {paymentOptions.x402.network} to:
+                  Send {paymentOptions.x402.amount} {paymentOptions.x402.token} on{' '}
+                  {paymentOptions.x402.network} to:
                 </p>
-                <p className="mt-1 break-all font-mono text-xs text-gray-800">{paymentOptions.x402.receiver}</p>
+                <p className="mt-1 break-all font-mono text-xs text-gray-800">
+                  {paymentOptions.x402.receiver}
+                </p>
                 {xamanAvailable !== false && (
                   <>
                     <a
@@ -317,21 +323,29 @@ export function PaymentPrompt({
                       Open in Xaman
                     </a>
                     <p className="mt-1 text-[11px] text-gray-500">
-                      Xaman is the recommended wallet for this flow. If deep-link handoff fails, pay manually in Xaman and paste the tx hash below.
+                      Xaman is the recommended wallet for this flow. If deep-link handoff fails, pay
+                      manually in Xaman and paste the tx hash below.
                     </p>
                   </>
                 )}
                 {xamanAvailable === false && (
                   <p className="mt-1 text-[11px] text-gray-500">
-                    Xaman auto-flow is not configured on this deployment. Complete payment in wallet and paste the tx hash below.
+                    Xaman auto-flow is not configured on this deployment. Complete payment in wallet
+                    and paste the tx hash below.
                   </p>
                 )}
                 {xamanAvailable !== false && xamanQrPng && (
                   <div className="mt-2 flex justify-center">
-                    <img src={xamanQrPng} alt="Xaman payment QR" className="h-36 w-36 rounded border border-gray-200 bg-white p-1" />
+                    <img
+                      src={xamanQrPng}
+                      alt="Xaman payment QR"
+                      className="h-36 w-36 rounded border border-gray-200 bg-white p-1"
+                    />
                   </div>
                 )}
-                <label className="mt-3 block text-xs font-medium text-gray-700">XRPL transaction hash</label>
+                <label className="mt-3 block text-xs font-medium text-gray-700">
+                  XRPL transaction hash
+                </label>
                 <input
                   value={xrplTxHash}
                   onChange={(e) => setXrplTxHash(e.target.value)}
