@@ -127,12 +127,29 @@ export function PaymentPrompt({
         return
       }
 
-      // Xaman-first: create payload, deep-link into Xaman, and poll for tx hash.
+      // Xaman-first: ensure pending payment exists (exit without X-PAYMENT), then create payload.
       try {
         setStatus('sending')
         setError(null)
 
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+
+        // Call exit first (no X-PAYMENT) to trigger 402 path and register pending payment.
+        const exitRes = await fetch(`${apiUrl}/api/gate/exit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': newIdempotencyKey(`driver-exit-register-${lotId}-${plateNumber}`),
+          },
+          body: JSON.stringify({ plateNumber, lotId }),
+        })
+        if (!exitRes.ok) {
+          const exitData = await exitRes.json().catch(() => ({}))
+          setError(exitData.error || 'Could not start exit flow')
+          setStatus('error')
+          return
+        }
+
         const intentRes = await fetch(`${apiUrl}/api/gate/xrpl/xaman-intent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
