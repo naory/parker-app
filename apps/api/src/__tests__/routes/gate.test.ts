@@ -30,7 +30,7 @@ vi.mock('../../services/hedera', () => ({
 vi.mock('../../services/pricing', () => ({
   convertToStablecoin: vi.fn(() => 10),
   X402_STABLECOIN: 'USDC',
-  X402_NETWORK: 'base-sepolia',
+  X402_NETWORK: 'xrpl:testnet',
 }))
 
 vi.mock('../../services/stripe', () => ({
@@ -43,6 +43,7 @@ vi.mock('@parker/alpr', () => ({
 }))
 
 import { db } from '../../db'
+import { isHederaEnabled, endParkingSessionOnHedera } from '../../services/hedera'
 
 const mockLot = {
   id: 'LOT-1',
@@ -69,6 +70,30 @@ const mockDriver = {
 function createApp() {
   const app = express()
   app.use(express.json())
+  app.use((req, _res, next) => {
+    if (req.header('x-test-payment-verified') === 'true') {
+      ;(req as any).paymentVerified = true
+    }
+    const rail = req.header('x-test-payment-rail')
+    if (rail) {
+      ;(req as any).paymentVerificationRail = rail
+    }
+    const txHash = req.header('x-test-payment-tx-hash')
+    if (txHash) {
+      ;(req as any).paymentTxHash = txHash
+    }
+    const transferTo = req.header('x-test-transfer-to')
+    const transferAmount = req.header('x-test-transfer-amount')
+    if (transferTo && transferAmount) {
+      ;(req as any).paymentTransfer = {
+        from: 'rDriver',
+        to: transferTo,
+        amount: BigInt(transferAmount),
+        confirmed: true,
+      }
+    }
+    next()
+  })
   app.use('/api/gate', gateRouter)
   return app
 }
@@ -217,6 +242,108 @@ describe('gate routes', () => {
 
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/mismatch/i)
+    })
+
+    it('closes session and burns Hedera NFT on verified XRPL payment', async () => {
+      vi.mocked(isHederaEnabled).mockReturnValue(true)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+      vi.mocked(db.endSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        exitTime: new Date(),
+        feeAmount: 8,
+        feeCurrency: 'USD',
+        status: 'completed',
+      } as any)
+
+      const app = createApp()
+      const expectedSmallest = BigInt(8 * 10 ** 6)
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'A'.repeat(64))
+        .set('x-test-transfer-to', mockLot.operatorWallet)
+        .set('x-test-transfer-amount', expectedSmallest.toString())
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(200)
+      expect(vi.mocked(db.endSession)).toHaveBeenCalled()
+      expect(vi.mocked(endParkingSessionOnHedera)).toHaveBeenCalledWith(123)
+    })
+
+    it('rejects verified XRPL payment when destination mismatches', async () => {
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+
+      const app = createApp()
+      const expectedSmallest = BigInt(8 * 10 ** 6)
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'B'.repeat(64))
+        .set('x-test-transfer-to', 'rWrongDestination')
+        .set('x-test-transfer-amount', expectedSmallest.toString())
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/receiver mismatch/i)
+      expect(vi.mocked(db.endSession)).not.toHaveBeenCalled()
+    })
+
+    it('rejects verified XRPL payment when amount mismatches or verification context is invalid', async () => {
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+
+      const app = createApp()
+      const amountMismatch = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'C'.repeat(64))
+        .set('x-test-transfer-to', mockLot.operatorWallet)
+        .set('x-test-transfer-amount', '1')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(amountMismatch.status).toBe(400)
+      expect(amountMismatch.body.error).toMatch(/amount mismatch/i)
+
+      const invalidVerificationContext = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'evm')
+        .set('x-test-payment-tx-hash', 'D'.repeat(64))
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(invalidVerificationContext.status).toBe(400)
+      expect(invalidVerificationContext.body.error).toMatch(/XRPL payment verification required/i)
+      expect(vi.mocked(db.endSession)).not.toHaveBeenCalled()
     })
   })
 
