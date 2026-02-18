@@ -646,6 +646,31 @@ gateRouter.post('/exit', async (req, res) => {
     // Remove from on-chain watcher to prevent double-close
     removePendingPayment(sessionId)
 
+    const isXrplRail = X402_NETWORK.startsWith('xrpl:')
+    const paymentVerified = Boolean((req as any).paymentVerified)
+    const paymentVerificationRail = (req as any).paymentVerificationRail as
+      | 'xrpl'
+      | 'evm'
+      | undefined
+    const isDevSimulated =
+      process.env.NODE_ENV === 'development' && (req as any).paymentTxHash === 'simulated-dev-payment'
+
+    // Make XRPL verification path explicit: close only after XRPL adapter verification.
+    if (fee > 0 && paymentVerified && isXrplRail && !isDevSimulated) {
+      if (paymentVerificationRail !== 'xrpl') {
+        paymentFailuresTotal.inc({ reason: 'verification_rail_mismatch' })
+        return reply(400, {
+          error: 'XRPL payment verification required',
+        })
+      }
+      if (!(req as any).paymentTransfer) {
+        paymentFailuresTotal.inc({ reason: 'missing_xrpl_verification_result' })
+        return reply(400, {
+          error: 'Missing XRPL verification result',
+        })
+      }
+    }
+
     // Validate on-chain transfer details (when available)
     const transfer = (req as any).paymentTransfer as
       | import('@parker/x402').ERC20TransferResult

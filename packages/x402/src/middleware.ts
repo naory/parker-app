@@ -53,6 +53,8 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
   } = options
 
   const middleware: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
+    const isXrplNetwork = defaultNetwork.startsWith('xrpl:')
+
     // Check if client already provided payment proof
     const paymentHeader = req.headers['x-payment'] as string | undefined
     if (paymentHeader) {
@@ -62,13 +64,21 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
         console.warn(`[x402] Dev mode — accepting simulated payment`)
         ;(req as any).paymentVerified = true
         ;(req as any).paymentTxHash = paymentHeader
-      } else if (settlementAdapter) {
-        // Custom settlement adapter mode (e.g. XRPL)
+        ;(req as any).paymentVerificationRail = isXrplNetwork ? 'xrpl' : 'evm'
+      } else if (isXrplNetwork) {
+        // Explicit XRPL verification path: only settlement adapter is accepted.
+        if (!settlementAdapter) {
+          return res.status(503).json({
+            error: 'XRPL settlement adapter is not configured',
+          })
+        }
         try {
           const transfer = await settlementAdapter.verifyPayment(paymentHeader)
+          // Mark verified only after adapter validation succeeds.
           ;(req as any).paymentVerified = true
           ;(req as any).paymentTxHash = paymentHeader
           ;(req as any).paymentTransfer = transfer
+          ;(req as any).paymentVerificationRail = 'xrpl'
         } catch (err) {
           return res.status(400).json({
             error: 'Payment verification failed',
@@ -83,9 +93,11 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
 
         try {
           const transfer = await verifyERC20Transfer(publicClient, paymentHeader as `0x${string}`)
+          // Mark verified only after receipt/log validation succeeds.
           ;(req as any).paymentVerified = true
           ;(req as any).paymentTxHash = paymentHeader
           ;(req as any).paymentTransfer = transfer
+          ;(req as any).paymentVerificationRail = 'evm'
         } catch (err) {
           return res.status(400).json({
             error: 'Payment verification failed',
@@ -93,12 +105,16 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
           })
         }
       } else {
-        // Dev mode: trust the header
-        console.warn(
-          `[x402] No publicClient — trusting X-PAYMENT header without on-chain verification`,
-        )
+        if (!isDev) {
+          return res.status(503).json({
+            error: 'No payment verifier configured for selected x402 network',
+          })
+        }
+        // Dev-only fallback for non-XRPL networks without a verifier client.
+        console.warn(`[x402] Dev mode — trusting X-PAYMENT header without verification`)
         ;(req as any).paymentVerified = true
         ;(req as any).paymentTxHash = paymentHeader
+        ;(req as any).paymentVerificationRail = 'evm'
       }
     }
 

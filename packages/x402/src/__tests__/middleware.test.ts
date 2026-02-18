@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createPaymentMiddleware, type PaymentRequired } from '../middleware'
 import type { Request, Response, NextFunction } from 'express'
 
@@ -29,14 +29,20 @@ function mockRes(): Response & { _status: number; _body: any } {
 describe('createPaymentMiddleware', () => {
   let middleware: ReturnType<typeof createPaymentMiddleware>
   let next: NextFunction
+  const originalNodeEnv = process.env.NODE_ENV
 
   beforeEach(() => {
+    process.env.NODE_ENV = 'development'
     middleware = createPaymentMiddleware({
       network: 'base-sepolia',
       token: 'USDC',
       receiverWallet: '0xABC',
     })
     next = vi.fn()
+  })
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv
   })
 
   it('calls next() always', async () => {
@@ -180,5 +186,24 @@ describe('createPaymentMiddleware with publicClient', () => {
     expect((req as any).paymentVerified).toBe(true)
     expect((req as any).paymentTransfer.amount).toBe(amount)
     expect((req as any).paymentTransfer.confirmed).toBe(true)
+  })
+})
+
+describe('createPaymentMiddleware XRPL verification path', () => {
+  it('rejects when XRPL adapter is missing', async () => {
+    process.env.NODE_ENV = 'production'
+    const middleware = createPaymentMiddleware({
+      network: 'xrpl:testnet',
+      receiverWallet: 'rDestination',
+    })
+    const next = vi.fn()
+    const req = mockReq({ headers: { 'x-payment': 'A'.repeat(64) } as any })
+    const res = mockRes()
+
+    await middleware(req, res, next)
+
+    expect(res._status).toBe(503)
+    expect(res._body.error).toBe('XRPL settlement adapter is not configured')
+    expect(next).not.toHaveBeenCalled()
   })
 })
