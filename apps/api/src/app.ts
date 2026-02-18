@@ -35,6 +35,7 @@ export function createApp() {
   app.use('/api/gate/scan', mediumLimit)
   app.use('/api/gate/entry', mediumLimit)
   app.use('/api/gate/exit', mediumLimit)
+  app.use('/api/gate/xrpl', mediumLimit)
   app.use('/api/drivers/register', mediumLimit)
   app.use('/api', standardLimit)
 

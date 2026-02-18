@@ -39,6 +39,10 @@ const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
   .map((c) => c.trim().toUpperCase())
   .filter(Boolean)
 
+const LOT_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
+const XRPL_PAYLOAD_UUID_REGEX =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/
+
 /**
  * Resolve a plate number from either the provided string or an image via ALPR.
  * Returns the plate string or null if nothing could be resolved.
@@ -73,6 +77,31 @@ function hashIdempotencyPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
 
+function parseXrplIntentBody(body: unknown): { plate: string; lotId: string } | { error: string } {
+  if (!body || typeof body !== 'object') {
+    return { error: 'Invalid request body' }
+  }
+  const record = body as Record<string, unknown>
+  const plateNumber = record.plateNumber
+  const lotIdRaw = record.lotId
+
+  if (typeof plateNumber !== 'string' || typeof lotIdRaw !== 'string') {
+    return { error: 'plateNumber and lotId must be strings' }
+  }
+
+  const plate = normalizePlate(plateNumber.trim())
+  const lotId = lotIdRaw.trim()
+
+  if (!plate || !/^[A-Z0-9]{2,16}$/.test(plate)) {
+    return { error: 'Invalid plateNumber format' }
+  }
+  if (!LOT_ID_REGEX.test(lotId)) {
+    return { error: 'Invalid lotId format' }
+  }
+
+  return { plate, lotId }
+}
+
 // POST /api/gate/xrpl/xaman-intent — Create Xaman payload for pending XRPL payment
 gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
   try {
@@ -83,13 +112,11 @@ gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
       return res.status(503).json({ error: 'Xaman is not configured on the server' })
     }
 
-    const plateRaw = String(req.body?.plateNumber || '')
-    const lotId = String(req.body?.lotId || '')
-    if (!plateRaw || !lotId) {
-      return res.status(400).json({ error: 'plateNumber and lotId are required' })
+    const parsedBody = parseXrplIntentBody(req.body)
+    if ('error' in parsedBody) {
+      return res.status(400).json({ error: parsedBody.error })
     }
-
-    const plate = normalizePlate(plateRaw)
+    const { plate, lotId } = parsedBody
     const pending = getPendingPaymentByPlateLot(plate, lotId)
     if (!pending) {
       return res.status(404).json({
@@ -111,9 +138,9 @@ gateRouter.get('/xrpl/xaman-status/:payloadUuid', async (req, res) => {
     if (!X402_NETWORK.startsWith('xrpl:')) {
       return res.status(400).json({ error: 'XRPL rail is not active for this deployment' })
     }
-    const payloadUuid = req.params.payloadUuid
-    if (!payloadUuid) {
-      return res.status(400).json({ error: 'payloadUuid is required' })
+    const payloadUuid = String(req.params.payloadUuid || '').trim()
+    if (!XRPL_PAYLOAD_UUID_REGEX.test(payloadUuid)) {
+      return res.status(400).json({ error: 'Invalid payloadUuid format' })
     }
     const status = await getXamanPayloadStatus(payloadUuid)
     return res.json(status)
