@@ -206,4 +206,25 @@ describe('createPaymentMiddleware XRPL verification path', () => {
     expect(res._body.error).toBe('XRPL settlement adapter is not configured')
     expect(next).not.toHaveBeenCalled()
   })
+
+  it('rejects EVM-style tx hash on XRPL network without calling adapter', async () => {
+    const settlementAdapter = {
+      verifyPayment: vi.fn(),
+    }
+    const middleware = createPaymentMiddleware({
+      network: 'xrpl:testnet',
+      receiverWallet: 'rDestination',
+      settlementAdapter,
+    })
+    const next = vi.fn()
+    const req = mockReq({ headers: { 'x-payment': '0x' + 'ab'.repeat(32) } as any })
+    const res = mockRes()
+
+    await middleware(req, res, next)
+
+    expect(res._status).toBe(400)
+    expect(res._body.error).toBe('Invalid payment proof for XRPL network')
+    expect(settlementAdapter.verifyPayment).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+  })
 })

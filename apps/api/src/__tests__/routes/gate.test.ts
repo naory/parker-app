@@ -13,6 +13,11 @@ vi.mock('../../db', () => ({
     createSession: vi.fn(),
     endSession: vi.fn(),
     updateLot: vi.fn(),
+    beginIdempotency: vi.fn(),
+    completeIdempotency: vi.fn(),
+    getActiveXrplPendingIntent: vi.fn(),
+    getXrplIntentByTxHash: vi.fn(),
+    resolveXrplIntentByPaymentId: vi.fn(),
   },
 }))
 
@@ -90,6 +95,7 @@ function createApp() {
         to: transferTo,
         amount: BigInt(transferAmount),
         confirmed: true,
+        paymentReference: req.header('x-test-transfer-payment-reference'),
       }
     }
     next()
@@ -99,7 +105,13 @@ function createApp() {
 }
 
 describe('gate routes', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(db.beginIdempotency).mockResolvedValue({ status: 'started' } as any)
+    vi.mocked(db.completeIdempotency).mockResolvedValue(undefined)
+    vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
+    vi.mocked(db.resolveXrplIntentByPaymentId).mockResolvedValue(true)
+  })
 
   describe('POST /api/gate/entry', () => {
     it('creates entry session', async () => {
@@ -245,6 +257,18 @@ describe('gate routes', () => {
     })
 
     it('closes session and burns Hedera NFT on verified XRPL payment', async () => {
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId: '11111111-1111-4111-8111-111111111111',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any)
       vi.mocked(isHederaEnabled).mockReturnValue(true)
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',
@@ -276,6 +300,7 @@ describe('gate routes', () => {
         .set('x-test-payment-tx-hash', 'A'.repeat(64))
         .set('x-test-transfer-to', mockLot.operatorWallet)
         .set('x-test-transfer-amount', expectedSmallest.toString())
+        .set('x-test-transfer-payment-reference', '11111111-1111-4111-8111-111111111111')
         .send({ plateNumber: '1234567', lotId: 'LOT-1' })
 
       expect(res.status).toBe(200)
@@ -284,6 +309,18 @@ describe('gate routes', () => {
     })
 
     it('rejects verified XRPL payment when destination mismatches', async () => {
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId: '22222222-2222-4222-8222-222222222222',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any)
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',
         tokenId: 123,
@@ -303,6 +340,7 @@ describe('gate routes', () => {
         .set('x-test-payment-tx-hash', 'B'.repeat(64))
         .set('x-test-transfer-to', 'rWrongDestination')
         .set('x-test-transfer-amount', expectedSmallest.toString())
+        .set('x-test-transfer-payment-reference', '22222222-2222-4222-8222-222222222222')
         .send({ plateNumber: '1234567', lotId: 'LOT-1' })
 
       expect(res.status).toBe(400)
@@ -311,6 +349,18 @@ describe('gate routes', () => {
     })
 
     it('rejects verified XRPL payment when amount mismatches or verification context is invalid', async () => {
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId: '33333333-3333-4333-8333-333333333333',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any)
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',
         tokenId: 123,
@@ -329,6 +379,7 @@ describe('gate routes', () => {
         .set('x-test-payment-tx-hash', 'C'.repeat(64))
         .set('x-test-transfer-to', mockLot.operatorWallet)
         .set('x-test-transfer-amount', '1')
+        .set('x-test-transfer-payment-reference', '33333333-3333-4333-8333-333333333333')
         .send({ plateNumber: '1234567', lotId: 'LOT-1' })
 
       expect(amountMismatch.status).toBe(400)

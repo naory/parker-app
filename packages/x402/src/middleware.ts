@@ -53,7 +53,9 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
   } = options
 
   const middleware: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
-    const isXrplNetwork = defaultNetwork.startsWith('xrpl:')
+    const paymentInfo = res.locals.paymentRequired as PaymentRequired | undefined
+    const requestedNetwork = paymentInfo?.network || defaultNetwork
+    const isXrplNetwork = requestedNetwork.startsWith('xrpl:')
 
     // Check if client already provided payment proof
     const paymentHeader = req.headers['x-payment'] as string | undefined
@@ -66,6 +68,12 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
         ;(req as any).paymentTxHash = paymentHeader
         ;(req as any).paymentVerificationRail = isXrplNetwork ? 'xrpl' : 'evm'
       } else if (isXrplNetwork) {
+        if (TX_HASH_REGEX.test(paymentHeader)) {
+          return res.status(400).json({
+            error: 'Invalid payment proof for XRPL network',
+            details: 'Expected XRPL proof, got EVM-style transaction hash',
+          })
+        }
         // Explicit XRPL verification path: only settlement adapter is accepted.
         if (!settlementAdapter) {
           return res.status(503).json({
@@ -85,12 +93,8 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
             details: (err as Error).message,
           })
         }
-      } else if (publicClient) {
+      } else if (publicClient && TX_HASH_REGEX.test(paymentHeader)) {
         // On-chain verification mode
-        if (!TX_HASH_REGEX.test(paymentHeader)) {
-          return res.status(400).json({ error: 'Invalid transaction hash format' })
-        }
-
         try {
           const transfer = await verifyERC20Transfer(publicClient, paymentHeader as `0x${string}`)
           // Mark verified only after receipt/log validation succeeds.
@@ -104,6 +108,8 @@ export function createPaymentMiddleware(options: PaymentMiddlewareOptions = {}):
             details: (err as Error).message,
           })
         }
+      } else if (publicClient && !isXrplNetwork) {
+        return res.status(400).json({ error: 'Invalid transaction hash format' })
       } else {
         if (!isDev) {
           return res.status(503).json({

@@ -77,6 +77,13 @@ function hashIdempotencyPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
 
+function decimalToScaledBigInt(value: string, decimals: number): bigint {
+  const [wholeRaw, fractionRaw = ''] = value.split('.')
+  const whole = wholeRaw || '0'
+  const fraction = (fractionRaw + '0'.repeat(decimals)).slice(0, decimals)
+  return BigInt(`${whole}${fraction}`)
+}
+
 function parseXrplIntentBody(body: unknown): { plate: string; lotId: string } | { error: string } {
   if (!body || typeof body !== 'object') {
     return { error: 'Invalid request body' }
@@ -722,7 +729,72 @@ gateRouter.post('/exit', async (req, res) => {
     const transfer = (req as any).paymentTransfer as
       | import('@parker/x402').ERC20TransferResult
       | undefined
-    if (transfer) {
+    const paymentTxHash =
+      typeof (req as any).paymentTxHash === 'string' ? (req as any).paymentTxHash : undefined
+
+    if (isXrplRail && fee > 0 && paymentVerified && !isDevSimulated) {
+      const pendingIntent = await db.getActiveXrplPendingIntent(plate, lotId)
+      if (!pendingIntent) {
+        paymentFailuresTotal.inc({ reason: 'missing_xrpl_pending_intent' })
+        return reply(409, {
+          error: 'No active XRPL payment intent found for this session',
+        })
+      }
+      if (!transfer) {
+        paymentFailuresTotal.inc({ reason: 'missing_xrpl_verification_result' })
+        return reply(400, {
+          error: 'Missing XRPL verification result',
+        })
+      }
+
+      const proofHash = paymentTxHash || transfer.txHash
+      if (proofHash) {
+        const existingByTx = await db.getXrplIntentByTxHash(proofHash)
+        if (existingByTx && existingByTx.paymentId !== pendingIntent.paymentId) {
+          paymentFailuresTotal.inc({ reason: 'xrpl_replay_detected' })
+          return reply(409, {
+            error: 'XRPL transaction hash has already been used',
+          })
+        }
+      }
+
+      if (transfer.to !== pendingIntent.destination) {
+        paymentFailuresTotal.inc({ reason: 'receiver_mismatch' })
+        return reply(400, {
+          error: 'Payment receiver mismatch',
+          expected: pendingIntent.destination,
+          actual: transfer.to,
+        })
+      }
+
+      const expectedAmount = decimalToScaledBigInt(pendingIntent.amount, 6)
+      if (transfer.amount !== expectedAmount) {
+        paymentFailuresTotal.inc({ reason: 'amount_mismatch' })
+        return reply(400, {
+          error: 'Payment amount mismatch',
+          expectedAmount: expectedAmount.toString(),
+          actualAmount: transfer.amount.toString(),
+        })
+      }
+
+      if (transfer.paymentReference !== pendingIntent.paymentId) {
+        paymentFailuresTotal.inc({ reason: 'payment_reference_mismatch' })
+        return reply(400, {
+          error: 'Payment memo reference mismatch',
+        })
+      }
+
+      const resolved = await db.resolveXrplIntentByPaymentId({
+        paymentId: pendingIntent.paymentId,
+        txHash: proofHash,
+      })
+      if (!resolved) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_intent_resolution_conflict' })
+        return reply(409, {
+          error: 'XRPL payment intent is no longer pending',
+        })
+      }
+    } else if (transfer) {
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       const sameReceiver = X402_NETWORK.startsWith('xrpl:')
         ? transfer.to === expectedReceiver
@@ -753,23 +825,6 @@ gateRouter.post('/exit', async (req, res) => {
             actualAmount: transfer.amount.toString(),
           })
         }
-      }
-    }
-
-    if (X402_NETWORK.startsWith('xrpl:')) {
-      try {
-        const txHash =
-          typeof (req as any).paymentTxHash === 'string' ? (req as any).paymentTxHash : undefined
-        await db.resolveActiveXrplIntentByPlateLot({
-          plateNumber: plate,
-          lotId,
-          txHash,
-        })
-      } catch (intentErr) {
-        console.warn(
-          '[x402:xrpl] Failed to mark intent resolved (continuing):',
-          (intentErr as Error).message,
-        )
       }
     }
 

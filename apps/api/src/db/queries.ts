@@ -389,6 +389,34 @@ async function resolveActiveXrplIntentByPlateLot(input: {
   )
 }
 
+async function resolveXrplIntentByPaymentId(input: {
+  paymentId: string
+  txHash?: string
+}): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE xrpl_payment_intents
+     SET status = 'resolved',
+         tx_hash = COALESCE($2, tx_hash),
+         updated_at = NOW()
+     WHERE payment_id = $1::uuid
+       AND status = 'pending'`,
+    [input.paymentId, input.txHash ?? null],
+  )
+  return (result.rowCount ?? 0) > 0
+}
+
+async function getXrplIntentByTxHash(txHash: string): Promise<XrplPaymentIntentRecord | null> {
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM xrpl_payment_intents
+     WHERE tx_hash = $1
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [txHash],
+  )
+  return rows[0] ? mapXrplIntent(rows[0]) : null
+}
+
 // ---- Row Mappers ----
 
 function mapDriver(row: any): DriverRecord {
@@ -478,4 +506,6 @@ export const db = {
   resolveXrplIntentByPayloadUuid,
   cancelXrplIntentByPayloadUuid,
   resolveActiveXrplIntentByPlateLot,
+  resolveXrplIntentByPaymentId,
+  getXrplIntentByTxHash,
 }

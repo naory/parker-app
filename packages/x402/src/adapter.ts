@@ -5,6 +5,8 @@ export interface PaymentTransferResult {
   confirmed: boolean
   assetCode?: string
   assetIssuer?: string
+  txHash?: string
+  paymentReference?: string
 }
 
 export interface SettlementAdapter {

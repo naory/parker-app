@@ -20,6 +20,42 @@ function decimalToScaledBigInt(value: string, decimals: number): bigint {
   return BigInt(`${whole}${fraction}`)
 }
 
+function decodeHexMemoField(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  const hex = value.startsWith('0x') ? value.slice(2) : value
+  if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0) return undefined
+  try {
+    return Buffer.from(hex, 'hex').toString('utf8')
+  } catch {
+    return undefined
+  }
+}
+
+function extractPaymentReference(tx: Record<string, unknown>): string | undefined {
+  const memos = tx.Memos
+  if (!Array.isArray(memos)) return undefined
+
+  for (const entry of memos) {
+    if (!entry || typeof entry !== 'object') continue
+    const memoWrapper = (entry as Record<string, unknown>).Memo
+    if (!memoWrapper || typeof memoWrapper !== 'object') continue
+    const memo = memoWrapper as Record<string, unknown>
+    const memoType = decodeHexMemoField(memo.MemoType)
+    const memoDataRaw = decodeHexMemoField(memo.MemoData)
+    if (memoType !== 'x402:xrpl:v1' || !memoDataRaw) continue
+    try {
+      const parsed = JSON.parse(memoDataRaw) as Record<string, unknown>
+      const paymentId = parsed.paymentId
+      if (typeof paymentId === 'string' && paymentId.trim().length > 0) {
+        return paymentId.trim()
+      }
+    } catch {
+      // Ignore malformed memo payload and continue scanning.
+    }
+  }
+  return undefined
+}
+
 /**
  * XRPL settlement adapter for x402.
  *
@@ -59,6 +95,7 @@ export function createXrplSettlementAdapter(
         if (!tx || tx.TransactionType !== 'Payment') {
           throw new Error('XRPL transaction is not a Payment')
         }
+        const paymentReference = extractPaymentReference(tx)
 
         const meta = payload.meta as Record<string, unknown> | undefined
         const txResult = meta?.TransactionResult
@@ -74,6 +111,8 @@ export function createXrplSettlementAdapter(
             amount: BigInt(delivered),
             confirmed: true,
             assetCode: 'XRP',
+            txHash: paymentProof,
+            paymentReference,
           }
         }
 
@@ -85,6 +124,8 @@ export function createXrplSettlementAdapter(
             confirmed: true,
             assetCode: delivered.currency,
             assetIssuer: delivered.issuer,
+            txHash: paymentProof,
+            paymentReference,
           }
         }
 

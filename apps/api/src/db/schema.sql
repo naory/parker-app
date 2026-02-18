@@ -103,6 +103,9 @@ CREATE TABLE xrpl_payment_intents (
 CREATE INDEX idx_xrpl_intents_plate_lot ON xrpl_payment_intents(plate_number, lot_id);
 CREATE INDEX idx_xrpl_intents_expires_at ON xrpl_payment_intents(expires_at);
 CREATE INDEX idx_xrpl_intents_payload_uuid ON xrpl_payment_intents(xaman_payload_uuid);
+CREATE UNIQUE INDEX idx_xrpl_intents_unique_tx_hash
+  ON xrpl_payment_intents(tx_hash)
+  WHERE tx_hash IS NOT NULL;
 
 -- One active pending intent per plate+lot at a time.
 CREATE UNIQUE INDEX idx_xrpl_intents_one_pending_per_plate_lot
