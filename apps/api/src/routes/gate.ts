@@ -1051,7 +1051,20 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       const proofHash = paymentTxHash || transfer.txHash
+      // Replay protection (shared with Stripe/EVM): policy_events settlementVerified tx_hash uniqueness
       if (proofHash) {
+        const alreadySettled = await db.hasSettlementForTxHash(proofHash)
+        if (alreadySettled) {
+          await db.insertPolicyEvent({
+            eventType: 'riskSignal',
+            payload: { signal: 'REPLAY_SUSPICION', txHash: proofHash, paymentId: pendingIntent.paymentId },
+            paymentId: pendingIntent.paymentId,
+            sessionId: pendingIntent.sessionId,
+            txHash: proofHash,
+          })
+          paymentFailuresTotal.inc({ reason: 'xrpl_replay_detected' })
+          return reply(409, { error: 'XRPL transaction hash has already been used' })
+        }
         const existingByTx = await db.getXrplIntentByTxHash(proofHash)
         if (existingByTx && existingByTx.paymentId !== pendingIntent.paymentId) {
           await db.insertPolicyEvent({
@@ -1059,12 +1072,10 @@ gateRouter.post('/exit', async (req, res) => {
             payload: { signal: 'REPLAY_SUSPICION', txHash: proofHash, paymentId: pendingIntent.paymentId },
             paymentId: pendingIntent.paymentId,
             sessionId: pendingIntent.sessionId,
-            txHash: proofHash ?? undefined,
+            txHash: proofHash,
           })
           paymentFailuresTotal.inc({ reason: 'xrpl_replay_detected' })
-          return reply(409, {
-            error: 'XRPL transaction hash has already been used',
-          })
+          return reply(409, { error: 'XRPL transaction hash has already been used' })
         }
       }
 

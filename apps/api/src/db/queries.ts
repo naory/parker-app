@@ -266,7 +266,12 @@ export interface InsertPolicyDecisionInput {
   payload: unknown
 }
 
+/** Insert decision; JSONB columns receive serialized JSON and ::jsonb cast stores native JSONB (not text). */
 async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<void> {
+  const chosenAssetJson =
+    input.chosenAsset != null ? JSON.stringify(input.chosenAsset) : null
+  const reasonsJson = JSON.stringify(input.reasons)
+  const payloadJson = JSON.stringify(input.payload)
   await pool.query(
     `INSERT INTO policy_decisions (decision_id, policy_hash, session_grant_id, chosen_rail, chosen_asset, quote_minor, quote_currency, expires_at, action, reasons, require_approval, payload)
      VALUES ($1, $2, $3::uuid, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb)`,
@@ -275,14 +280,14 @@ async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<v
       input.policyHash,
       input.sessionGrantId,
       input.chosenRail,
-      input.chosenAsset != null ? JSON.stringify(input.chosenAsset) : null,
+      chosenAssetJson,
       input.quoteMinor,
       input.quoteCurrency,
       input.expiresAt,
       input.action,
-      JSON.stringify(input.reasons),
+      reasonsJson,
       input.requireApproval,
-      JSON.stringify(input.payload),
+      payloadJson,
     ],
   )
 }

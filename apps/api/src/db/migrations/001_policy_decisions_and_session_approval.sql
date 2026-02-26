@@ -1,11 +1,14 @@
 -- Migration: policy_decisions table + sessions.approval_required_before_payment
 -- Run after schema.sql for existing databases.
+-- Strategy: fresh install uses schema.sql only (policy_decisions created there).
+--           existing DB uses this migration (CREATE TABLE IF NOT EXISTS).
+-- Keep this table definition in sync with schema.sql.
 
 -- Add approval flag to sessions (if not exists)
 ALTER TABLE sessions
   ADD COLUMN IF NOT EXISTS approval_required_before_payment BOOLEAN NOT NULL DEFAULT false;
 
--- First-class decision records (skip if table exists)
+-- First-class decision records (skip if table exists; definition must match schema.sql)
 CREATE TABLE IF NOT EXISTS policy_decisions (
     decision_id       VARCHAR(64) PRIMARY KEY,
     policy_hash       VARCHAR(64) NOT NULL,

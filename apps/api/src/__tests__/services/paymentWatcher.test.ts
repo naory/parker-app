@@ -220,6 +220,24 @@ describe('paymentWatcher', () => {
       })
     })
 
+    it('replay: does NOT settle when tx_hash already has settlementVerified (replay protection)', async () => {
+      vi.mocked(db.hasSettlementForTxHash).mockResolvedValueOnce(true)
+      addPendingPayment(makePending())
+
+      const log = makeTransferLog('0xReceiver', 1_500_000n, '0xtx-replay')
+      onLogs([log])
+
+      await new Promise((r) => setTimeout(r, 50))
+      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.insertPolicyEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'riskSignal',
+          payload: expect.objectContaining({ signal: 'REPLAY_SUSPICION', txHash: '0xtx-replay' }),
+          txHash: '0xtx-replay',
+        }),
+      )
+    })
+
     it('skips log with no args', () => {
       addPendingPayment(makePending())
       // Log without args field

@@ -28,6 +28,7 @@ vi.mock('../../db', () => ({
     getDecisionPayloadByDecisionId: vi.fn(),
     getMedianFeeForLot: vi.fn(),
     getPolicyGrantByGrantId: vi.fn(),
+    hasSettlementForTxHash: vi.fn(),
   },
 }))
 
@@ -127,6 +128,7 @@ describe('gate routes', () => {
     vi.mocked(db.beginIdempotency).mockResolvedValue({ status: 'started' } as any)
     vi.mocked(db.completeIdempotency).mockResolvedValue(undefined)
     vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
+    vi.mocked(db.hasSettlementForTxHash).mockResolvedValue(false)
     vi.mocked(db.resolveXrplIntentByPaymentId).mockResolvedValue(true)
     vi.mocked(db.getSpendTotalsFiat).mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
     vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(null)

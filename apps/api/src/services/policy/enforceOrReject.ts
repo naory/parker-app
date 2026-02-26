@@ -2,10 +2,10 @@
  * Single settlement enforcement path for all rails.
  * Session must never close unless enforcement passes.
  *
- * Call sites (all must use this before close and persist events):
- * - EVM: apps/api/src/services/paymentWatcher.ts — enforceOrReject → settlementVerified/enforcementFailed → settleSession
- * - XRPL: apps/api/src/routes/gate.ts — enforceOrReject → settlementVerified/enforcementFailed → resolve + endSession
- * - Stripe: apps/api/src/routes/webhooks.ts — enforceOrReject → settlementVerified/enforcementFailed → endSession
+ * Call sites (all must use this before close and persist events; on !allowed they return without closing):
+ * - EVM: paymentWatcher.ts — enforceOrReject → if !allowed return; else settlementVerified → settleSession
+ * - XRPL: gate.ts — enforceOrReject → if !allowed return reply(403); else settlementVerified → endSession
+ * - Stripe: webhooks.ts — enforceOrReject → if !allowed return res.json; else settlementVerified → endSession
  *
  * Enforcement invariants (enforced by policy-core enforcePayment; replay by each handler):
  * - rail match: settlement rail must equal decision chosen rail

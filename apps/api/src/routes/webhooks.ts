@@ -76,6 +76,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
     const feeAmount = stripeSession.amount_total ? stripeSession.amount_total / 100 : 0
 
     try {
+      // Replay protection: same Stripe payment id must not settle twice (shared with EVM/XRPL via policy_events)
+      const alreadySettled = await db.hasSettlementForTxHash(stripeSession.id)
+      if (alreadySettled) {
+        logger.info('stripe_webhook_replay_ignored', { tx_hash: stripeSession.id })
+        return res.json({ received: true })
+      }
+
       // Check if session is still active
       const session = await db.getActiveSession(plateNumber)
       if (!session) {
