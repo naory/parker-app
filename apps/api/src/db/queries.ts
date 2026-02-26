@@ -324,6 +324,19 @@ async function hasSettlementForTxHash(txHash: string): Promise<boolean> {
   return rows.length > 0
 }
 
+/** One-time settlement guard: decision_id + rail must be unique for settlementVerified. */
+async function hasSettlementForDecisionRail(decisionId: string, rail: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM policy_events
+     WHERE event_type = 'settlementVerified'
+       AND decision_id = $1
+       AND payload->>'rail' = $2
+     LIMIT 1`,
+    [decisionId, rail],
+  )
+  return rows.length > 0
+}
+
 /** Median fee (completed sessions) for a lot — for amount-anomaly risk signal. */
 async function getMedianFeeForLot(lotId: string): Promise<number | null> {
   const { rows } = await pool.query<{ median: string | number | null }>(
@@ -752,6 +765,7 @@ export const db = {
   insertPolicyDecision,
   getDecisionPayloadByDecisionId,
   hasSettlementForTxHash,
+  hasSettlementForDecisionRail,
   getMedianFeeForLot,
   getLot,
   updateLot,

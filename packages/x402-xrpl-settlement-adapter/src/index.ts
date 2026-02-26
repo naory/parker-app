@@ -64,6 +64,8 @@ function extractPaymentReference(tx: Record<string, unknown>): string | undefine
   return extractPaymentIdFromTxJson(tx)
 }
 
+const TF_PARTIAL_PAYMENT = 0x00020000
+
 /**
  * XRPL settlement adapter for x402.
  *
@@ -103,6 +105,12 @@ export function createXrplSettlementAdapter(
         if (!tx || tx.TransactionType !== 'Payment') {
           throw new Error('XRPL transaction is not a Payment')
         }
+        const flags = typeof tx.Flags === 'number' ? tx.Flags : 0
+        const destinationTag = typeof tx.DestinationTag === 'number' ? tx.DestinationTag : undefined
+        const isPartialPayment = (flags & TF_PARTIAL_PAYMENT) !== 0
+        const hasPaths = Array.isArray(tx.Paths) && tx.Paths.length > 0
+        const hasSendMax = tx.SendMax != null
+        const hasDeliverMin = tx.DeliverMin != null
         const paymentReference = extractPaymentReference(tx)
 
         const meta = payload.meta as Record<string, unknown> | undefined
@@ -121,6 +129,11 @@ export function createXrplSettlementAdapter(
             assetCode: 'XRP',
             txHash: paymentProof,
             paymentReference,
+            destinationTag,
+            isPartialPayment,
+            hasPaths,
+            hasSendMax,
+            hasDeliverMin,
           }
         }
 
@@ -134,6 +147,11 @@ export function createXrplSettlementAdapter(
             assetIssuer: delivered.issuer,
             txHash: paymentProof,
             paymentReference,
+            destinationTag,
+            isPartialPayment,
+            hasPaths,
+            hasSendMax,
+            hasDeliverMin,
           }
         }
 

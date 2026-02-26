@@ -84,6 +84,9 @@ Policy restricts which rails and assets are allowed via **railAllowlist** and **
 | `XRPL_ISSUER`      | **Required** for XRPL IOU. If unset, XRPL IOU is not offered (fail closed). |
 | `XRPL_IOU_CURRENCY`| Currency code for XRPL IOU (default `RLUSD`). Used only when `XRPL_ISSUER` is set. |
 | `XRPL_ALLOW_XRP`   | If `true`, XRP is offered as an asset. Default unset → XRP not offered. |
+| `XRPL_DESTINATION_TAG` | Optional exact destination tag to require on inbound XRPL payments. |
+| `XRPL_REQUIRE_DESTINATION_TAG` | If `true`, destination tag must be present. |
+| `XRPL_ALLOW_ANY_DESTINATION_TAG` | If `true`, allows any destination tag when exact tag is not configured. Default is strict (unexpected tag rejected). |
 
 Entry/exit policy **assetAllowlist** can further restrict (e.g. only IOU from a specific issuer). Grant stores `allowed_assets`; decision must choose from that set.
 

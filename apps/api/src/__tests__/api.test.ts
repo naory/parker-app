@@ -26,6 +26,7 @@ const mockDb = vi.hoisted(() => ({
   insertPolicyDecision: vi.fn(),
   getDecisionPayloadByDecisionId: vi.fn(),
   hasSettlementForTxHash: vi.fn(),
+  hasSettlementForDecisionRail: vi.fn(),
   getMedianFeeForLot: vi.fn(),
   beginIdempotency: vi.fn(),
   completeIdempotency: vi.fn(),
@@ -98,6 +99,7 @@ beforeEach(() => {
   mockDb.insertPolicyEvent.mockResolvedValue(undefined)
   mockDb.insertPolicyDecision.mockResolvedValue(undefined)
   mockDb.hasSettlementForTxHash.mockResolvedValue(false)
+  mockDb.hasSettlementForDecisionRail.mockResolvedValue(false)
   mockDb.getMedianFeeForLot.mockResolvedValue(null)
   app = createApp()
 })

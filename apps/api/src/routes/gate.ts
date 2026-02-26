@@ -1070,6 +1070,45 @@ gateRouter.post('/exit', async (req, res) => {
         })
       }
 
+      // XRPL hardening: reject path/partial mechanics and enforce destination-tag policy.
+      if ((transfer as any).isPartialPayment === true) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_partial_payment_not_allowed' })
+        return reply(400, { error: 'XRPL partial payments are not allowed' })
+      }
+      if (
+        (transfer as any).hasPaths === true ||
+        (transfer as any).hasSendMax === true ||
+        (transfer as any).hasDeliverMin === true
+      ) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_path_payment_not_allowed' })
+        return reply(400, { error: 'XRPL path payments are not allowed' })
+      }
+      const destinationTag = (transfer as any).destinationTag as number | undefined
+      const expectedDestinationTagRaw = process.env.XRPL_DESTINATION_TAG
+      const expectedDestinationTag =
+        expectedDestinationTagRaw != null && expectedDestinationTagRaw.trim().length > 0
+          ? Number.parseInt(expectedDestinationTagRaw, 10)
+          : undefined
+      const allowAnyDestinationTag = process.env.XRPL_ALLOW_ANY_DESTINATION_TAG === 'true'
+      const requireDestinationTag =
+        process.env.XRPL_REQUIRE_DESTINATION_TAG === 'true' || expectedDestinationTag != null
+      if (expectedDestinationTag != null && destinationTag !== expectedDestinationTag) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_destination_tag_mismatch' })
+        return reply(400, {
+          error: 'XRPL destination tag mismatch',
+          expected: expectedDestinationTag,
+          actual: destinationTag ?? null,
+        })
+      }
+      if (requireDestinationTag && destinationTag == null) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_destination_tag_missing' })
+        return reply(400, { error: 'XRPL destination tag is required' })
+      }
+      if (!allowAnyDestinationTag && expectedDestinationTag == null && destinationTag != null) {
+        paymentFailuresTotal.inc({ reason: 'xrpl_destination_tag_unexpected' })
+        return reply(400, { error: 'XRPL destination tag is not allowed for this wallet' })
+      }
+
       const proofHash = paymentTxHash || transfer.txHash
       // Replay protection (shared with Stripe/EVM): policy_events settlementVerified tx_hash uniqueness
       if (proofHash) {
@@ -1203,6 +1242,17 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
       if (pendingIntent.decisionId) {
+        const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
+          pendingIntent.decisionId,
+          'xrpl',
+        )
+        if (alreadySettledDecisionRail) {
+          paymentFailuresTotal.inc({ reason: 'xrpl_decision_rail_replay_detected' })
+          return reply(409, {
+            error: 'Decision has already been settled on this rail',
+            decisionId: pendingIntent.decisionId,
+          })
+        }
         await db.insertPolicyEvent({
           eventType: 'settlementVerified',
           payload: {

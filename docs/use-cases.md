@@ -215,3 +215,15 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 **Primary files:** `apps/api/src/routes/gate.ts`, `apps/api/src/services/policyStack.ts`, `apps/api/src/db/queries.ts`, `packages/policy-core/src/evaluate.ts`, `packages/settlement-core`
 
 **See also:** `docs/policy-lifecycle.md` for the Grant → Decision → Enforcement diagram, unit conventions (fiat vs stablecoin minor), and env vars (`XRPL_ISSUER`, `XRPL_ALLOW_XRP`, etc.).
+
+---
+
+## 22. Settlement Verified but Enforcement Rejected (Needs Ops Resolution)
+
+**Problem:** A payment can be real and finalized on-chain, but still fail policy enforcement at close time (for example, decision cap mismatch, rail/asset mismatch, or expired decision). This creates a business-state mismatch: funds may have moved while the parking session remains active.
+
+**Current behavior:** The API records `enforcementFailed`, returns 403, and does not close the session. This is an intentional safety default to avoid silently closing on policy violation, but it means the session can remain active until manually resolved.
+
+**Gap / follow-up:** The product currently has no first-class operator review queue or standardized refund/credit workflow for this state. This is tracked in `TODO.md` as **Policy enforcement failure ops flow (paid but not closable)**.
+
+**Primary files:** `apps/api/src/routes/gate.ts`, `apps/api/src/services/policy/enforceOrReject.ts`, `apps/api/src/db/queries.ts`

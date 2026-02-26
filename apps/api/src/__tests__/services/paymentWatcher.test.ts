@@ -5,6 +5,7 @@ vi.mock('../../db', () => ({
   db: {
     endSession: vi.fn(),
     hasSettlementForTxHash: vi.fn(() => Promise.resolve(false)),
+    hasSettlementForDecisionRail: vi.fn(() => Promise.resolve(false)),
     getDecisionPayloadByDecisionId: vi.fn(() =>
       Promise.resolve({
         action: 'ALLOW',

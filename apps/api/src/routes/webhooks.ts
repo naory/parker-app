@@ -152,6 +152,14 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         }
       }
       if (decisionId) {
+        const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
+          decisionId,
+          'stripe',
+        )
+        if (alreadySettledDecisionRail) {
+          logger.info('stripe_webhook_decision_rail_replay_ignored', { decision_id: decisionId })
+          return res.json({ received: true })
+        }
         await db.insertPolicyEvent({
           eventType: 'settlementVerified',
           payload: { decisionId, amount: amountMinor, rail: 'stripe' },

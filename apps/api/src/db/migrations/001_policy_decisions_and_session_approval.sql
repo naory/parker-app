@@ -27,3 +27,6 @@ CREATE TABLE IF NOT EXISTS policy_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_policy_decisions_session_grant ON policy_decisions(session_grant_id);
 CREATE INDEX IF NOT EXISTS idx_policy_decisions_expires_at ON policy_decisions(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_events_settlement_decision_rail
+  ON policy_events(decision_id, (payload->>'rail'))
+  WHERE event_type = 'settlementVerified' AND decision_id IS NOT NULL AND payload ? 'rail';

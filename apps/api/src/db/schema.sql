@@ -180,3 +180,5 @@ CREATE INDEX idx_policy_events_event_type ON policy_events(event_type);
 CREATE INDEX idx_policy_events_tx_hash ON policy_events(tx_hash) WHERE tx_hash IS NOT NULL;
 CREATE UNIQUE INDEX idx_policy_events_settlement_tx ON policy_events(tx_hash)
   WHERE event_type = 'settlementVerified' AND tx_hash IS NOT NULL;
+CREATE UNIQUE INDEX idx_policy_events_settlement_decision_rail ON policy_events(decision_id, (payload->>'rail'))
+  WHERE event_type = 'settlementVerified' AND decision_id IS NOT NULL AND payload ? 'rail';

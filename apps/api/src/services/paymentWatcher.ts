@@ -240,6 +240,25 @@ async function handleTransferEvent(
         return
       }
     }
+    if (pending.decisionId) {
+      const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
+        pending.decisionId,
+        'evm',
+      )
+      if (alreadySettledDecisionRail) {
+        await db.insertPolicyEvent({
+          eventType: 'riskSignal',
+          payload: { signal: 'DECISION_RAIL_REPLAY_SUSPICION', decisionId: pending.decisionId, rail: 'evm', txHash },
+          sessionId: pending.sessionId,
+          decisionId: pending.decisionId,
+          txHash,
+        })
+        console.warn(
+          `[paymentWatcher] Decision+rail replay ignored: decision=${pending.decisionId}, rail=evm`,
+        )
+        return
+      }
+    }
     await db.insertPolicyEvent({
       eventType: 'settlementVerified',
       payload: {
