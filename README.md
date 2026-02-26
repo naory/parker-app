@@ -15,6 +15,7 @@ Parker replaces fragmented centralized parking app flows (e.g., municipal/operat
 
 For the architectural rationale, see `docs/WHY_BLOCKCHAIN.md`.
 For operational and fallback scenarios, see `docs/use-cases.md` (including **§21 Policy & Settlement Enforcement**).
+For policy lifecycle (Grant → Decision → Enforcement), unit conventions, and env vars, see `docs/policy-lifecycle.md`.
 
 ### White-Label Deployment Model
 

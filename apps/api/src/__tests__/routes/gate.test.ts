@@ -333,6 +333,31 @@ describe('gate routes', () => {
       )
     })
 
+    it('expired grant => REQUIRE_APPROVAL and decision preserves reasons plus GRANT_EXPIRED', async () => {
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+        policyGrantId: 'grant-expired',
+        policyHash: 'ph-1',
+      } as any)
+      vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(new Date(Date.now() - 1000))
+      vi.mocked(db.getLot).mockResolvedValue(mockLot)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(200)
+      expect(res.body.approvalRequired).toBe(true)
+      expect(res.body.decision).toBeDefined()
+      expect(res.body.decision.reasons).toContain('GRANT_EXPIRED')
+      expect(res.body.decision.sessionGrantId).toBe('grant-expired')
+    })
+
     it('returns 400 for lot mismatch', async () => {
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',

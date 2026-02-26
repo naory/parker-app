@@ -9,6 +9,7 @@ import {
 } from '../services/hedera'
 import { verifyWebhookSignature, isStripeEnabled } from '../services/stripe'
 import { logger, paymentFailuresTotal } from '../services/observability'
+import { enforceOrReject } from '../services/policy'
 
 export const webhooksRouter = Router()
 
@@ -52,11 +53,12 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         plateNumber?: string
         lotId?: string
         feeCurrency?: string
+        decisionId?: string
       }
       amount_total?: number | null
     }
 
-    const { sessionId, plateNumber, lotId, feeCurrency } = stripeSession.metadata
+    const { sessionId, plateNumber, lotId, feeCurrency, decisionId } = stripeSession.metadata
 
     if (!sessionId || !plateNumber || !lotId) {
       paymentFailuresTotal.inc({ rail: 'stripe', reason: 'missing_metadata' })
@@ -82,6 +84,46 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
           plate_number: plateNumber,
         })
         return res.json({ received: true })
+      }
+
+      // Settlement enforcement: must pass before closing (same as XRPL/EVM)
+      const amountMinor = String(stripeSession.amount_total ?? 0)
+      const settlement = {
+        amount: amountMinor,
+        rail: 'stripe' as const,
+        asset: { kind: 'IOU' as const, currency: feeCurrency || 'USD', issuer: '' },
+      }
+      const enforcement = await enforceOrReject(
+        db.getDecisionPayloadByDecisionId.bind(db),
+        decisionId,
+        settlement,
+      )
+      if (!enforcement.allowed) {
+        paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
+        await db.insertPolicyEvent({
+          eventType: 'enforcementFailed',
+          payload: {
+            decisionId: decisionId ?? undefined,
+            reason: enforcement.reason,
+            settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+          },
+          sessionId,
+          decisionId: decisionId ?? undefined,
+        })
+        logger.warn('stripe_webhook_enforcement_failed', {
+          session_id: sessionId,
+          reason: enforcement.reason,
+        })
+        return res.json({ received: true })
+      }
+      if (decisionId) {
+        await db.insertPolicyEvent({
+          eventType: 'settlementVerified',
+          payload: { decisionId, amount: amountMinor, rail: 'stripe' },
+          sessionId,
+          decisionId,
+          txHash: stripeSession.id,
+        })
       }
 
       // Burn Hedera NFT if configured

@@ -286,8 +286,10 @@ export function enforcePayment(
     return { allowed: false, reason: "RAIL_NOT_ALLOWED" };
   }
 
-  if (!decision.asset || !assetEqual(decision.asset, settlement.asset)) {
-    return { allowed: false, reason: "ASSET_NOT_ALLOWED" };
+  if (decision.rail !== "stripe" && decision.rail !== "hosted") {
+    if (!decision.asset || !assetEqual(decision.asset, settlement.asset)) {
+      return { allowed: false, reason: "ASSET_NOT_ALLOWED" };
+    }
   }
 
   const amountMinor = BigInt(settlement.amount);

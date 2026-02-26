@@ -13,7 +13,7 @@ import type {
 import { buildEntryPolicyStack } from '../policyStack'
 import { buildAssetsOffered } from './assetsOffered'
 import { validateDecisionAgainstGrant } from './grantEnforcement'
-import { convertToStablecoin, X402_NETWORK } from '../pricing'
+import { convertToStablecoin, X402_NETWORK, X402_STABLECOIN } from '../pricing'
 import type { PolicyGrantRecord } from '../../db/queries'
 
 const STABLECOIN_DECIMALS = 6
@@ -73,12 +73,13 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
   if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm')
   const assetsOffered = buildAssetsOffered(railsOffered)
 
+  // Quote and spend in stablecoin minor (same unit as caps); currency = stablecoin symbol for policy
   const paymentCtx: PaymentPolicyContext = {
     policy,
     lotId,
     operatorId: lot?.operatorWallet,
     nowISO: new Date().toISOString(),
-    quote: { amountMinor: quoteAmountMinor, currency },
+    quote: { amountMinor: quoteAmountMinor, currency: X402_STABLECOIN },
     spend: { dayTotalMinor, sessionTotalMinor },
     railsOffered,
     assetsOffered,
@@ -91,13 +92,14 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     decision = {
       ...decision,
       action: 'REQUIRE_APPROVAL',
-      reasons: ['GRANT_EXPIRED' as PolicyReasonCode],
+      reasons: [...(decision.reasons || []), 'GRANT_EXPIRED' as PolicyReasonCode],
     }
   }
 
+  // Invariant: decision always includes sessionGrantId when session has policyGrantId (audit trail)
   let finalDecision: PaymentPolicyDecision = {
     ...decision,
-    sessionGrantId: sessionGrantId ?? null,
+    sessionGrantId: session?.policyGrantId ?? sessionGrantId ?? null,
   }
 
   if (sessionGrantId) {
