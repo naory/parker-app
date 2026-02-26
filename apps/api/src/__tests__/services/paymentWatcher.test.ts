@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// Mock dependencies before imports
+// Mock dependencies before imports (asset must match watcher settlement: base-sepolia USDC)
 vi.mock('../../db', () => ({
   db: {
     endSession: vi.fn(),
+    hasSettlementForTxHash: vi.fn(() => Promise.resolve(false)),
+    getDecisionPayloadByDecisionId: vi.fn(() =>
+      Promise.resolve({
+        action: 'ALLOW',
+        rail: 'evm',
+        asset: { kind: 'ERC20', chainId: 84532, token: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
+        reasons: ['OK'],
+        maxSpend: { perTxMinor: '10000000' },
+      }),
+    ),
+    insertPolicyEvent: vi.fn(() => Promise.resolve()),
+    getActiveSession: vi.fn(() => Promise.resolve({ policyGrantId: null })),
   },
 }))
 
@@ -37,6 +49,7 @@ function makePending(overrides: Partial<PendingPayment> = {}): PendingPayment {
     fee: 1.5,
     feeCurrency: 'USDC',
     createdAt: Date.now(),
+    decisionId: 'dec-1',
     ...overrides,
   }
 }

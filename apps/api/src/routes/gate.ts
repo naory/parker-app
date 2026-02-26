@@ -57,6 +57,22 @@ const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
   .map((c) => c.trim().toUpperCase())
   .filter(Boolean)
 
+/** User-friendly short messages for policy reason codes (for client display). */
+const REASON_WHY: Record<string, string> = {
+  OK: 'Payment allowed',
+  LOT_NOT_ALLOWED: 'This lot is not allowed by policy',
+  GEO_NOT_ALLOWED: 'Location not in allowed area',
+  ASSET_NOT_ALLOWED: 'Payment asset not allowed',
+  RAIL_NOT_ALLOWED: 'Payment method not allowed',
+  CAP_EXCEEDED_TX: 'Amount exceeds per-transaction limit',
+  CAP_EXCEEDED_SESSION: 'Amount exceeds session limit',
+  CAP_EXCEEDED_DAY: 'Amount exceeds daily limit',
+  PRICE_SPIKE: 'Amount requires manual approval',
+  RISK_HIGH: 'Risk check requires approval',
+  NEEDS_APPROVAL: 'Approval required before payment',
+  GRANT_EXPIRED: 'Session grant expired; approval required',
+}
+
 const LOT_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
 const XRPL_PAYLOAD_UUID_REGEX =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/
@@ -439,8 +455,18 @@ gateRouter.post('/entry', async (req, res) => {
         reasons: grant.reasons,
         expiresAt,
       })
-      await db.updateSessionPolicyGrant(session.id, grantId, grant.policyHash)
-      session = { ...session, policyGrantId: grantId, policyHash: grant.policyHash }
+      await db.updateSessionPolicyGrant(
+        session.id,
+        grantId,
+        grant.policyHash,
+        grant.requireApproval === true,
+      )
+      session = {
+        ...session,
+        policyGrantId: grantId,
+        policyHash: grant.policyHash,
+        approvalRequiredBeforePayment: grant.requireApproval === true,
+      }
       await db.insertPolicyEvent({
         eventType: 'entryGrantCreated',
         payload: {
@@ -768,6 +794,25 @@ gateRouter.post('/exit', async (req, res) => {
         decisionId: finalDecision.decisionId,
       })
 
+      try {
+        await db.insertPolicyDecision({
+          decisionId: finalDecision.decisionId,
+          policyHash: finalDecision.policyHash,
+          sessionGrantId: finalDecision.sessionGrantId ?? null,
+          chosenRail: finalDecision.rail ?? null,
+          chosenAsset: finalDecision.asset ?? null,
+          quoteMinor: priceFiat.amountMinor,
+          quoteCurrency: priceFiat.currency,
+          expiresAt: new Date(finalDecision.expiresAtISO),
+          action: finalDecision.action,
+          reasons: finalDecision.reasons,
+          requireApproval: finalDecision.action === 'REQUIRE_APPROVAL',
+          payload: decisionToPersist,
+        })
+      } catch (err) {
+        console.warn('[exit] insertPolicyDecision failed (event already stored):', (err as Error).message)
+      }
+
       // Build options for x402 and stripe; then filter by finalDecision.rail when ALLOW
       const x402Option =
         (lot?.paymentMethods?.includes('x402') ?? true) &&
@@ -902,6 +947,15 @@ gateRouter.post('/exit', async (req, res) => {
         // best-effort
       }
 
+      const policyPayload = {
+        action: finalDecision.action,
+        decisionId: finalDecision.decisionId,
+        grantId: finalDecision.grantId ?? finalDecision.sessionGrantId ?? undefined,
+        expiresAt: finalDecision.expiresAtISO,
+        reasons: finalDecision.reasons,
+        why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+      }
+
       return reply(200, {
         session: session || {
           id: sessionId,
@@ -914,10 +968,12 @@ gateRouter.post('/exit', async (req, res) => {
         currency,
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
+        policy: policyPayload,
         ...(approvalRequired && {
           approvalRequired: true,
           approval: {
             reasons: finalDecision.reasons,
+            why: policyPayload.why,
             authorizes: {
               rail: finalDecision.rail,
               asset: finalDecision.asset,
@@ -926,11 +982,9 @@ gateRouter.post('/exit', async (req, res) => {
             approvalEndpoint: '/api/gate/exit/approve',
           },
           decision: {
-            decisionId: finalDecision.decisionId,
+            ...policyPayload,
             policyHash: finalDecision.policyHash,
             sessionGrantId: finalDecision.sessionGrantId,
-            action: finalDecision.action,
-            reasons: finalDecision.reasons,
             rail: finalDecision.rail,
             asset: finalDecision.asset,
             maxSpend: finalDecision.maxSpend,

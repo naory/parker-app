@@ -8,12 +8,16 @@ import type { PaymentPolicyDecision } from '@parker/policy-core'
 
 const baseGrant: PolicyGrantRecord = {
   grantId: 'grant-1',
+  policyHash: 'ph-grant',
   allowedRails: ['xrpl', 'stripe'],
   allowedAssets: [
     { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
     { kind: 'ERC20', chainId: 84532, token: '0xUSDC' },
   ],
   maxSpend: { perTxMinor: '1000000', perSessionMinor: '5000000', perDayMinor: '10000000' },
+  expiresAt: new Date(Date.now() + 3600_000),
+  requireApproval: false,
+  reasons: ['OK'],
 }
 
 describe('validateDecisionAgainstGrant', () => {

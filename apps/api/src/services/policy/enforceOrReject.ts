@@ -20,6 +20,8 @@ export type GetDecisionPayload = (decisionId: string) => Promise<unknown | null>
 
 /**
  * Enforce that a settlement matches the policy decision, or reject.
+ * Checks: rail match, asset match (on-chain), destination match (when quote present), amount match (exact/quote or cap).
+ * Replay protection (txHash/paymentId uniqueness) is enforced by each settlement handler before calling this.
  * If decisionId is missing or decision not found, returns rejected (session must not close).
  */
 export async function enforceOrReject(

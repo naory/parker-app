@@ -156,10 +156,11 @@ async function updateSessionPolicyGrant(
   sessionId: string,
   policyGrantId: string,
   policyHash: string,
+  approvalRequiredBeforePayment = false,
 ): Promise<void> {
   await pool.query(
-    `UPDATE sessions SET policy_grant_id = $2, policy_hash = $3 WHERE id = $1`,
-    [sessionId, policyGrantId, policyHash],
+    `UPDATE sessions SET policy_grant_id = $2, policy_hash = $3, approval_required_before_payment = $4 WHERE id = $1`,
+    [sessionId, policyGrantId, policyHash, approvalRequiredBeforePayment],
   )
 }
 
@@ -171,26 +172,35 @@ async function getPolicyGrantExpiresAt(grantId: string): Promise<Date | null> {
   return rows[0]?.expires_at ?? null
 }
 
-/** Load full grant by grant_id for exit-time enforcement (decision ⊆ grant). */
+/** Full grant record (canonical shape persisted at entry). */
 export interface PolicyGrantRecord {
   grantId: string
+  policyHash: string
   allowedRails: string[]
   allowedAssets: unknown[]
   maxSpend: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string } | null
+  expiresAt: Date
+  requireApproval: boolean
+  reasons: string[]
 }
 
 async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantRecord | null> {
   const { rows } = await pool.query(
-    `SELECT grant_id, allowed_rails, allowed_assets, max_spend FROM policy_grants WHERE grant_id = $1`,
+    `SELECT grant_id, policy_hash, allowed_rails, allowed_assets, max_spend, require_approval, reasons, expires_at
+     FROM policy_grants WHERE grant_id = $1`,
     [grantId],
   )
   if (!rows[0]) return null
   const r = rows[0]
   return {
     grantId: r.grant_id,
+    policyHash: r.policy_hash,
     allowedRails: Array.isArray(r.allowed_rails) ? r.allowed_rails : JSON.parse(r.allowed_rails || '[]'),
     allowedAssets: Array.isArray(r.allowed_assets) ? r.allowed_assets : JSON.parse(r.allowed_assets || '[]'),
     maxSpend: r.max_spend == null ? null : (typeof r.max_spend === 'object' ? r.max_spend : JSON.parse(r.max_spend)),
+    expiresAt: r.expires_at,
+    requireApproval: r.require_approval === true,
+    reasons: Array.isArray(r.reasons) ? r.reasons : JSON.parse(r.reasons || '[]'),
   }
 }
 
@@ -240,17 +250,59 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
   )
 }
 
-/** Get payment decision payload by decision_id (for enforcePayment at settlement). */
+/** Insert first-class decision record (exit-time policy outcome). */
+export interface InsertPolicyDecisionInput {
+  decisionId: string
+  policyHash: string
+  sessionGrantId: string | null
+  chosenRail: string | null
+  chosenAsset: unknown
+  quoteMinor: string
+  quoteCurrency: string
+  expiresAt: Date
+  action: string
+  reasons: unknown
+  requireApproval: boolean
+  payload: unknown
+}
+
+async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<void> {
+  await pool.query(
+    `INSERT INTO policy_decisions (decision_id, policy_hash, session_grant_id, chosen_rail, chosen_asset, quote_minor, quote_currency, expires_at, action, reasons, require_approval, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      input.decisionId,
+      input.policyHash,
+      input.sessionGrantId,
+      input.chosenRail,
+      input.chosenAsset != null ? JSON.stringify(input.chosenAsset) : null,
+      input.quoteMinor,
+      input.quoteCurrency,
+      input.expiresAt,
+      input.action,
+      JSON.stringify(input.reasons),
+      input.requireApproval,
+      JSON.stringify(input.payload),
+    ],
+  )
+}
+
+/** Get payment decision payload by decision_id (policy_decisions first, then events fallback). */
 async function getDecisionPayloadByDecisionId(
   decisionId: string,
 ): Promise<unknown | null> {
-  const { rows } = await pool.query(
+  const { rows: decisionRows } = await pool.query(
+    `SELECT payload FROM policy_decisions WHERE decision_id = $1`,
+    [decisionId],
+  )
+  if (decisionRows[0]?.payload) return decisionRows[0].payload
+  const { rows: eventRows } = await pool.query(
     `SELECT payload FROM policy_events
      WHERE event_type = 'paymentDecisionCreated' AND decision_id = $1
      ORDER BY created_at DESC LIMIT 1`,
     [decisionId],
   )
-  return rows[0]?.payload ?? null
+  return eventRows[0]?.payload ?? null
 }
 
 /** Replay protection: already settled with this tx_hash? */
@@ -625,6 +677,7 @@ function mapSession(row: any): SessionRecord {
     status: row.status,
     policyGrantId: row.policy_grant_id ?? undefined,
     policyHash: row.policy_hash ?? undefined,
+    approvalRequiredBeforePayment: row.approval_required_before_payment === true,
   }
 }
 
@@ -686,6 +739,7 @@ export const db = {
   getPolicyGrantByGrantId,
   getSpendTotalsFiat,
   insertPolicyEvent,
+  insertPolicyDecision,
   getDecisionPayloadByDecisionId,
   hasSettlementForTxHash,
   getMedianFeeForLot,

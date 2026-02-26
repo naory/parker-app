@@ -2,23 +2,33 @@
 
 Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and **Enforcement** (settlement). No session is closed until enforcement passes.
 
-## Lifecycle diagram
+## Lifecycle diagram: Grant → Decision → Enforcement
 
 ```
-  Entry                    Exit                      Settlement
-  ─────                    ────                      ───────────
-  Policy                   Quote + spend             Verified payment
-  evaluation    ──────►   Decision     ──────►      enforceOrReject
-       │                        │                           │
-       ▼                        ▼                           ▼
-  PolicyGrantRecord         PaymentPolicyDecision      Session close
-  (grantId, allowedRails,   (decisionId, priceFiat,  only if allowed
-   allowedAssets, caps      settlementQuotes, chosen, EVM / XRPL / Stripe
-   fiat minor, expiresAt)   sessionGrantId, rail, asset)
-       │                        │
-       └────────────────────────┘
-         decision ⊆ grant
-         (rail/asset/caps)
+  ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
+  │   ENTRY     │     │    EXIT     │     │   SETTLEMENT     │
+  │   Grant     │     │  Decision   │     │  Enforcement     │
+  └──────┬──────┘     └──────┬──────┘     └────────┬────────┘
+         │                   │                      │
+         ▼                   ▼                      ▼
+  evaluateEntryPolicy   evaluatePaymentPolicy   enforceOrReject
+  (lot, geo, rails,     (priceFiat, spendFiat,  (decisionId,
+   assets, risk)         caps in fiat)           settlement)
+         │                   │                      │
+         ▼                   ▼                      ▼
+  PolicyGrantRecord     PaymentPolicyDecision   Session close
+  • grantId             • decisionId            only if allowed
+  • policyHash          • priceFiat + quotes    • EVM watcher
+  • allowedRails        • sessionGrantId       • XRPL verify route
+  • allowedAssets       • chosen rail/asset     • Stripe webhook
+  • caps (fiat minor)   • action, reasons       Replay: txHash/
+  • expiresAt           Persisted in             paymentId unique
+  • requireApproval      policy_decisions
+  Session: policyGrantId + approvalRequiredBeforePayment (if requireApproval)
+         │                   │
+         └───────────────────┘
+           decision ⊆ grant (rail, asset, caps)
+           Invariant: session.policyGrantId ⇒ decision.sessionGrantId
 ```
 
 1. **Grant (entry)**  
@@ -47,23 +57,34 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
 
 ## Environment (policy / settlement)
 
+Policy restricts which rails and assets are allowed via **railAllowlist** and **assetAllowlist**. Environment knobs below determine what the lot *offers*; policy then filters to what is *allowed* for the session.
+
+### XRPL assets
+
 | Variable           | Meaning |
 |--------------------|--------|
 | `XRPL_ISSUER`      | **Required** for XRPL IOU. If unset, XRPL IOU is not offered (fail closed). |
 | `XRPL_IOU_CURRENCY`| Currency code for XRPL IOU (default `RLUSD`). Used only when `XRPL_ISSUER` is set. |
 | `XRPL_ALLOW_XRP`   | If `true`, XRP is offered as an asset. Default unset → XRP not offered. |
-| `PLATFORM_POLICY_JSON` | Optional JSON string for platform policy (allowlists, caps). |
-| `X402_STABLECOIN`  | Stablecoin symbol (e.g. `USDC`) for quote and settlement. |
-| `X402_NETWORK`      | Network for x402 (e.g. `xrpl:testnet`, `base-sepolia`). |
+
+Entry/exit policy **assetAllowlist** can further restrict (e.g. only IOU from a specific issuer). Grant stores `allowed_assets`; decision must choose from that set.
+
+### Other
+
+| Variable              | Meaning |
+|-----------------------|--------|
+| `PLATFORM_POLICY_JSON`| Optional JSON string for platform policy (allowlists, caps). |
+| `X402_STABLECOIN`     | Stablecoin symbol (e.g. `USDC`) for quote and settlement. |
+| `X402_NETWORK`        | Network for x402 (e.g. `xrpl:testnet`, `base-sepolia`). |
 
 ---
 
 ## Decision persistence
 
-Each payment decision is stored in `policy_events` with:
+Each payment decision is stored in two places:
 
-- `event_type = 'paymentDecisionCreated'`
-- `payload`: full decision including **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amount, destination, FX snapshot), **chosen** (rail, quoteId), decisionId, policyHash, sessionGrantId, grantId, action, reasons, rail, asset, maxSpend, expiresAtISO
-- `decision_id`, `session_id` for lookup
+1. **`policy_decisions`** (first-class table): `decision_id`, `policy_hash`, `session_grant_id`, `chosen_rail`, `chosen_asset`, `quote_minor`, `quote_currency`, `created_at`, `expires_at`, `action`, `reasons`, `require_approval`, `payload`. Used for enforcement lookup.
 
-Settlement verification events use `settlementVerified` and `enforcementFailed` with `tx_hash` where applicable. Replay protection is enforced per rail.
+2. **`policy_events`**: `event_type = 'paymentDecisionCreated'`, same payload for audit. `getDecisionPayloadByDecisionId` reads from `policy_decisions` first, then falls back to events.
+
+Settlement verification events use `settlementVerified` and `enforcementFailed` with `tx_hash` where applicable. Replay protection (txHash/paymentId uniqueness) is enforced by each settlement handler before session close.

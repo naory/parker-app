@@ -16,6 +16,22 @@ const mockDb = vi.hoisted(() => ({
   getSessionHistory: vi.fn(),
   getLot: vi.fn(),
   updateLot: vi.fn(),
+  insertPolicyGrant: vi.fn(),
+  updateSessionPolicyGrant: vi.fn(),
+  getPolicyGrantExpiresAt: vi.fn(),
+  getPolicyGrantByGrantId: vi.fn(),
+  getSpendTotalsFiat: vi.fn(),
+  insertPolicyEvent: vi.fn(),
+  insertPolicyDecision: vi.fn(),
+  getDecisionPayloadByDecisionId: vi.fn(),
+  hasSettlementForTxHash: vi.fn(),
+  getMedianFeeForLot: vi.fn(),
+  beginIdempotency: vi.fn(),
+  completeIdempotency: vi.fn(),
+  getXrplIntentByTxHash: vi.fn(),
+  getActiveXrplPendingIntent: vi.fn(),
+  resolveXrplIntentByPaymentId: vi.fn(),
+  upsertXrplPendingIntent: vi.fn(),
 }))
 
 vi.mock('../db', () => ({ db: mockDb, pool: { query: vi.fn(), on: vi.fn() } }))
@@ -71,6 +87,16 @@ let app: Express
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockDb.beginIdempotency.mockResolvedValue({ status: 'started' })
+  mockDb.completeIdempotency.mockResolvedValue(undefined)
+  mockDb.getSpendTotalsFiat.mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
+  mockDb.getPolicyGrantExpiresAt.mockResolvedValue(null)
+  mockDb.getPolicyGrantByGrantId.mockResolvedValue(null)
+  mockDb.insertPolicyGrant.mockResolvedValue({ grantId: 'grant-1' })
+  mockDb.insertPolicyEvent.mockResolvedValue(undefined)
+  mockDb.insertPolicyDecision.mockResolvedValue(undefined)
+  mockDb.hasSettlementForTxHash.mockResolvedValue(false)
+  mockDb.getMedianFeeForLot.mockResolvedValue(null)
   app = createApp()
 })
 

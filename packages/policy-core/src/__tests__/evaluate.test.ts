@@ -168,6 +168,13 @@ describe('evaluateEntryPolicy', () => {
       expect(grant.reasons).toContain('NEEDS_APPROVAL')
     })
 
+    it('allows entry with requireApproval (grant still has allowedRails/assets)', () => {
+      const grant = evaluateEntryPolicy(entryCtx({ riskScore: 85, railsOffered: ['stripe', 'xrpl'], assetsOffered }))
+      expect(grant.requireApproval).toBe(true)
+      expect(grant.allowedRails.length).toBeGreaterThan(0)
+      expect(grant.reasons).toContain('NEEDS_APPROVAL')
+    })
+
     it('does not set requireApproval when riskScore < 80', () => {
       const grant = evaluateEntryPolicy(entryCtx({ riskScore: 50 }))
       expect(grant.requireApproval).toBeFalsy()

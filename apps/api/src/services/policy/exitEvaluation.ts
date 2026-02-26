@@ -25,7 +25,7 @@ function toFiatMinor(amount: number): string {
 }
 
 export interface EvaluateExitPolicyParams {
-  session: { id: string; policyGrantId?: string | null } | null
+  session: { id: string; policyGrantId?: string | null; approvalRequiredBeforePayment?: boolean } | null
   lot: { paymentMethods?: string[]; currency?: string; operatorWallet?: string } | null
   fee: number
   currency: string
@@ -101,11 +101,21 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     }
   }
 
+  // Invariant: if session has policyGrantId, decision MUST include sessionGrantId (no forgetting the grant).
   let finalDecision: PaymentPolicyDecision = {
     ...decision,
     sessionGrantId: session?.policyGrantId ?? sessionGrantId ?? null,
     grantId: sessionGrantId ?? session?.policyGrantId ?? null,
     priceFiat,
+  }
+
+  // Entry tagged approvalRequiredBeforePayment => exit must require approval before settlement.
+  if (session?.approvalRequiredBeforePayment && finalDecision.action === 'ALLOW') {
+    finalDecision = {
+      ...finalDecision,
+      action: 'REQUIRE_APPROVAL',
+      reasons: [...(finalDecision.reasons || []), 'NEEDS_APPROVAL' as PolicyReasonCode],
+    }
   }
 
   if (sessionGrantId) {

@@ -33,6 +33,7 @@ CREATE TABLE sessions (
     status            VARCHAR(20) DEFAULT 'active',
     policy_grant_id   UUID,
     policy_hash       VARCHAR(64),
+    approval_required_before_payment BOOLEAN NOT NULL DEFAULT false,
     created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -141,8 +142,27 @@ CREATE UNIQUE INDEX idx_xrpl_intents_one_pending_per_plate_lot
   ON xrpl_payment_intents(plate_number, lot_id)
   WHERE status = 'pending';
 
+-- First-class decision records (exit-time policy outcome). Source of truth for enforcement.
+CREATE TABLE policy_decisions (
+    decision_id       VARCHAR(64) PRIMARY KEY,
+    policy_hash       VARCHAR(64) NOT NULL,
+    session_grant_id  UUID,
+    chosen_rail       VARCHAR(20),
+    chosen_asset      JSONB,
+    quote_minor       VARCHAR(32) NOT NULL,
+    quote_currency    VARCHAR(10) NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    action            VARCHAR(32) NOT NULL,
+    reasons           JSONB NOT NULL,
+    require_approval  BOOLEAN NOT NULL DEFAULT false,
+    payload           JSONB NOT NULL
+);
+
+CREATE INDEX idx_policy_decisions_session_grant ON policy_decisions(session_grant_id);
+CREATE INDEX idx_policy_decisions_expires_at ON policy_decisions(expires_at);
+
 -- Policy audit trail: entry grants, payment decisions, settlement verification, enforcement failures.
--- Used for enforcement (load decision by decision_id) and replay protection (tx_hash uniqueness for settlements).
 CREATE TABLE policy_events (
     id           BIGSERIAL PRIMARY KEY,
     event_type   VARCHAR(64) NOT NULL,

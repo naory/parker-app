@@ -55,6 +55,8 @@ export interface SessionRecord {
   policyGrantId?: string
   /** Denormalized policy hash for quick checks. */
   policyHash?: string
+  /** When true, exit payment requires explicit approval before settlement (set when entry grant had requireApproval). */
+  approvalRequiredBeforePayment?: boolean
 }
 
 // ---- Payment types ----

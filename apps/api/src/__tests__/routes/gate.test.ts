@@ -24,6 +24,7 @@ vi.mock('../../db', () => ({
     getPolicyGrantExpiresAt: vi.fn(),
     getSpendTotalsFiat: vi.fn(),
     insertPolicyEvent: vi.fn(),
+    insertPolicyDecision: vi.fn(),
     getDecisionPayloadByDecisionId: vi.fn(),
     getMedianFeeForLot: vi.fn(),
     getPolicyGrantByGrantId: vi.fn(),
@@ -353,6 +354,9 @@ describe('gate routes', () => {
 
       expect(res.status).toBe(200)
       expect(res.body.approvalRequired).toBe(true)
+      expect(res.body.policy).toBeDefined()
+      expect(res.body.policy.decisionId).toBeDefined()
+      expect(res.body.policy.reasons).toContain('GRANT_EXPIRED')
       expect(res.body.decision).toBeDefined()
       expect(res.body.decision.reasons).toContain('GRANT_EXPIRED')
       expect(res.body.decision.sessionGrantId).toBe('grant-expired')
