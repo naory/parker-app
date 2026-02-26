@@ -286,6 +286,7 @@ export function enforcePayment(
     return { allowed: false, reason: "RAIL_NOT_ALLOWED" };
   }
 
+  // Stripe/hosted: no on-chain asset; we ignore settlement.asset but still enforce rail + amount cap
   if (decision.rail !== "stripe" && decision.rail !== "hosted") {
     if (!decision.asset || !assetEqual(decision.asset, settlement.asset)) {
       return { allowed: false, reason: "ASSET_NOT_ALLOWED" };

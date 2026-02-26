@@ -1,6 +1,11 @@
 /**
- * Single settlement enforcement path for all rails (EVM watcher, XRPL handler, future hosted).
+ * Single settlement enforcement path for all rails.
  * Session must never close unless enforcement passes.
+ *
+ * Call sites (all must use this before close and persist events):
+ * - EVM: apps/api/src/services/paymentWatcher.ts — enforceOrReject → settlementVerified/enforcementFailed → settleSession
+ * - XRPL: apps/api/src/routes/gate.ts — enforceOrReject → settlementVerified/enforcementFailed → resolve + endSession
+ * - Stripe: apps/api/src/routes/webhooks.ts — enforceOrReject → settlementVerified/enforcementFailed → endSession
  */
 
 import { enforcePayment } from '@parker/policy-core'
@@ -15,7 +20,6 @@ export type GetDecisionPayload = (decisionId: string) => Promise<unknown | null>
 
 /**
  * Enforce that a settlement matches the policy decision, or reject.
- * Used by: EVM payment watcher, XRPL settlement handler, any future rail.
  * If decisionId is missing or decision not found, returns rejected (session must not close).
  */
 export async function enforceOrReject(

@@ -173,7 +173,7 @@ async function handleTransferEvent(
       return
     }
 
-    // Universal enforcement: never close session unless enforcement passes (require decisionId)
+    // Same contract as XRPL route + Stripe webhook: enforceOrReject before close, persist events
     if (!pending.decisionId) {
       console.warn(`[paymentWatcher] No decisionId bound — skipping settlement for session=${sessionId}`)
       return
@@ -209,6 +209,33 @@ async function handleTransferEvent(
         `[paymentWatcher] Enforcement failed: session=${sessionId}, reason=${enforcement.reason}`,
       )
       return
+    }
+    // Decision→grant linkage: decision must reference session's grant when session has one
+    const session = await db.getActiveSession(pending.plate)
+    if (session?.policyGrantId && pending.decisionId) {
+      const decisionPayload = (await db.getDecisionPayloadByDecisionId(pending.decisionId)) as
+        | { sessionGrantId?: string | null }
+        | null
+      if (
+        decisionPayload?.sessionGrantId != null &&
+        decisionPayload.sessionGrantId !== session.policyGrantId
+      ) {
+        await db.insertPolicyEvent({
+          eventType: 'enforcementFailed',
+          payload: {
+            decisionId: pending.decisionId,
+            reason: 'NEEDS_APPROVAL',
+            settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
+          },
+          sessionId: pending.sessionId,
+          decisionId: pending.decisionId,
+          txHash,
+        })
+        console.warn(
+          `[paymentWatcher] Grant mismatch: session=${sessionId}, sessionGrantId !== session.policyGrantId`,
+        )
+        return
+      }
     }
     await db.insertPolicyEvent({
       eventType: 'settlementVerified',

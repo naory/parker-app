@@ -982,7 +982,7 @@ gateRouter.post('/exit', async (req, res) => {
         })
       }
 
-      // Settlement enforcement (universal path): never close session unless enforcement passes
+      // Same contract as EVM watcher + Stripe webhook: enforceOrReject before close, persist events
       const settlement: SettlementResult = {
         amount: transfer.amount.toString(),
         asset:
@@ -1019,6 +1019,30 @@ gateRouter.post('/exit', async (req, res) => {
           reason: enforcement.reason,
           decisionId: pendingIntent.decisionId,
         })
+      }
+      // Decision→grant linkage: decision must reference session's grant when session has one
+      if (session?.policyGrantId && pendingIntent.decisionId) {
+        const decisionPayload = await db.getDecisionPayloadByDecisionId(pendingIntent.decisionId) as { sessionGrantId?: string | null } | null
+        if (decisionPayload?.sessionGrantId != null && decisionPayload.sessionGrantId !== session.policyGrantId) {
+          await db.insertPolicyEvent({
+            eventType: 'enforcementFailed',
+            payload: {
+              decisionId: pendingIntent.decisionId,
+              reason: 'NEEDS_APPROVAL',
+              settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
+            },
+            paymentId: pendingIntent.paymentId,
+            sessionId: pendingIntent.sessionId,
+            decisionId: pendingIntent.decisionId,
+            txHash: proofHash ?? undefined,
+          })
+          paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
+          return reply(403, {
+            error: 'Settlement rejected by policy',
+            reason: 'NEEDS_APPROVAL',
+            decisionId: pendingIntent.decisionId,
+          })
+        }
       }
       if (pendingIntent.decisionId) {
         await db.insertPolicyEvent({

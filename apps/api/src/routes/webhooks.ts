@@ -116,6 +116,32 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         })
         return res.json({ received: true })
       }
+      // Decision→grant linkage: decision must reference session's grant when session has one
+      if (session.policyGrantId && decisionId) {
+        const decisionPayload = (await db.getDecisionPayloadByDecisionId(decisionId)) as
+          | { sessionGrantId?: string | null }
+          | null
+        if (
+          decisionPayload?.sessionGrantId != null &&
+          decisionPayload.sessionGrantId !== session.policyGrantId
+        ) {
+          paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
+          await db.insertPolicyEvent({
+            eventType: 'enforcementFailed',
+            payload: {
+              decisionId,
+              reason: 'NEEDS_APPROVAL',
+              settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+            },
+            sessionId,
+            decisionId,
+          })
+          logger.warn('stripe_webhook_grant_mismatch', {
+            session_id: sessionId,
+          })
+          return res.json({ received: true })
+        }
+      }
       if (decisionId) {
         await db.insertPolicyEvent({
           eventType: 'settlementVerified',

@@ -348,4 +348,38 @@ describe('enforcePayment', () => {
     const result = enforcePayment(allowedDecision, settlement)
     expect(result.allowed).toBe(true)
   })
+
+  describe('stripe: ignores asset, enforces rail + amount cap', () => {
+    const stripeDecision: PaymentPolicyDecision = {
+      action: 'ALLOW',
+      rail: 'stripe',
+      asset: undefined,
+      reasons: ['OK'],
+      maxSpend: { perTxMinor: '1000' },
+      expiresAtISO: nowISO,
+      decisionId: 'dec-stripe',
+      policyHash: 'hash-stripe',
+    }
+
+    it('allows when rail=stripe, amount within cap, settlement.asset arbitrary', () => {
+      const settlement: SettlementResult = {
+        amount: '800',
+        asset: { kind: 'IOU', currency: 'USD', issuer: '' },
+        rail: 'stripe',
+      }
+      const result = enforcePayment(stripeDecision, settlement)
+      expect(result.allowed).toBe(true)
+    })
+
+    it('denies when rail=stripe but amount exceeds perTxMinor cap', () => {
+      const settlement: SettlementResult = {
+        amount: '1500',
+        asset: { kind: 'IOU', currency: 'EUR', issuer: 'any' },
+        rail: 'stripe',
+      }
+      const result = enforcePayment(stripeDecision, settlement)
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('CAP_EXCEEDED_TX')
+    })
+  })
 })
