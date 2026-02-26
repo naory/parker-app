@@ -714,6 +714,19 @@ gateRouter.post('/exit', async (req, res) => {
         getPolicyGrantByGrantId: db.getPolicyGrantByGrantId.bind(db),
       })
 
+      // Invariant: if session has policy_grant_id, exit decision must include sessionGrantId (else 500 + log)
+      if (session?.policyGrantId && (finalDecision.sessionGrantId == null || finalDecision.sessionGrantId !== session.policyGrantId)) {
+        logger.error('gate_exit_invariant_violation', {
+          session_id: session?.id,
+          policy_grant_id: session.policyGrantId,
+          decision_session_grant_id: finalDecision.sessionGrantId ?? null,
+          message: 'Session has policy_grant_id but decision missing or mismatched sessionGrantId',
+        })
+        return reply(500, {
+          error: 'Policy invariant violation: decision must include sessionGrantId when session has a grant',
+        })
+      }
+
       if (finalDecision.action === 'DENY') {
         return reply(403, {
           error: 'Payment denied by policy',
@@ -912,6 +925,14 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       try {
+        const wsPolicy = {
+          decisionId: finalDecision.decisionId,
+          policyHash: finalDecision.policyHash,
+          sessionGrantId: finalDecision.sessionGrantId ?? undefined,
+          action: finalDecision.action,
+          why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+          reasons: finalDecision.reasons ?? [],
+        }
         notifyDriver(plate, {
           type: 'payment_required',
           fee,
@@ -920,6 +941,7 @@ gateRouter.post('/exit', async (req, res) => {
           paymentOptions,
           sessionId,
           lotId,
+          policy: wsPolicy,
           ...(approvalRequired && {
             approvalRequired: true,
             approval: {
@@ -932,11 +954,7 @@ gateRouter.post('/exit', async (req, res) => {
               approvalEndpoint: '/api/gate/exit/approve',
             },
             decision: {
-              decisionId: finalDecision.decisionId,
-              policyHash: finalDecision.policyHash,
-              sessionGrantId: finalDecision.sessionGrantId,
-              action: finalDecision.action,
-              reasons: finalDecision.reasons,
+              ...wsPolicy,
               rail: finalDecision.rail,
               asset: finalDecision.asset,
               maxSpend: finalDecision.maxSpend,
@@ -949,12 +967,14 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       const policyPayload = {
-        action: finalDecision.action,
         decisionId: finalDecision.decisionId,
+        policyHash: finalDecision.policyHash,
+        sessionGrantId: finalDecision.sessionGrantId ?? undefined,
+        action: finalDecision.action,
+        why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+        reasons: finalDecision.reasons ?? [],
         grantId: finalDecision.grantId ?? finalDecision.sessionGrantId ?? undefined,
         expiresAt: finalDecision.expiresAtISO,
-        reasons: finalDecision.reasons,
-        why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
       }
 
       return reply(200, {

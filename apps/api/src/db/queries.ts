@@ -205,8 +205,9 @@ async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantReco
 }
 
 /**
- * Spend totals for a vehicle in a given currency (fiat, raw from DB).
- * Caller must convert to stablecoin minor units for policy (same unit as settlement).
+ * Spend totals in fiat (lot currency) for cap comparison.
+ * Returns decimal amounts; caller converts to fiat minor for policy (same unit as capPerTxMinor etc).
+ * Matches cap units: caps are fiat minor in lot currency; we compare apples-to-apples.
  * sessionTotalFiat: 0 for now (no partial payments).
  */
 async function getSpendTotalsFiat(

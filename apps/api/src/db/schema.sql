@@ -143,6 +143,7 @@ CREATE UNIQUE INDEX idx_xrpl_intents_one_pending_per_plate_lot
   WHERE status = 'pending';
 
 -- First-class decision records (exit-time policy outcome). Source of truth for enforcement.
+-- decision_id is unique (PRIMARY KEY). Indexes below for enforcement lookups.
 CREATE TABLE policy_decisions (
     decision_id       VARCHAR(64) PRIMARY KEY,
     policy_hash       VARCHAR(64) NOT NULL,

@@ -8,6 +8,7 @@
  * - Stripe: webhooks.ts — enforceOrReject → if !allowed return res.json; else settlementVerified → endSession
  *
  * Enforcement invariants (enforced by policy-core enforcePayment; replay by each handler):
+ * - Settlement enforcement must reference decisionId (lookup) and payload contains sessionGrantId + policyHash.
  * - rail match: settlement rail must equal decision chosen rail
  * - asset match: on-chain rails must match decision chosen asset (chainId/token or XRP/IOU)
  * - destination match: payment must go to operator wallet from decision/quote

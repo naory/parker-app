@@ -56,11 +56,15 @@ export interface FiatMoneyMinor {
 /**
  * On-chain amount in smallest unit (atomic). String for JSON/bigint safety.
  * decimals: token decimals (e.g. 6 for USDC). amount = raw units (e.g. 1_000_000 = 1 USDC).
+ * No currency field; use FiatMoneyMinor for fiat. Keeps semantics distinct (FiatMinor vs AssetAtomic).
  */
 export interface AtomicAmount {
   amount: string;
   decimals: number;
 }
+
+/** Alias: on-chain atomic amount (vs FiatMoneyMinor for fiat). */
+export type AssetAtomic = AtomicAmount;
 
 /**
  * FX rate snapshot used to convert fiat → stablecoin for a settlement quote.

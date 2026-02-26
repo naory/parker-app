@@ -63,8 +63,19 @@ vi.mock('@parker/policy-core', async (importOriginal) => {
   return { ...mod, enforcePayment: vi.fn(mod.enforcePayment) }
 })
 
+vi.mock('../../services/policy', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../services/policy')>()
+  return {
+    ...mod,
+    evaluateExitPolicy: vi.fn((params: Parameters<typeof mod.evaluateExitPolicy>[0]) =>
+      mod.evaluateExitPolicy(params),
+    ),
+  }
+})
+
 import { db } from '../../db'
 import { enforcePayment } from '@parker/policy-core'
+import { evaluateExitPolicy } from '../../services/policy'
 import { isHederaEnabled, endParkingSessionOnHedera } from '../../services/hedera'
 
 const mockLot = {
@@ -336,6 +347,39 @@ describe('gate routes', () => {
       )
     })
 
+    it('returns 500 when session has policy_grant_id but decision missing sessionGrantId (invariant)', async () => {
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+        policyGrantId: 'grant-1',
+        policyHash: 'ph-1',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot)
+      vi.mocked(evaluateExitPolicy).mockResolvedValueOnce({
+        action: 'ALLOW',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        reasons: ['OK'],
+        expiresAtISO: new Date(Date.now() + 5 * 60_000).toISOString(),
+        decisionId: 'dec-1',
+        policyHash: 'ph-1',
+        sessionGrantId: null as any,
+        grantId: null as any,
+        priceFiat: { amountMinor: '800', currency: 'USD' },
+      } as any)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(500)
+      expect(res.body.error).toMatch(/invariant|sessionGrantId|grant/i)
+    })
+
     it('expired grant => REQUIRE_APPROVAL and decision preserves reasons plus GRANT_EXPIRED', async () => {
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',
@@ -358,6 +402,11 @@ describe('gate routes', () => {
       expect(res.body.approvalRequired).toBe(true)
       expect(res.body.policy).toBeDefined()
       expect(res.body.policy.decisionId).toBeDefined()
+      expect(res.body.policy.policyHash).toBeDefined()
+      expect(res.body.policy.sessionGrantId).toBe('grant-expired')
+      expect(res.body.policy.action).toBeDefined()
+      expect(res.body.policy.why).toBeDefined()
+      expect(Array.isArray(res.body.policy.reasons)).toBe(true)
       expect(res.body.policy.reasons).toContain('GRANT_EXPIRED')
       expect(res.body.decision).toBeDefined()
       expect(res.body.decision.reasons).toContain('GRANT_EXPIRED')

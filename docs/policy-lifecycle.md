@@ -38,17 +38,34 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
    The API builds a payment context with **priceFiat** (fiat minor, lot currency) and **spendTotalsFiat** (session/day totals in fiat minor). Caps are compared in fiat only. The payment decision (allow/deny/require-approval) is stored in `policy_events` with `event_type = 'paymentDecisionCreated'`. The persisted payload includes **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amounts, destination, FX snapshot), and **chosen** (rail + quoteId). The decision must be within the entry grant. The decision always carries `sessionGrantId` when the session has a `policyGrantId`. If the grant has expired, the decision is forced to `REQUIRE_APPROVAL` and `GRANT_EXPIRED` is **appended** to reasons.
 
 3. **Enforcement (settlement)**  
-   Every settlement path (EVM watcher, XRPL verify route, Stripe webhook) calls `enforceOrReject(decisionId, settlement)` before closing. The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback). When the decision has **settlementQuotes**, enforcement matches by rail + quoteId or rail+asset, then checks **atomic amount** (strict), **destination** (operator wallet), and asset for on-chain rails. Otherwise (legacy) it checks rail, asset, and amount vs `maxSpend.perTxMinor`. **Replay protection** is shared and consistent: all three paths call `hasSettlementForTxHash(txHash)` (or equivalent) before processing; the same `tx_hash` is stored in `policy_events` with `event_type = 'settlementVerified'`, and a unique index on `(tx_hash)` prevents duplicate settlement. If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
+   Every settlement path calls **enforceOrReject()** before closing the session or burning NFT:
+   - **Stripe webhook**: enforceOrReject → then settlementVerified → endSession (+ Hedera burn if enabled).
+   - **XRPL verify route**: enforceOrReject → then settlementVerified → resolve intent → endSession (+ Hedera burn).
+   - **EVM watcher**: enforceOrReject → then settlementVerified → settleSession (endSession + Hedera burn if enabled).
+
+   The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback); enforcement references **decisionId** (lookup) and the payload contains **sessionGrantId** and **policyHash**. **Minimum checks**: rail match, asset match (if applicable), amount (exact when quote present; otherwise ≥ allowed per cap), destination match, tx uniqueness / replay protection (`hasSettlementForTxHash`). If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
 
 ---
 
-## Units
+## Money types and unit rules
+
+We split money types so one “currency” field does not mean two different things:
+
+- **FiatMinor** (policy-core: `FiatMoneyMinor`): `amountMinor` + `currency` (ISO 4217). Used for caps and spend totals in lot currency. All fiat cap checks use this; spend comes from `getSpendTotalsFiat(plate, currency)` (same currency as lot), then converted to minor for comparison.
+- **AssetAtomic** (policy-core: `AtomicAmount`): `amount` (string, smallest unit) + `decimals`. Used for on-chain settlement (Stripe cents, USDC 6 decimals). No currency field; asset identity is rail+asset (e.g. ERC20 chainId+token).
+
+**Cap checks (apples-to-apples):**
+
+- **Fiat caps** compare vs **fiat spend**: `capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor` are in fiat minor (lot currency); spend totals are in the same currency and converted to minor. No mixing of fiat and stablecoin in these checks.
+- **Asset caps** (if added later) would compare vs **asset spend** (stablecoin atomic); today only fiat caps are used.
+
+## Units (summary)
 
 - **Caps and spend (policy)**  
-  All caps (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) and spend totals are in **fiat minor** (lot currency, e.g. USD cents). **Spend totals** come from `getSpendTotalsFiat(plate, currency)` where `currency` is the lot’s currency; **quote_currency** in the decision record is the same lot currency. Exit evaluation compares price and spend in the **same unit** (lot currency, fiat minor), so caps are compared apples-to-apples. No mixing of fiat and stablecoin in cap checks.
+  All caps and spend totals are in **fiat minor** (lot currency). **Spend totals** come from `getSpendTotalsFiat(plate, currency)`; **quote_currency** in the decision record is the same lot currency. Exit evaluation compares in the same unit (apples-to-apples).
 
 - **Settlement (enforcement)**  
-  Settlement is enforced in **atomic units** per rail: Stripe uses cents (2 decimals); x402 uses token smallest unit (e.g. 6 decimals for USDC). The decision’s **settlementQuotes** carry `AtomicAmount { amount, decimals }` and `destination`. Enforcement requires exact amount match and destination match when a quote is present.
+  Settlement is enforced in **atomic units** per rail (`AtomicAmount`): Stripe cents (2 decimals); x402 token smallest unit (e.g. 6 for USDC). The decision’s **settlementQuotes** carry `AtomicAmount` and `destination`. Enforcement requires exact amount match and destination match when a quote is present.
 
 - **Decision payload**  
   Persisted decision includes **priceFiat** (FiatMoneyMinor), **settlementQuotes** (each with amount, destination, expiresAt, optional **FxSnapshot** for x402), and **chosen** (rail, quoteId). This allows rehydration of expected atomic amount and destination from DB for enforcement.
