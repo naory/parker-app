@@ -103,6 +103,23 @@ describe('evaluateEntryPolicy', () => {
       expect(grant.allowedAssets).toHaveLength(0)
       expect(grant.reasons).toContain('ASSET_NOT_ALLOWED')
     })
+
+    it('allows entry when only stripe (no crypto assets required)', () => {
+      const grant = evaluateEntryPolicy(
+        entryCtx({ railsOffered: ['stripe'], assetsOffered: [] }),
+      )
+      expect(grant.allowedRails).toEqual(['stripe'])
+      expect(grant.allowedAssets).toHaveLength(0)
+      expect(grant.reasons).toContain('OK')
+    })
+
+    it('denies entry when crypto rail offered but no assets', () => {
+      const grant = evaluateEntryPolicy(
+        entryCtx({ railsOffered: ['xrpl'], assetsOffered: [] }),
+      )
+      expect(grant.allowedRails).toHaveLength(0)
+      expect(grant.reasons).toContain('ASSET_NOT_ALLOWED')
+    })
   })
 
   describe('geo allowlist', () => {
@@ -238,6 +255,16 @@ describe('evaluatePaymentPolicy', () => {
       expect(decision.action).toBe('DENY')
       expect(decision.reasons).toContain('LOT_NOT_ALLOWED')
     })
+
+    it('stripe rail has no asset (asset undefined)', () => {
+      const policy: Policy = { ...basePolicy, railAllowlist: ['stripe'] }
+      const decision = evaluatePaymentPolicy(
+        paymentCtx({ policy, railsOffered: ['stripe', 'xrpl'], assetsOffered }),
+      )
+      expect(decision.action).toBe('ALLOW')
+      expect(decision.rail).toBe('stripe')
+      expect(decision.asset).toBeUndefined()
+    })
   })
 })
 
@@ -310,5 +337,15 @@ describe('enforcePayment', () => {
     const result = enforcePayment(denyDecision, settlement)
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('CAP_EXCEEDED_DAY')
+  })
+
+  it('allows when amount equals perTxMinor cap (exact boundary)', () => {
+    const settlement: SettlementResult = {
+      amount: '1000',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      rail: 'xrpl',
+    }
+    const result = enforcePayment(allowedDecision, settlement)
+    expect(result.allowed).toBe(true)
   })
 })

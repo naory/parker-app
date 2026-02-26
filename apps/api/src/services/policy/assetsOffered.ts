@@ -13,8 +13,9 @@ const CHAIN_ID_BY_NETWORK: Record<string, number> = {
 }
 
 /**
- * Build assets offered for policy from what the settlement adapter can verify.
- * XRPL: XRP (optional) + IOU (XRPL_IOU_CURRENCY + XRPL_ISSUER). EVM: ERC20 (chainId + token).
+ * Build assets offered for policy from actual settlement options only.
+ * XRPL: XRP (optional) + IOU only when XRPL_ISSUER is set (fail closed). EVM: ERC20.
+ * Stripe is a rail only; no asset is offered for it.
  */
 export function buildAssetsOffered(railsOffered: Rail[]): Asset[] {
   const assets: Asset[] = []
@@ -22,10 +23,10 @@ export function buildAssetsOffered(railsOffered: Rail[]): Asset[] {
     if (process.env.XRPL_ALLOW_XRP === 'true') {
       assets.push({ kind: 'XRP' })
     }
-    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
     const issuer = process.env.XRPL_ISSUER
-    if (issuer) {
-      assets.push({ kind: 'IOU', currency: iouCurrency, issuer })
+    if (issuer && issuer.trim().length > 0) {
+      const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
+      assets.push({ kind: 'IOU', currency: iouCurrency, issuer: issuer.trim() })
     }
   }
   if (railsOffered.includes('evm')) {
@@ -35,10 +36,6 @@ export function buildAssetsOffered(railsOffered: Rail[]): Asset[] {
     if (chainId && token) {
       assets.push({ kind: 'ERC20', chainId, token })
     }
-  }
-  if (assets.length === 0) {
-    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
-    assets.push({ kind: 'IOU', currency: iouCurrency, issuer: process.env.XRPL_ISSUER ?? '' })
   }
   return assets
 }

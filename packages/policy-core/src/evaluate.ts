@@ -94,7 +94,8 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   if (allowedRails.length === 0) {
     return denyEntry(ctx, ["RAIL_NOT_ALLOWED"]);
   }
-  if (allowedAssets.length === 0) {
+  const hasCryptoRail = allowedRails.some((r) => r === "xrpl" || r === "evm");
+  if (hasCryptoRail && allowedAssets.length === 0) {
     return denyEntry(ctx, ["ASSET_NOT_ALLOWED"]);
   }
 
@@ -193,8 +194,13 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
   const rail = pickFirstAllowed<Rail>(ctx.railsOffered, policy.railAllowlist);
   if (!rail) return denyPayment(ctx, ["RAIL_NOT_ALLOWED"]);
 
-  const asset = pickFirstAllowed<Asset>(ctx.assetsOffered, policy.assetAllowlist);
-  if (!asset) return denyPayment(ctx, ["ASSET_NOT_ALLOWED"]);
+  let asset: Asset | undefined;
+  if (rail === "stripe" || rail === "hosted") {
+    asset = undefined;
+  } else {
+    asset = pickFirstAllowed<Asset>(ctx.assetsOffered, policy.assetAllowlist);
+    if (!asset) return denyPayment(ctx, ["ASSET_NOT_ALLOWED"]);
+  }
 
   const decisionId = crypto.randomUUID();
   const policyHash = sha256(

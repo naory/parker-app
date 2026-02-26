@@ -681,6 +681,7 @@ gateRouter.post('/exit', async (req, res) => {
         lotId,
         getSpendTotalsFiat: db.getSpendTotalsFiat.bind(db),
         getPolicyGrantExpiresAt: db.getPolicyGrantExpiresAt.bind(db),
+        getPolicyGrantByGrantId: db.getPolicyGrantByGrantId.bind(db),
       })
 
       if (finalDecision.action === 'DENY') {
@@ -804,7 +805,18 @@ gateRouter.post('/exit', async (req, res) => {
           paymentOptions,
           sessionId,
           lotId,
-          ...(approvalRequired && { approvalRequired: true }),
+          ...(approvalRequired && {
+            approvalRequired: true,
+            approval: {
+              reasons: finalDecision.reasons,
+              authorizes: {
+                rail: finalDecision.rail,
+                asset: finalDecision.asset,
+                maxSpend: finalDecision.maxSpend,
+              },
+              approvalEndpoint: '/api/gate/exit/approve',
+            },
+          }),
         })
       } catch {
         // best-effort
@@ -822,7 +834,18 @@ gateRouter.post('/exit', async (req, res) => {
         currency,
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
-        ...(approvalRequired && { approvalRequired: true }),
+        ...(approvalRequired && {
+          approvalRequired: true,
+          approval: {
+            reasons: finalDecision.reasons,
+            authorizes: {
+              rail: finalDecision.rail,
+              asset: finalDecision.asset,
+              maxSpend: finalDecision.maxSpend,
+            },
+            approvalEndpoint: '/api/gate/exit/approve',
+          },
+        }),
         ...(usingFallback && { fallback: 'hedera-mirror-node', hederaSerial: fallbackSerial }),
         ...(alprResult && { alpr: alprResult }),
       })
@@ -1114,6 +1137,16 @@ gateRouter.post('/exit', async (req, res) => {
     console.error('Gate exit failed:', error)
     return reply(500, { error: 'Gate exit failed' })
   }
+})
+
+// POST /api/gate/exit/approve — Approval workflow placeholder (stub)
+// When policy returns REQUIRE_APPROVAL, driver app can call this to record approval.
+// Body: { sessionId, decisionId } (or similar). Implementation: TBD (e.g. operator webhook, manual allowlist).
+gateRouter.post('/exit/approve', async (req, res) => {
+  res.status(501).json({
+    error: 'Approval workflow not yet implemented',
+    message: 'Use approvalEndpoint from REQUIRE_APPROVAL response when implemented.',
+  })
 })
 
 // POST /api/gate/scan — ALPR: upload image, get plate string

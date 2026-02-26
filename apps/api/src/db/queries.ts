@@ -171,6 +171,29 @@ async function getPolicyGrantExpiresAt(grantId: string): Promise<Date | null> {
   return rows[0]?.expires_at ?? null
 }
 
+/** Load full grant by grant_id for exit-time enforcement (decision ⊆ grant). */
+export interface PolicyGrantRecord {
+  grantId: string
+  allowedRails: string[]
+  allowedAssets: unknown[]
+  maxSpend: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string } | null
+}
+
+async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantRecord | null> {
+  const { rows } = await pool.query(
+    `SELECT grant_id, allowed_rails, allowed_assets, max_spend FROM policy_grants WHERE grant_id = $1`,
+    [grantId],
+  )
+  if (!rows[0]) return null
+  const r = rows[0]
+  return {
+    grantId: r.grant_id,
+    allowedRails: Array.isArray(r.allowed_rails) ? r.allowed_rails : JSON.parse(r.allowed_rails || '[]'),
+    allowedAssets: Array.isArray(r.allowed_assets) ? r.allowed_assets : JSON.parse(r.allowed_assets || '[]'),
+    maxSpend: r.max_spend == null ? null : (typeof r.max_spend === 'object' ? r.max_spend : JSON.parse(r.max_spend)),
+  }
+}
+
 /**
  * Spend totals for a vehicle in a given currency (fiat, raw from DB).
  * Caller must convert to stablecoin minor units for policy (same unit as settlement).
@@ -660,6 +683,7 @@ export const db = {
   insertPolicyGrant,
   updateSessionPolicyGrant,
   getPolicyGrantExpiresAt,
+  getPolicyGrantByGrantId,
   getSpendTotalsFiat,
   insertPolicyEvent,
   getDecisionPayloadByDecisionId,

@@ -12,7 +12,9 @@ import type {
 } from '@parker/policy-core'
 import { buildEntryPolicyStack } from '../policyStack'
 import { buildAssetsOffered } from './assetsOffered'
+import { validateDecisionAgainstGrant } from './grantEnforcement'
 import { convertToStablecoin, X402_NETWORK } from '../pricing'
+import type { PolicyGrantRecord } from '../../db/queries'
 
 const STABLECOIN_DECIMALS = 6
 
@@ -25,6 +27,7 @@ export interface EvaluateExitPolicyParams {
   lotId: string
   getSpendTotalsFiat: (plate: string, currency: string) => Promise<{ dayTotalFiat: number; sessionTotalFiat: number }>
   getPolicyGrantExpiresAt: (grantId: string) => Promise<Date | null>
+  getPolicyGrantByGrantId: (grantId: string) => Promise<PolicyGrantRecord | null>
 }
 
 /**
@@ -41,6 +44,7 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     lotId,
     getSpendTotalsFiat,
     getPolicyGrantExpiresAt,
+    getPolicyGrantByGrantId,
   } = params
 
   const quoteStablecoin = convertToStablecoin(fee, currency)
@@ -91,8 +95,27 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     }
   }
 
-  return {
+  let finalDecision: PaymentPolicyDecision = {
     ...decision,
     sessionGrantId: sessionGrantId ?? null,
   }
+
+  if (sessionGrantId) {
+    const grant = await getPolicyGrantByGrantId(sessionGrantId)
+    if (grant) {
+      const check = validateDecisionAgainstGrant(grant, finalDecision)
+      if (!check.valid) {
+        finalDecision = {
+          action: 'DENY',
+          reasons: [check.reason],
+          expiresAtISO: finalDecision.expiresAtISO,
+          decisionId: finalDecision.decisionId,
+          policyHash: finalDecision.policyHash,
+          sessionGrantId: sessionGrantId ?? null,
+        }
+      }
+    }
+  }
+
+  return finalDecision
 }

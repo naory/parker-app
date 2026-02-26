@@ -26,6 +26,7 @@ vi.mock('../../db', () => ({
     insertPolicyEvent: vi.fn(),
     getDecisionPayloadByDecisionId: vi.fn(),
     getMedianFeeForLot: vi.fn(),
+    getPolicyGrantByGrantId: vi.fn(),
   },
 }))
 
@@ -121,6 +122,7 @@ function createApp() {
 describe('gate routes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    if (!process.env.XRPL_ISSUER) process.env.XRPL_ISSUER = 'rIssuer'
     vi.mocked(db.beginIdempotency).mockResolvedValue({ status: 'started' } as any)
     vi.mocked(db.completeIdempotency).mockResolvedValue(undefined)
     vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
@@ -132,6 +134,7 @@ describe('gate routes', () => {
     vi.mocked(db.insertPolicyEvent).mockResolvedValue(undefined)
     vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(null)
     vi.mocked(db.getMedianFeeForLot).mockResolvedValue(null)
+    vi.mocked(db.getPolicyGrantByGrantId).mockResolvedValue(null)
   })
 
   describe('POST /api/gate/entry', () => {
