@@ -99,6 +99,8 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         amount: amountMinor,
         rail: 'stripe' as const,
         asset: { kind: 'IOU' as const, currency: feeCurrency || 'USD', issuer: '' },
+        expectedSessionGrantId: session.policyGrantId ?? null,
+        expectedPolicyHash: session.policyHash,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

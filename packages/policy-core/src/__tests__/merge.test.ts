@@ -8,6 +8,7 @@ import { POLICY_SCHEMA_VERSION, type Policy, type PolicyStack } from '../types.j
 const base: Policy = {
   version: POLICY_SCHEMA_VERSION,
   lotAllowlist: ['LOT-A', 'LOT-B'],
+  operatorAllowlist: ['op-a', 'op-b'],
   railAllowlist: ['xrpl', 'stripe', 'evm'],
   assetAllowlist: [
     { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
@@ -42,6 +43,15 @@ describe('resolveEffectivePolicy', () => {
     }
     const out = resolveEffectivePolicy(stack)
     expect(out.railAllowlist).toEqual(['stripe'])
+  })
+
+  it('intersects operator allowlist', () => {
+    const stack: PolicyStack = {
+      platform: base,
+      lot: { version: POLICY_SCHEMA_VERSION, operatorAllowlist: ['op-b', 'op-c'] },
+    }
+    const out = resolveEffectivePolicy(stack)
+    expect(out.operatorAllowlist).toEqual(['op-b'])
   })
 
   it('intersects asset allowlist by key', () => {

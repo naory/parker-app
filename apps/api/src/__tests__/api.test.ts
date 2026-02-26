@@ -20,6 +20,7 @@ const mockDb = vi.hoisted(() => ({
   updateSessionPolicyGrant: vi.fn(),
   getPolicyGrantExpiresAt: vi.fn(),
   getPolicyGrantByGrantId: vi.fn(),
+  getFiatSpendTotalsByCurrency: vi.fn(),
   getSpendTotalsFiat: vi.fn(),
   insertPolicyEvent: vi.fn(),
   insertPolicyDecision: vi.fn(),
@@ -89,6 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockDb.beginIdempotency.mockResolvedValue({ status: 'started' })
   mockDb.completeIdempotency.mockResolvedValue(undefined)
+  mockDb.getFiatSpendTotalsByCurrency.mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
   mockDb.getSpendTotalsFiat.mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
   mockDb.getPolicyGrantExpiresAt.mockResolvedValue(null)
   mockDb.getPolicyGrantByGrantId.mockResolvedValue(null)

@@ -210,7 +210,7 @@ async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantReco
  * Matches cap units: caps are fiat minor in lot currency; we compare apples-to-apples.
  * sessionTotalFiat: 0 for now (no partial payments).
  */
-async function getSpendTotalsFiat(
+async function getFiatSpendTotalsByCurrency(
   plate: string,
   currency: string,
 ): Promise<{ dayTotalFiat: number; sessionTotalFiat: number }> {
@@ -224,6 +224,9 @@ async function getSpendTotalsFiat(
   const dayTotalFiat = Number(rows[0]?.day_total ?? 0)
   return { dayTotalFiat, sessionTotalFiat: 0 }
 }
+
+/** @deprecated Prefer getFiatSpendTotalsByCurrency; kept for compatibility. */
+const getSpendTotalsFiat = getFiatSpendTotalsByCurrency
 
 // ---- Policy events (audit + decision lookup for enforcement) ----
 
@@ -743,6 +746,7 @@ export const db = {
   updateSessionPolicyGrant,
   getPolicyGrantExpiresAt,
   getPolicyGrantByGrantId,
+  getFiatSpendTotalsByCurrency,
   getSpendTotalsFiat,
   insertPolicyEvent,
   insertPolicyDecision,

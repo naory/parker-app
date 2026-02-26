@@ -178,6 +178,7 @@ async function handleTransferEvent(
       console.warn(`[paymentWatcher] No decisionId bound — skipping settlement for session=${sessionId}`)
       return
     }
+    const session = await db.getActiveSession(pending.plate)
     const asset: Asset = pending.asset
       ? (JSON.parse(pending.asset) as Asset)
       : { kind: 'ERC20', chainId: ctx.chainId, token: ctx.usdcAddress }
@@ -188,6 +189,8 @@ async function handleTransferEvent(
       txHash,
       payer: args.from,
       destination: pending.receiverWallet,
+      expectedSessionGrantId: session?.policyGrantId ?? null,
+      expectedPolicyHash: pending.policyHash ?? session?.policyHash,
     }
     const enforcement = await enforceOrReject(
       db.getDecisionPayloadByDecisionId.bind(db),
@@ -212,7 +215,6 @@ async function handleTransferEvent(
       return
     }
     // Decision→grant linkage: decision must reference session's grant when session has one
-    const session = await db.getActiveSession(pending.plate)
     if (session?.policyGrantId && pending.decisionId) {
       const decisionPayload = (await db.getDecisionPayloadByDecisionId(pending.decisionId)) as
         | { sessionGrantId?: string | null }

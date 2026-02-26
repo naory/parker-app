@@ -412,7 +412,7 @@ gateRouter.post('/entry', async (req, res) => {
       assetsOffered,
     }
     const grant = evaluateEntryPolicy(entryCtx)
-    if (grant.allowedRails.length === 0 || grant.allowedAssets.length === 0) {
+    if (grant.grantAction === 'DENY') {
       return reply(403, {
         error: 'Entry denied by policy',
         reasons: grant.reasons,
@@ -709,7 +709,7 @@ gateRouter.post('/exit', async (req, res) => {
         currency,
         plate,
         lotId,
-        getSpendTotalsFiat: db.getSpendTotalsFiat.bind(db),
+        getFiatSpendTotalsByCurrency: db.getFiatSpendTotalsByCurrency.bind(db),
         getPolicyGrantExpiresAt: db.getPolicyGrantExpiresAt.bind(db),
         getPolicyGrantByGrantId: db.getPolicyGrantByGrantId.bind(db),
       })
@@ -1150,6 +1150,8 @@ gateRouter.post('/exit', async (req, res) => {
         txHash: proofHash,
         payer: transfer.from,
         destination: pendingIntent.destination,
+        expectedSessionGrantId: session?.policyGrantId ?? null,
+        expectedPolicyHash: pendingIntent.policyHash ?? session?.policyHash,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

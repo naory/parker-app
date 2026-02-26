@@ -22,6 +22,7 @@ vi.mock('../../db', () => ({
     insertPolicyGrant: vi.fn(),
     updateSessionPolicyGrant: vi.fn(),
     getPolicyGrantExpiresAt: vi.fn(),
+    getFiatSpendTotalsByCurrency: vi.fn(),
     getSpendTotalsFiat: vi.fn(),
     insertPolicyEvent: vi.fn(),
     insertPolicyDecision: vi.fn(),
@@ -77,6 +78,7 @@ import { db } from '../../db'
 import { enforcePayment } from '@parker/policy-core'
 import { evaluateExitPolicy } from '../../services/policy'
 import { isHederaEnabled, endParkingSessionOnHedera } from '../../services/hedera'
+import { notifyDriver } from '../../ws/index'
 
 const mockLot = {
   id: 'LOT-1',
@@ -141,6 +143,7 @@ describe('gate routes', () => {
     vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
     vi.mocked(db.hasSettlementForTxHash).mockResolvedValue(false)
     vi.mocked(db.resolveXrplIntentByPaymentId).mockResolvedValue(true)
+    vi.mocked(db.getFiatSpendTotalsByCurrency).mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
     vi.mocked(db.getSpendTotalsFiat).mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
     vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(null)
     vi.mocked(db.insertPolicyGrant).mockResolvedValue({ grantId: 'grant-1' } as any)
@@ -300,6 +303,19 @@ describe('gate routes', () => {
       expect(res.body.fee).toBeGreaterThan(0)
       expect(res.body.currency).toBe('USD')
       expect(res.body.paymentOptions).toBeDefined()
+      expect(vi.mocked(notifyDriver)).toHaveBeenCalledWith(
+        '1234567',
+        expect.objectContaining({
+          type: 'payment_required',
+          policy: expect.objectContaining({
+            decisionId: expect.any(String),
+            policyHash: expect.any(String),
+            action: expect.any(String),
+            reasons: expect.any(Array),
+            why: expect.any(Array),
+          }),
+        }),
+      )
     })
 
     it('returns 404 when no active session', async () => {

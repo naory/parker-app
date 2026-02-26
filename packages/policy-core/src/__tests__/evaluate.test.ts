@@ -19,7 +19,7 @@ const basePolicy: Policy = {
   version: POLICY_SCHEMA_VERSION,
 }
 
-const nowISO = new Date().toISOString()
+const nowISO = new Date(Date.now() + 5 * 60 * 1000).toISOString()
 const railsOffered: Rail[] = ['xrpl', 'stripe']
 const assetsOffered: Asset[] = [
   { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
@@ -42,7 +42,7 @@ function paymentCtx(overrides: Partial<PaymentPolicyContext> = {}): PaymentPolic
     policy: basePolicy,
     lotId: 'LOT-A',
     nowISO,
-    quote: { amountMinor: '800', currency: 'USD' },
+    quote: { amountMinor: '800', currencyId: 'USD' },
     spend: { dayTotalMinor: '0', sessionTotalMinor: '0' },
     railsOffered,
     assetsOffered,
@@ -55,6 +55,7 @@ describe('evaluateEntryPolicy', () => {
     it('denies when lot not in lotAllowlist', () => {
       const policy: Policy = { ...basePolicy, lotAllowlist: ['LOT-B', 'LOT-C'] }
       const grant = evaluateEntryPolicy(entryCtx({ policy, lotId: 'LOT-A' }))
+      expect(grant.grantAction).toBe('DENY')
       expect(grant.allowedRails).toHaveLength(0)
       expect(grant.reasons).toContain('LOT_NOT_ALLOWED')
     })
@@ -62,8 +63,16 @@ describe('evaluateEntryPolicy', () => {
     it('allows when lot is in lotAllowlist', () => {
       const policy: Policy = { ...basePolicy, lotAllowlist: ['LOT-A', 'LOT-B'] }
       const grant = evaluateEntryPolicy(entryCtx({ policy }))
+      expect(grant.grantAction).toBe('ALLOW')
       expect(grant.allowedRails.length).toBeGreaterThan(0)
       expect(grant.reasons).toContain('OK')
+    })
+
+    it('denies when operatorId not in operatorAllowlist', () => {
+      const policy: Policy = { ...basePolicy, operatorAllowlist: ['op-2'] }
+      const grant = evaluateEntryPolicy(entryCtx({ policy, operatorId: 'op-1' }))
+      expect(grant.grantAction).toBe('DENY')
+      expect(grant.reasons).toContain('VENDOR_NOT_ALLOWED')
     })
 
     it('allows any lot when lotAllowlist is empty or absent', () => {
@@ -163,6 +172,7 @@ describe('evaluateEntryPolicy', () => {
   describe('risk → require approval', () => {
     it('sets requireApproval and reasons when riskScore >= 80', () => {
       const grant = evaluateEntryPolicy(entryCtx({ riskScore: 85 }))
+      expect(grant.grantAction).toBe('REQUIRE_APPROVAL')
       expect(grant.requireApproval).toBe(true)
       expect(grant.reasons).toContain('RISK_HIGH')
       expect(grant.reasons).toContain('NEEDS_APPROVAL')
@@ -187,7 +197,7 @@ describe('evaluatePaymentPolicy', () => {
   describe('caps (tx/session/day)', () => {
     it('denies when quote exceeds capPerTxMinor', () => {
       const policy: Policy = { ...basePolicy, capPerTxMinor: '500' }
-      const decision = evaluatePaymentPolicy(paymentCtx({ policy, quote: { amountMinor: '600', currency: 'USD' } }))
+      const decision = evaluatePaymentPolicy(paymentCtx({ policy, quote: { amountMinor: '600', currencyId: 'USD' } }))
       expect(decision.action).toBe('DENY')
       expect(decision.reasons).toContain('CAP_EXCEEDED_TX')
     })
@@ -203,7 +213,7 @@ describe('evaluatePaymentPolicy', () => {
       const decision = evaluatePaymentPolicy(
         paymentCtx({
           policy,
-          quote: { amountMinor: '600', currency: 'USD' },
+          quote: { amountMinor: '600', currencyId: 'USD' },
           spend: { dayTotalMinor: '0', sessionTotalMinor: '500' },
         }),
       )
@@ -216,7 +226,7 @@ describe('evaluatePaymentPolicy', () => {
       const decision = evaluatePaymentPolicy(
         paymentCtx({
           policy,
-          quote: { amountMinor: '1500', currency: 'USD' },
+          quote: { amountMinor: '1500', currencyId: 'USD' },
           spend: { dayTotalMinor: '1000', sessionTotalMinor: '0' },
         }),
       )
@@ -236,7 +246,7 @@ describe('evaluatePaymentPolicy', () => {
     it('returns REQUIRE_APPROVAL when quote exceeds requireApprovalOverMinor', () => {
       const policy: Policy = { ...basePolicy, requireApprovalOverMinor: '500' }
       const decision = evaluatePaymentPolicy(
-        paymentCtx({ policy, quote: { amountMinor: '600', currency: 'USD' } }),
+        paymentCtx({ policy, quote: { amountMinor: '600', currencyId: 'USD' } }),
       )
       expect(decision.action).toBe('REQUIRE_APPROVAL')
       expect(decision.reasons).toContain('PRICE_SPIKE')
@@ -366,6 +376,45 @@ describe('enforcePayment', () => {
     const result = enforcePayment(denyDecision, settlement)
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('CAP_EXCEEDED_DAY')
+  })
+
+  it('denies when decision is expired', () => {
+    const expiredDecision: PaymentPolicyDecision = {
+      ...allowedDecision,
+      expiresAtISO: new Date(Date.now() - 60_000).toISOString(),
+    }
+    const settlement: SettlementResult = {
+      amount: '800',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      rail: 'xrpl',
+    }
+    const result = enforcePayment(expiredDecision, settlement)
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('NEEDS_APPROVAL')
+  })
+
+  it('denies when expectedSessionGrantId does not match decision.sessionGrantId', () => {
+    const settlement: SettlementResult = {
+      amount: '800',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      rail: 'xrpl',
+      expectedSessionGrantId: 'grant-xyz',
+    }
+    const result = enforcePayment({ ...allowedDecision, sessionGrantId: 'grant-abc' }, settlement)
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('NEEDS_APPROVAL')
+  })
+
+  it('denies when expectedPolicyHash does not match decision.policyHash', () => {
+    const settlement: SettlementResult = {
+      amount: '800',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      rail: 'xrpl',
+      expectedPolicyHash: 'hash-other',
+    }
+    const result = enforcePayment(allowedDecision, settlement)
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('NEEDS_APPROVAL')
   })
 
   it('allows when amount equals perTxMinor cap (exact boundary)', () => {

@@ -98,7 +98,10 @@ export interface SettlementQuote {
  */
 export interface MoneyMinor {
   amountMinor: string;
-  currency: string;
+  /** ISO currency id/code for this minor amount (e.g. USD). */
+  currencyId: string;
+  /** @deprecated Use currencyId. */
+  currency?: string;
 }
 
 /**
@@ -108,6 +111,10 @@ export interface MoneyMinor {
 export interface Policy {
   version: PolicySchemaVersion;
   lotAllowlist?: string[];
+  /** Operator/vendor allowlist by operator id/wallet (not lot id). */
+  operatorAllowlist?: string[];
+  /** @deprecated Use operatorAllowlist. */
+  vendorAllowlist?: string[];
   geoAllowlist?: GeoCircle[];
   railAllowlist?: Rail[];
   assetAllowlist?: Asset[];
@@ -155,6 +162,7 @@ export interface EntryPolicyContext {
  * No amount at entry; caps are fiat minor only (currency from lot at exit).
  */
 export interface SessionPolicyGrant {
+  grantAction: PolicyDecisionAction;
   grantId: string;
   policyHash: string;
   allowedRails: Rail[];
@@ -237,6 +245,10 @@ export interface SettlementResult {
   destination?: string;
   /** Quote id being settled (if available). */
   quoteId?: string;
+  /** Optional expected session grant id for invariant checks. */
+  expectedSessionGrantId?: string | null;
+  /** Optional expected policy hash for invariant checks. */
+  expectedPolicyHash?: string;
 }
 
 /**

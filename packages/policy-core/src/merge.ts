@@ -57,6 +57,11 @@ function mergeTwo(base: Policy, override: Policy): Policy {
   return {
     version: POLICY_SCHEMA_VERSION,
     lotAllowlist: mergeAllowlist(base.lotAllowlist, override.lotAllowlist),
+    operatorAllowlist: mergeAllowlist(
+      base.operatorAllowlist ?? base.vendorAllowlist,
+      override.operatorAllowlist ?? override.vendorAllowlist,
+    ),
+    vendorAllowlist: undefined,
     geoAllowlist: mergeGeoAllowlist(base.geoAllowlist, override.geoAllowlist),
     railAllowlist: mergeRailAllowlist(base.railAllowlist, override.railAllowlist),
     assetAllowlist: mergeAssetAllowlist(base.assetAllowlist, override.assetAllowlist),

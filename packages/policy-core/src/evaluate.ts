@@ -56,6 +56,13 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   const reasons: PolicyReasonCode[] = [];
   let requireApproval = false;
 
+  const operatorAllowlist = policy.operatorAllowlist ?? policy.vendorAllowlist;
+  if (operatorAllowlist && operatorAllowlist.length > 0) {
+    if (!ctx.operatorId || !operatorAllowlist.includes(ctx.operatorId)) {
+      return denyEntry(ctx, ["VENDOR_NOT_ALLOWED"]);
+    }
+  }
+
   if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(lotId)) {
     return denyEntry(ctx, ["LOT_NOT_ALLOWED"]);
   }
@@ -115,6 +122,7 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   );
 
   return {
+    grantAction: requireApproval ? "REQUIRE_APPROVAL" : "ALLOW",
     grantId,
     policyHash,
     allowedRails,
@@ -139,6 +147,7 @@ function denyEntry(ctx: EntryPolicyContext, reasons: PolicyReasonCode[]): Sessio
   const grantId = crypto.randomUUID();
   const policyHash = sha256(JSON.stringify({ policy: ctx.policy, lotId: ctx.lotId, denied: reasons }));
   return {
+    grantAction: "DENY",
     grantId,
     policyHash,
     allowedRails: [],
@@ -181,6 +190,13 @@ function getSpendTotals(ctx: PaymentPolicyContext): { dayTotal: string; sessionT
  */
 export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyDecision {
   const { policy } = ctx;
+
+  const operatorAllowlist = policy.operatorAllowlist ?? policy.vendorAllowlist;
+  if (operatorAllowlist && operatorAllowlist.length > 0) {
+    if (!ctx.operatorId || !operatorAllowlist.includes(ctx.operatorId)) {
+      return denyPayment(ctx, ["VENDOR_NOT_ALLOWED"]);
+    }
+  }
 
   if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(ctx.lotId)) {
     return denyPayment(ctx, ["LOT_NOT_ALLOWED"]);
@@ -328,6 +344,26 @@ export function enforcePayment(
 ): EnforcementResult {
   if (decision.action !== "ALLOW") {
     return { allowed: false, reason: decision.reasons[0] ?? "NEEDS_APPROVAL" };
+  }
+
+  if (Date.parse(decision.expiresAtISO) <= Date.now()) {
+    return { allowed: false, reason: "NEEDS_APPROVAL" };
+  }
+
+  if (
+    settlement.expectedSessionGrantId != null &&
+    settlement.expectedSessionGrantId.length > 0 &&
+    decision.sessionGrantId !== settlement.expectedSessionGrantId
+  ) {
+    return { allowed: false, reason: "NEEDS_APPROVAL" };
+  }
+
+  if (
+    settlement.expectedPolicyHash != null &&
+    settlement.expectedPolicyHash.length > 0 &&
+    decision.policyHash !== settlement.expectedPolicyHash
+  ) {
+    return { allowed: false, reason: "NEEDS_APPROVAL" };
   }
 
   if (decision.rail !== settlement.rail) {

@@ -17,10 +17,11 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
          │                   │                      │
          ▼                   ▼                      ▼
   PolicyGrantRecord     PaymentPolicyDecision   Session close
-  • grantId             • decisionId            only if allowed
-  • policyHash          • priceFiat + quotes    • EVM watcher
-  • allowedRails        • sessionGrantId       • XRPL verify route
-  • allowedAssets       • chosen rail/asset     • Stripe webhook
+  • grantAction         • decisionId            only if allowed
+  • grantId             • policyHash            • EVM watcher
+  • policyHash          • priceFiat + quotes    • XRPL verify route
+  • allowedRails        • sessionGrantId        • Stripe webhook
+  • allowedAssets       • chosen rail/asset
   • caps (fiat minor)   • action, reasons       Replay: txHash/
   • expiresAt           Persisted in             paymentId unique
   • requireApproval      policy_decisions
@@ -32,7 +33,7 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
 ```
 
 1. **Grant (entry)**  
-   Entry policy is evaluated (lot, geo, rail/asset allowlists, risk). A `PolicyGrantRecord` is stored and its `grantId` is written to the session (`session.policyGrantId`). If risk is high or geo is missing, entry can still be allowed and the grant marked `requireApproval` so that payment will require approval. If no rails or (for crypto rails) no assets are allowed, entry is denied.
+   Entry policy is evaluated (lot, operator/vendor, geo, rail/asset allowlists, risk). A `PolicyGrantRecord` is stored and its `grantId` is written to the session (`session.policyGrantId`). The grant carries explicit `grantAction` (`ALLOW | DENY | REQUIRE_APPROVAL`) so callers do not infer from empty allowlists. Parker currently uses **allow entry + block payment** for `REQUIRE_APPROVAL` (sets `approval_required_before_payment=true` on session). If no rails or (for crypto rails) no assets are allowed, entry is denied.
 
 2. **Decision (exit)**  
    The API builds a payment context with **priceFiat** (fiat minor, lot currency) and **spendTotalsFiat** (session/day totals in fiat minor). Caps are compared in fiat only. The payment decision (allow/deny/require-approval) is stored in `policy_events` with `event_type = 'paymentDecisionCreated'`. The persisted payload includes **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amounts, destination, FX snapshot), and **chosen** (rail + quoteId). The decision must be within the entry grant. The decision always carries `sessionGrantId` when the session has a `policyGrantId`. If the grant has expired, the decision is forced to `REQUIRE_APPROVAL` and `GRANT_EXPIRED` is **appended** to reasons.
@@ -51,7 +52,7 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
 
 We split money types so one “currency” field does not mean two different things:
 
-- **FiatMinor** (policy-core: `FiatMoneyMinor`): `amountMinor` + `currency` (ISO 4217). Used for caps and spend totals in lot currency. All fiat cap checks use this; spend comes from `getSpendTotalsFiat(plate, currency)` (same currency as lot), then converted to minor for comparison.
+- **FiatMinor** (policy-core: `FiatMoneyMinor`): `amountMinor` + `currency` (ISO 4217). Used for caps and spend totals in lot currency. All fiat cap checks use this; spend comes from `getFiatSpendTotalsByCurrency(plate, currency)` (same currency as lot), then converted to minor for comparison.
 - **AssetAtomic** (policy-core: `AtomicAmount`): `amount` (string, smallest unit) + `decimals`. Used for on-chain settlement (Stripe cents, USDC 6 decimals). No currency field; asset identity is rail+asset (e.g. ERC20 chainId+token).
 
 **Cap checks (apples-to-apples):**
@@ -62,7 +63,7 @@ We split money types so one “currency” field does not mean two different thi
 ## Units (summary)
 
 - **Caps and spend (policy)**  
-  All caps and spend totals are in **fiat minor** (lot currency). **Spend totals** come from `getSpendTotalsFiat(plate, currency)`; **quote_currency** in the decision record is the same lot currency. Exit evaluation compares in the same unit (apples-to-apples).
+  All caps and spend totals are in **fiat minor** (lot currency). **Spend totals** come from `getFiatSpendTotalsByCurrency(plate, currency)`; **quote_currency** in the decision record is the same lot currency. Exit evaluation compares in the same unit (apples-to-apples).
 
 - **Settlement (enforcement)**  
   Settlement is enforced in **atomic units** per rail (`AtomicAmount`): Stripe cents (2 decimals); x402 token smallest unit (e.g. 6 for USDC). The decision’s **settlementQuotes** carry `AtomicAmount` and `destination`. Enforcement requires exact amount match and destination match when a quote is present.

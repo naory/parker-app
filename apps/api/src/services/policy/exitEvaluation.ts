@@ -31,7 +31,7 @@ export interface EvaluateExitPolicyParams {
   currency: string
   plate: string
   lotId: string
-  getSpendTotalsFiat: (plate: string, currency: string) => Promise<{ dayTotalFiat: number; sessionTotalFiat: number }>
+  getFiatSpendTotalsByCurrency: (plate: string, currency: string) => Promise<{ dayTotalFiat: number; sessionTotalFiat: number }>
   getPolicyGrantExpiresAt: (grantId: string) => Promise<Date | null>
   getPolicyGrantByGrantId: (grantId: string) => Promise<PolicyGrantRecord | null>
 }
@@ -48,12 +48,12 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     currency,
     plate,
     lotId,
-    getSpendTotalsFiat,
+    getFiatSpendTotalsByCurrency,
     getPolicyGrantExpiresAt,
     getPolicyGrantByGrantId,
   } = params
 
-  const spendFiat = await getSpendTotalsFiat(plate, currency)
+  const spendFiat = await getFiatSpendTotalsByCurrency(plate, currency)
   const priceFiat: FiatMoneyMinor = {
     amountMinor: toFiatMinor(fee),
     currency,
