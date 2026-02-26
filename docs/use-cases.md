@@ -180,9 +180,9 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 
 **Problem:** XRPL payment confirmation cannot rely on ERC-20 event watchers or EVM transaction receipts.
 
-**Behavior:** When `X402_NETWORK` is set to `xrpl:*`, the API initializes the XRPL settlement adapter and verifies payment proofs by fetching the submitted XRPL transaction hash and validating a successful, finalized `Payment` transaction. The same `X-PAYMENT` header is used, but verification logic is network-specific.
+**Behavior:** When `X402_NETWORK` is set to `xrpl:*`, the API initializes the XRPL settlement adapter and verifies payment proofs by fetching the submitted XRPL transaction hash and validating a successful, finalized `Payment` transaction. The same `X-PAYMENT` header is used, but verification logic is network-specific. After verification, the settlement is enforced against the prior policy decision (see §21): if the transfer amount exceeds the decision’s per-tx cap or rail/asset differ, the exit is rejected with 403 and the session is not closed.
 
-**Primary files:** `apps/api/src/app.ts`, `packages/x402-xrpl-settlement-adapter/src/index.ts`, `packages/x402/src/middleware.ts`
+**Primary files:** `apps/api/src/app.ts`, `apps/api/src/routes/gate.ts`, `packages/x402-xrpl-settlement-adapter/src/index.ts`, `packages/x402/src/middleware.ts`
 
 ---
 
@@ -203,3 +203,13 @@ Single reference for all use cases, resilience patterns, and edge-case handling 
 **Behavior:** In development mode (`NODE_ENV=development`), the x402 middleware accepts a special `X-PAYMENT: simulated-dev-payment` header, bypassing on-chain transaction hash validation. The driver app's "Simulate Pay" button sends this header to quickly test the exit flow without real crypto. This bypass is only active in development mode.
 
 **Primary files:** `packages/x402/src/middleware.ts`, `apps/driver/src/components/PaymentPrompt.tsx`
+
+---
+
+## 21. Policy & Settlement Enforcement
+
+**Problem:** A driver might pay more than the policy allowed (e.g., per-tx cap), use a different rail or asset than the one in the payment decision, or the decision might have expired. Settlement verification alone only proves that a transfer occurred; it does not prove the transfer complies with the policy that was presented at quote time.
+
+**Behavior:** Policy is evaluated in two phases. **Entry:** The API evaluates entry policy (lot allowlist, geo, rail/asset allowlists, risk) and creates a session grant with allowed rails and assets; if no rails or assets are allowed, entry is denied. **Exit (payment options):** When the driver requests payment options, the API builds a payment policy context (quote in stablecoin minor units, session/day spend totals from DB converted to stablecoin minor, rails and assets offered from what settlement can verify — XRPL XRP/IOU, EVM ERC20 by chainId). `@parker/policy-core` returns a payment decision (allow/deny/require-approval) with caps and chosen rail/asset; the decision is stored and its `decisionId` is bound to the payment intent. **Settlement close (XRPL):** When the driver submits a verified XRPL payment, the API loads the decision by `decisionId`, builds a settlement result (amount, rail, asset, txHash), and calls `enforcePayment(decision, settlement)`. If the settlement exceeds the decision’s per-tx cap or rail/asset mismatch, the API returns 403, inserts an `enforcementFailed` policy event, and does not close the session. If enforcement passes, it inserts `settlementVerified`, resolves the intent, and closes the session. All policy events are stored for audit. Money units are consistent: policy caps and quote/spend use stablecoin minor units (e.g., USDC 6 decimals) so enforcement matches settlement.
+
+**Primary files:** `apps/api/src/routes/gate.ts`, `apps/api/src/services/policyStack.ts`, `apps/api/src/db/queries.ts`, `packages/policy-core/src/evaluate.ts`, `packages/settlement-core`

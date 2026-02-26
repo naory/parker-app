@@ -199,7 +199,7 @@ Parker supports two parallel payment rails per lot, both optional:
   - **XRPL rail**: XRPL `Payment` transaction verification via settlement adapter
 - **Stripe (credit card)** — Stripe Checkout in the lot's native currency. Webhook-driven session closure.
 
-Both rails result in the same outcome: session closed in DB, NFT burned on Hedera, gate opened.
+Both rails result in the same outcome: session closed in DB, NFT burned on Hedera, gate opened. Payment options are derived from a **policy decision** (caps, allowlists, rail/asset); on the XRPL path, after verification the settlement is **enforced** against that decision (e.g. per-tx cap, same rail/asset)—see `docs/use-cases.md` §21.
 
 ### 6.2 Payment Flow
 
