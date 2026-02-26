@@ -120,6 +120,128 @@ async function getSessionHistory(
   return rows.map(mapSession)
 }
 
+// ---- Policy grant (entry-time) ----
+
+interface InsertPolicyGrantInput {
+  sessionId: string
+  policyHash: string
+  allowedRails: unknown
+  allowedAssets: unknown
+  maxSpend: unknown
+  requireApproval: boolean
+  reasons: unknown
+  expiresAt: Date
+}
+
+async function insertPolicyGrant(input: InsertPolicyGrantInput): Promise<{ grantId: string }> {
+  const { rows } = await pool.query(
+    `INSERT INTO policy_grants (session_id, policy_hash, allowed_rails, allowed_assets, max_spend, require_approval, reasons, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING grant_id`,
+    [
+      input.sessionId,
+      input.policyHash,
+      JSON.stringify(input.allowedRails),
+      JSON.stringify(input.allowedAssets),
+      input.maxSpend != null ? JSON.stringify(input.maxSpend) : null,
+      input.requireApproval,
+      JSON.stringify(input.reasons),
+      input.expiresAt,
+    ],
+  )
+  return { grantId: rows[0].grant_id }
+}
+
+async function updateSessionPolicyGrant(
+  sessionId: string,
+  policyGrantId: string,
+  policyHash: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE sessions SET policy_grant_id = $2, policy_hash = $3 WHERE id = $1`,
+    [sessionId, policyGrantId, policyHash],
+  )
+}
+
+async function getPolicyGrantExpiresAt(grantId: string): Promise<Date | null> {
+  const { rows } = await pool.query(
+    `SELECT expires_at FROM policy_grants WHERE grant_id = $1`,
+    [grantId],
+  )
+  return rows[0]?.expires_at ?? null
+}
+
+/**
+ * Spend totals for a vehicle in a given currency (minor units).
+ * dayTotalMinor: sum of completed sessions' fee_amount today, in minor units (2 decimals).
+ * sessionTotalMinor: 0 for now (no partial payments).
+ */
+async function getSpendTotalsMinor(
+  plate: string,
+  currency: string,
+): Promise<{ dayTotalMinor: string; sessionTotalMinor: string }> {
+  const decimals = 2 // fiat cents
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(fee_amount), 0) AS day_total
+     FROM sessions
+     WHERE plate_number = $1 AND status = 'completed' AND fee_currency = $2
+       AND exit_time >= date_trunc('day', NOW())`,
+    [plate, currency],
+  )
+  const dayTotal = Number(rows[0]?.day_total ?? 0)
+  const dayTotalMinor = Math.round(dayTotal * 10 ** decimals).toString()
+  return { dayTotalMinor, sessionTotalMinor: '0' }
+}
+
+// ---- Policy events (audit + decision lookup for enforcement) ----
+
+export interface InsertPolicyEventInput {
+  eventType: string
+  payload: unknown
+  paymentId?: string
+  sessionId?: string
+  decisionId?: string
+  txHash?: string
+}
+
+async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
+  await pool.query(
+    `INSERT INTO policy_events (event_type, payload, payment_id, session_id, decision_id, tx_hash)
+     VALUES ($1, $2, $3::uuid, $4, $5, $6)`,
+    [
+      input.eventType,
+      JSON.stringify(input.payload),
+      input.paymentId ?? null,
+      input.sessionId ?? null,
+      input.decisionId ?? null,
+      input.txHash ?? null,
+    ],
+  )
+}
+
+/** Get payment decision payload by decision_id (for enforcePayment at settlement). */
+async function getDecisionPayloadByDecisionId(
+  decisionId: string,
+): Promise<unknown | null> {
+  const { rows } = await pool.query(
+    `SELECT payload FROM policy_events
+     WHERE event_type = 'paymentDecisionCreated' AND decision_id = $1
+     ORDER BY created_at DESC LIMIT 1`,
+    [decisionId],
+  )
+  return rows[0]?.payload ?? null
+}
+
+/** Replay protection: already settled with this tx_hash? */
+async function hasSettlementForTxHash(txHash: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM policy_events
+     WHERE event_type = 'settlementVerified' AND tx_hash = $1 LIMIT 1`,
+    [txHash],
+  )
+  return rows.length > 0
+}
+
 // ---- Lot Queries ----
 
 async function getLot(lotId: string): Promise<Lot | null> {
@@ -261,6 +383,10 @@ export interface XrplPaymentIntentRecord {
   network: string
   status: 'pending' | 'resolved' | 'expired' | 'cancelled'
   expiresAt: Date
+  decisionId?: string
+  policyHash?: string
+  rail?: string
+  asset?: unknown
   xamanPayloadUuid?: string
   xamanDeepLink?: string
   xamanQrPng?: string
@@ -276,6 +402,10 @@ interface UpsertXrplPendingIntentInput {
   token: string
   network: string
   expiresAt: Date
+  decisionId?: string
+  policyHash?: string
+  rail?: string
+  asset?: unknown
 }
 
 async function upsertXrplPendingIntent(
@@ -283,9 +413,10 @@ async function upsertXrplPendingIntent(
 ): Promise<XrplPaymentIntentRecord> {
   const { rows } = await pool.query(
     `INSERT INTO xrpl_payment_intents (
-        plate_number, lot_id, session_id, amount, destination, token, network, status, expires_at, updated_at
+        plate_number, lot_id, session_id, amount, destination, token, network,
+        decision_id, policy_hash, rail, asset, status, expires_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, NOW())
       ON CONFLICT (plate_number, lot_id) WHERE status = 'pending'
       DO UPDATE SET
         session_id = EXCLUDED.session_id,
@@ -293,6 +424,10 @@ async function upsertXrplPendingIntent(
         destination = EXCLUDED.destination,
         token = EXCLUDED.token,
         network = EXCLUDED.network,
+        decision_id = EXCLUDED.decision_id,
+        policy_hash = EXCLUDED.policy_hash,
+        rail = EXCLUDED.rail,
+        asset = EXCLUDED.asset,
         expires_at = EXCLUDED.expires_at,
         xaman_payload_uuid = NULL,
         xaman_deep_link = NULL,
@@ -308,6 +443,10 @@ async function upsertXrplPendingIntent(
       input.destination,
       input.token,
       input.network,
+      input.decisionId ?? null,
+      input.policyHash ?? null,
+      input.rail ?? null,
+      input.asset != null ? JSON.stringify(input.asset) : null,
       input.expiresAt,
     ],
   )
@@ -450,6 +589,8 @@ function mapSession(row: any): SessionRecord {
     stripePaymentId: row.stripe_payment_id ?? undefined,
     txHash: row.tx_hash,
     status: row.status,
+    policyGrantId: row.policy_grant_id ?? undefined,
+    policyHash: row.policy_hash ?? undefined,
   }
 }
 
@@ -483,6 +624,10 @@ function mapXrplIntent(row: any): XrplPaymentIntentRecord {
     network: row.network,
     status: row.status,
     expiresAt: row.expires_at,
+    decisionId: row.decision_id ?? undefined,
+    policyHash: row.policy_hash ?? undefined,
+    rail: row.rail ?? undefined,
+    asset: row.asset ?? undefined,
     xamanPayloadUuid: row.xaman_payload_uuid ?? undefined,
     xamanDeepLink: row.xaman_deep_link ?? undefined,
     xamanQrPng: row.xaman_qr_png ?? undefined,
@@ -501,6 +646,13 @@ export const db = {
   getActiveSessionsByLot,
   endSession,
   getSessionHistory,
+  insertPolicyGrant,
+  updateSessionPolicyGrant,
+  getPolicyGrantExpiresAt,
+  getSpendTotalsMinor,
+  insertPolicyEvent,
+  getDecisionPayloadByDecisionId,
+  hasSettlementForTxHash,
   getLot,
   updateLot,
   beginIdempotency,

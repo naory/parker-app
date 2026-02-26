@@ -26,6 +26,21 @@ import {
   getXamanPayloadStatus,
   isXamanConfigured,
 } from '../services/xaman'
+import {
+  resolveEffectivePolicy,
+  evaluateEntryPolicy,
+  evaluatePaymentPolicy,
+  enforcePayment,
+} from '@parker/policy-core'
+import type {
+  Rail,
+  Asset,
+  PaymentPolicyContext,
+  PaymentPolicyDecision,
+  SettlementResult,
+} from '@parker/policy-core'
+// PaymentPolicyContext.quote uses MoneyMinor (amountMinor); .spend uses dayTotalMinor/sessionTotalMinor (policy-core minor-unit types)
+import { buildEntryPolicyStack } from '../services/policyStack'
 
 export const gateRouter = Router()
 
@@ -203,6 +218,10 @@ gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
       lotId: intent.lotId,
       expectedAmount: intent.amount,
       receiverWallet: intent.destination,
+      decisionId: intent.decisionId,
+      policyHash: intent.policyHash,
+      rail: intent.rail,
+      asset: intent.asset,
     })
 
     await db.attachXamanPayloadToIntent({
@@ -355,6 +374,37 @@ gateRouter.post('/entry', async (req, res) => {
       })
     }
 
+    // Entry-time policy: resolve stack, evaluate, reject if denied
+    const stack = buildEntryPolicyStack(lotId, plate)
+    const policy = resolveEffectivePolicy(stack)
+    const railsOffered: Rail[] = []
+    if (lot.paymentMethods?.includes('stripe')) railsOffered.push('stripe')
+    if (lot.paymentMethods?.includes('x402')) {
+      railsOffered.push(X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm')
+    }
+    if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm') // fallback so policy can still restrict
+    const xrplIssuer = process.env.XRPL_ISSUER ?? ''
+    const assetsOffered: Asset[] = [
+      { kind: 'IOU', currency: lot.currency, issuer: xrplIssuer || 'unknown' },
+    ]
+    const entryCtx = {
+      policy,
+      lotId,
+      operatorId: lot.operatorWallet,
+      nowISO: new Date().toISOString(),
+      railsOffered,
+      assetsOffered,
+    }
+    const grant = evaluateEntryPolicy(entryCtx)
+    const entryDenied = grant.allowedRails.length === 0 || grant.reasons.some((r) => r === 'LOT_NOT_ALLOWED' || r === 'GEO_NOT_ALLOWED' || r === 'RAIL_NOT_ALLOWED' || r === 'ASSET_NOT_ALLOWED')
+    if (entryDenied) {
+      return reply(403, {
+        error: 'Entry denied by policy',
+        reasons: grant.reasons,
+        grantId: grant.grantId,
+      })
+    }
+
     // WRITE-AHEAD: Mint parking NFT on Hedera FIRST (authoritative proof of entry)
     // The on-chain NFT is the leading indicator — if DB write fails, the NFT proves the car is parked.
     let tokenId: number | undefined
@@ -377,6 +427,30 @@ gateRouter.post('/entry', async (req, res) => {
         plateNumber: plate,
         lotId,
         tokenId,
+      })
+      // Persist entry policy grant and bind to session
+      const expiresAt = new Date(grant.expiresAtISO)
+      const { grantId } = await db.insertPolicyGrant({
+        sessionId: session.id,
+        policyHash: grant.policyHash,
+        allowedRails: grant.allowedRails,
+        allowedAssets: grant.allowedAssets,
+        maxSpend: grant.maxSpend ?? null,
+        requireApproval: grant.requireApproval ?? false,
+        reasons: grant.reasons,
+        expiresAt,
+      })
+      await db.updateSessionPolicyGrant(session.id, grantId, grant.policyHash)
+      session = { ...session, policyGrantId: grantId, policyHash: grant.policyHash }
+      await db.insertPolicyEvent({
+        eventType: 'entryGrantCreated',
+        payload: {
+          grantId,
+          policyHash: grant.policyHash,
+          sessionId: session.id,
+          expiresAtISO: grant.expiresAtISO,
+        },
+        sessionId: session.id,
       })
     } catch (dbErr) {
       // DB write failed but NFT was minted — session exists on-chain and can be recovered.
@@ -586,37 +660,110 @@ gateRouter.post('/exit', async (req, res) => {
     const currency = lot?.currency || 'USD'
     const sessionId = session?.id || `hedera-${fallbackSerial}`
 
-    // ---- Phase 2: Payment ----
+    // ---- Phase 2: Payment (with exit-time policy decision) ----
 
     if (fee > 0 && !(req as any).paymentVerified) {
-      const paymentOptions: PaymentOptions = {}
-
-      if (lot?.paymentMethods.includes('x402') ?? true) {
-        try {
-          const stablecoinAmount = convertToStablecoin(fee, currency)
-          paymentOptions.x402 = {
-            amount: stablecoinAmount.toFixed(6),
-            token: X402_STABLECOIN,
-            network: X402_NETWORK,
-            receiver: lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || '',
-          }
-        } catch (err) {
-          console.warn(`[x402] FX conversion failed for ${currency}:`, err)
-        }
+      // 6. Compute PaymentPolicyContext: quote in minor units, spend totals, grant validity
+      const decimals = 2 // fiat minor units (cents)
+      const quoteAmountMinor = Math.round(fee * 10 ** decimals).toString()
+      const spend = await db.getSpendTotalsMinor(plate, currency)
+      let sessionGrantId: string | undefined
+      if (session?.policyGrantId) {
+        const expiresAt = await db.getPolicyGrantExpiresAt(session.policyGrantId)
+        if (expiresAt && expiresAt > new Date()) sessionGrantId = session.policyGrantId
       }
 
+      const stack = buildEntryPolicyStack(lotId, plate)
+      const policy = resolveEffectivePolicy(stack)
+      const railsOffered: Rail[] = []
+      if (lot?.paymentMethods?.includes('stripe')) railsOffered.push('stripe')
+      if (lot?.paymentMethods?.includes('x402')) {
+        railsOffered.push(X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm')
+      }
+      if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm')
+      const xrplIssuer = process.env.XRPL_ISSUER ?? ''
+      const assetsOffered: Asset[] = [
+        { kind: 'IOU', currency, issuer: xrplIssuer || 'unknown' },
+      ]
+
+      const paymentCtx = {
+        policy,
+        lotId,
+        operatorId: lot?.operatorWallet,
+        nowISO: new Date().toISOString(),
+        quote: { amountMinor: quoteAmountMinor, currency },
+        spend: {
+          dayTotalMinor: spend.dayTotalMinor,
+          sessionTotalMinor: spend.sessionTotalMinor,
+        },
+        railsOffered,
+        assetsOffered,
+        sessionGrantId,
+      }
+      const decision = evaluatePaymentPolicy(
+        paymentCtx as unknown as PaymentPolicyContext,
+      )
+
+      if (decision.action === 'DENY') {
+        return reply(403, {
+          error: 'Payment denied by policy',
+          reasons: decision.reasons,
+          decisionId: decision.decisionId,
+        })
+      }
+
+      await db.insertPolicyEvent({
+        eventType: 'paymentDecisionCreated',
+        payload: decision,
+        sessionId,
+        decisionId: decision.decisionId,
+      })
+
+      // Build options for x402 and stripe; then filter by decision.rail when ALLOW
+      const x402Option =
+        (lot?.paymentMethods?.includes('x402') ?? true) &&
+        (() => {
+          try {
+            const stablecoinAmount = convertToStablecoin(fee, currency)
+            return {
+              amount: stablecoinAmount.toFixed(6),
+              token: X402_STABLECOIN,
+              network: X402_NETWORK,
+              receiver: lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || '',
+            }
+          } catch {
+            return null
+          }
+        })()
+      let stripeOption: { checkoutUrl: string } | null = null
       if (
         !usingFallback &&
-        lot?.paymentMethods.includes('stripe') &&
+        lot?.paymentMethods?.includes('stripe') &&
         isStripeEnabled() &&
         session
       ) {
         try {
-          const { checkoutUrl } = await createParkingCheckout(session, lot, fee)
-          paymentOptions.stripe = { checkoutUrl }
-        } catch (err) {
-          console.warn('[Stripe] Checkout creation failed:', err)
+          const policyBind = {
+            decisionId: decision.decisionId,
+            policyHash: decision.policyHash,
+            rail: decision.rail ?? 'stripe',
+          }
+          const { checkoutUrl } = await createParkingCheckout(session, lot, fee, policyBind)
+          stripeOption = { checkoutUrl }
+        } catch {
+          // ignore
         }
+      }
+
+      const paymentOptions: PaymentOptions = {}
+      const approvalRequired = decision.action === 'REQUIRE_APPROVAL'
+      if (decision.action === 'ALLOW' && decision.rail) {
+        if (decision.rail === 'stripe' && stripeOption) paymentOptions.stripe = stripeOption
+        else if ((decision.rail === 'xrpl' || decision.rail === 'evm') && x402Option)
+          paymentOptions.x402 = x402Option
+      } else {
+        if (x402Option) paymentOptions.x402 = x402Option
+        if (stripeOption) paymentOptions.stripe = stripeOption
       }
 
       if (paymentOptions.x402) {
@@ -628,7 +775,6 @@ gateRouter.post('/exit', async (req, res) => {
         } satisfies PaymentRequired
       }
 
-      // Register pending payment for on-chain watcher (EIP-681 QR flow)
       if (paymentOptions.x402) {
         addPendingPayment({
           plate,
@@ -640,8 +786,11 @@ gateRouter.post('/exit', async (req, res) => {
           feeCurrency: currency,
           tokenId: session?.tokenId,
           createdAt: Date.now(),
+          decisionId: decision.decisionId,
+          policyHash: decision.policyHash,
+          rail: decision.rail,
+          asset: decision.asset ? JSON.stringify(decision.asset) : undefined,
         })
-
         if (X402_NETWORK.startsWith('xrpl:')) {
           try {
             await db.upsertXrplPendingIntent({
@@ -653,6 +802,10 @@ gateRouter.post('/exit', async (req, res) => {
               token: paymentOptions.x402.token,
               network: paymentOptions.x402.network,
               expiresAt: new Date(Date.now() + 15 * 60_000),
+              decisionId: decision.decisionId,
+              policyHash: decision.policyHash,
+              rail: decision.rail,
+              asset: decision.asset,
             })
           } catch (persistErr) {
             console.warn(
@@ -663,7 +816,6 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
 
-      // Notify driver that payment is required (so the driver app shows a payment prompt)
       try {
         notifyDriver(plate, {
           type: 'payment_required',
@@ -673,9 +825,10 @@ gateRouter.post('/exit', async (req, res) => {
           paymentOptions,
           sessionId,
           lotId,
+          ...(approvalRequired && { approvalRequired: true }),
         })
       } catch {
-        // WS notification is best-effort
+        // best-effort
       }
 
       return reply(200, {
@@ -690,6 +843,7 @@ gateRouter.post('/exit', async (req, res) => {
         currency,
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
+        ...(approvalRequired && { approvalRequired: true }),
         ...(usingFallback && { fallback: 'hedera-mirror-node', hederaSerial: fallbackSerial }),
         ...(alprResult && { alpr: alprResult }),
       })
@@ -782,6 +936,62 @@ gateRouter.post('/exit', async (req, res) => {
         paymentFailuresTotal.inc({ reason: 'payment_reference_mismatch' })
         return reply(400, {
           error: 'Payment memo reference mismatch',
+        })
+      }
+
+      // Settlement enforcement: bind decision → settlement
+      if (pendingIntent.decisionId) {
+        const decisionPayload = await db.getDecisionPayloadByDecisionId(
+          pendingIntent.decisionId,
+        )
+        if (decisionPayload) {
+          const decision = decisionPayload as PaymentPolicyDecision
+          const settlement: SettlementResult = {
+            amount: transfer.amount.toString(),
+            asset:
+              (pendingIntent.asset as Asset) ?? ({
+                kind: 'IOU',
+                currency: pendingIntent.token ?? X402_STABLECOIN,
+                issuer: process.env.XRPL_ISSUER ?? '',
+              } as Asset),
+            rail: 'xrpl',
+            txHash: proofHash,
+            payer: transfer.from,
+          }
+          const enforcement = enforcePayment(decision, settlement)
+          if (!enforcement.allowed) {
+            await db.insertPolicyEvent({
+              eventType: 'enforcementFailed',
+              payload: {
+                decisionId: pendingIntent.decisionId,
+                reason: enforcement.reason,
+                settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
+              },
+              paymentId: pendingIntent.paymentId,
+              sessionId: pendingIntent.sessionId,
+              decisionId: pendingIntent.decisionId,
+              txHash: proofHash ?? undefined,
+            })
+            paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
+            return reply(403, {
+              error: 'Settlement rejected by policy',
+              reason: enforcement.reason,
+              decisionId: pendingIntent.decisionId,
+            })
+          }
+        }
+        await db.insertPolicyEvent({
+          eventType: 'settlementVerified',
+          payload: {
+            decisionId: pendingIntent.decisionId,
+            paymentId: pendingIntent.paymentId,
+            amount: transfer.amount.toString(),
+            rail: 'xrpl',
+          },
+          paymentId: pendingIntent.paymentId,
+          sessionId: pendingIntent.sessionId,
+          decisionId: pendingIntent.decisionId,
+          txHash: proofHash ?? undefined,
         })
       }
 

@@ -56,18 +56,22 @@ function mergeAssetAllowlist(
 function mergeTwo(base: Policy, override: Policy): Policy {
   return {
     version: POLICY_SCHEMA_VERSION,
-    vendorAllowlist: mergeAllowlist(base.vendorAllowlist, override.vendorAllowlist),
+    lotAllowlist: mergeAllowlist(base.lotAllowlist, override.lotAllowlist),
     geoAllowlist: mergeGeoAllowlist(base.geoAllowlist, override.geoAllowlist),
     railAllowlist: mergeRailAllowlist(base.railAllowlist, override.railAllowlist),
     assetAllowlist: mergeAssetAllowlist(base.assetAllowlist, override.assetAllowlist),
-    capPerTx: override.capPerTx !== undefined ? override.capPerTx : base.capPerTx,
-    capPerSession:
-      override.capPerSession !== undefined ? override.capPerSession : base.capPerSession,
-    capPerDay: override.capPerDay !== undefined ? override.capPerDay : base.capPerDay,
-    requireApprovalOver:
-      override.requireApprovalOver !== undefined
-        ? override.requireApprovalOver
-        : base.requireApprovalOver,
+    capPerTxMinor:
+      override.capPerTxMinor !== undefined ? override.capPerTxMinor : base.capPerTxMinor,
+    capPerSessionMinor:
+      override.capPerSessionMinor !== undefined
+        ? override.capPerSessionMinor
+        : base.capPerSessionMinor,
+    capPerDayMinor:
+      override.capPerDayMinor !== undefined ? override.capPerDayMinor : base.capPerDayMinor,
+    requireApprovalOverMinor:
+      override.requireApprovalOverMinor !== undefined
+        ? override.requireApprovalOverMinor
+        : base.requireApprovalOverMinor,
   };
 }
 

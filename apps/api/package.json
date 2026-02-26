@@ -14,6 +14,7 @@
     "@parker/core": "workspace:*",
     "@parker/hedera": "workspace:*",
     "@parker/observability": "workspace:*",
+    "@parker/policy-core": "workspace:^",
     "@parker/x402": "workspace:*",
     "@parker/x402-xrpl-settlement-adapter": "workspace:*",
     "cors": "^2.8.5",

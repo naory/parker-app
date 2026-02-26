@@ -24,7 +24,7 @@ function isoPlusMinutes(minutes: number, from: Date): string {
   return new Date(from.getTime() + minutes * 60_000).toISOString();
 }
 
-function pickFirstAllowed<T>(offered: T[], allowlist: T[] | undefined): T | undefined {
+function pickFirstAllowed<T>(offered: T[], allowlist?: T[]): T | undefined {
   if (!allowlist || allowlist.length === 0) return offered[0];
   return offered.find((x) => allowlist.includes(x));
 }
@@ -55,8 +55,8 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   const reasons: PolicyReasonCode[] = [];
   let requireApproval = false;
 
-  if (policy.vendorAllowlist && policy.vendorAllowlist.length > 0 && !policy.vendorAllowlist.includes(lotId)) {
-    return denyEntry(ctx, ["VENDOR_NOT_ALLOWED"]);
+  if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(lotId)) {
+    return denyEntry(ctx, ["LOT_NOT_ALLOWED"]);
   }
 
   if (policy.geoAllowlist && policy.geoAllowlist.length > 0) {
@@ -118,9 +118,9 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
     allowedRails,
     allowedAssets,
     maxSpend: {
-      perTx: policy.capPerTx,
-      perSession: policy.capPerSession,
-      perDay: policy.capPerDay,
+      perTxMinor: policy.capPerTxMinor,
+      perSessionMinor: policy.capPerSessionMinor,
+      perDayMinor: policy.capPerDayMinor,
     },
     expiresAtISO: isoPlusMinutes(60, new Date(nowISO)),
     vehicleId: ctx.vehicleId,
@@ -154,31 +154,34 @@ function denyEntry(ctx: EntryPolicyContext, reasons: PolicyReasonCode[]): Sessio
 export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyDecision {
   const { policy, quote, spend } = ctx;
 
-  if (policy.vendorAllowlist && policy.vendorAllowlist.length > 0 && !policy.vendorAllowlist.includes(ctx.lotId)) {
-    return denyPayment(ctx, ["VENDOR_NOT_ALLOWED"]);
+  if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(ctx.lotId)) {
+    return denyPayment(ctx, ["LOT_NOT_ALLOWED"]);
   }
 
-  if (policy.capPerTx !== undefined && quote.amount > policy.capPerTx) {
+  const quoteMinor = BigInt(quote.amountMinor);
+  if (policy.capPerTxMinor !== undefined && quoteMinor > BigInt(policy.capPerTxMinor)) {
     return denyPayment(ctx, ["CAP_EXCEEDED_TX"]);
   }
 
+  const sessionTotal = BigInt(spend.sessionTotalMinor);
   if (
-    policy.capPerSession !== undefined &&
-    spend.sessionTotal + quote.amount > policy.capPerSession
+    policy.capPerSessionMinor !== undefined &&
+    sessionTotal + quoteMinor > BigInt(policy.capPerSessionMinor)
   ) {
     return denyPayment(ctx, ["CAP_EXCEEDED_SESSION"]);
   }
 
+  const dayTotal = BigInt(spend.dayTotalMinor);
   if (
-    policy.capPerDay !== undefined &&
-    spend.dayTotal + quote.amount > policy.capPerDay
+    policy.capPerDayMinor !== undefined &&
+    dayTotal + quoteMinor > BigInt(policy.capPerDayMinor)
   ) {
     return denyPayment(ctx, ["CAP_EXCEEDED_DAY"]);
   }
 
   if (
-    policy.requireApprovalOver !== undefined &&
-    quote.amount > policy.requireApprovalOver
+    policy.requireApprovalOverMinor !== undefined &&
+    quoteMinor > BigInt(policy.requireApprovalOverMinor)
   ) {
     return requireApprovalPayment(ctx, ["PRICE_SPIKE", "NEEDS_APPROVAL"]);
   }
@@ -204,9 +207,9 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
     asset,
     reasons: ["OK"],
     maxSpend: {
-      perTx: policy.capPerTx,
-      perSession: policy.capPerSession,
-      perDay: policy.capPerDay,
+      perTxMinor: policy.capPerTxMinor,
+      perSessionMinor: policy.capPerSessionMinor,
+      perDayMinor: policy.capPerDayMinor,
     },
     expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
     decisionId,
@@ -261,15 +264,9 @@ function assetEqual(a: Asset, b: Asset): boolean {
   return false;
 }
 
-/** Parse amount string to number for comparison (assumes same currency/decimals). */
-function parseAmount(amount: string): number {
-  const n = parseFloat(amount);
-  return Number.isFinite(n) ? n : 0;
-}
-
 /**
  * Enforce that a settlement result complies with a prior payment policy decision.
- * Call after verifying the settlement (e.g. tx hash) elsewhere.
+ * Uses minor-unit comparison (BigInt); no float. settlement.amount must be minor units as string.
  */
 export function enforcePayment(
   decision: PaymentPolicyDecision,
@@ -287,8 +284,9 @@ export function enforcePayment(
     return { allowed: false, reason: "ASSET_NOT_ALLOWED" };
   }
 
-  const amount = parseAmount(settlement.amount);
-  if (decision.maxSpend?.perTx !== undefined && amount > decision.maxSpend.perTx) {
+  const amountMinor = BigInt(settlement.amount);
+  const capTx = decision.maxSpend?.perTxMinor;
+  if (capTx !== undefined && amountMinor > BigInt(capTx)) {
     return { allowed: false, reason: "CAP_EXCEEDED_TX" };
   }
 

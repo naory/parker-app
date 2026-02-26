@@ -51,6 +51,10 @@ export interface SessionRecord {
   stripePaymentId?: string
   txHash?: string
   status: 'active' | 'completed' | 'cancelled'
+  /** Policy grant from entry-time evaluation (nullable until grant persisted). */
+  policyGrantId?: string
+  /** Denormalized policy hash for quick checks. */
+  policyHash?: string
 }
 
 // ---- Payment types ----

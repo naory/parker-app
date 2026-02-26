@@ -6,6 +6,11 @@ import {
   type X402Challenge,
 } from "x402-xrpl-settlement-adapter";
 
+/**
+ * Verify XRPL settlement: replay-safe check of receipt vs challenge.
+ * Amount stance: strictExact — adapter ensures on-chain amount equals challenge;
+ * we return the challenge amount. Tolerant/partial payments not yet supported.
+ */
 export async function verifyXrplSettlement(params: {
   challenge: X402Challenge;
   receiptHeaderValue: string;
@@ -23,7 +28,7 @@ export async function verifyXrplSettlement(params: {
     now: params.now,
   });
 
-  return {
+  const output: SettlementVerifyOutput = {
     ok: true,
     idempotent: result.idempotent,
     txHash: result.receipt.txHash,
@@ -37,6 +42,8 @@ export async function verifyXrplSettlement(params: {
             currency: params.challenge.asset.currency,
             issuer: params.challenge.asset.issuer,
           },
+    amountVerification: "strictExact",
   };
+  return output;
 }
 

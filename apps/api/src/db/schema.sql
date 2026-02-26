@@ -20,21 +20,24 @@ CREATE INDEX idx_drivers_plate ON drivers(plate_number);
 
 -- Session index (mirrors on-chain ParkingNFT)
 CREATE TABLE sessions (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    token_id      BIGINT UNIQUE,
-    plate_number  VARCHAR(20) NOT NULL,
-    lot_id        VARCHAR(50) NOT NULL,
-    entry_time    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    exit_time     TIMESTAMPTZ,
-    fee_amount    DECIMAL(10, 6),
-    fee_currency  VARCHAR(10),
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    token_id          BIGINT UNIQUE,
+    plate_number      VARCHAR(20) NOT NULL,
+    lot_id            VARCHAR(50) NOT NULL,
+    entry_time        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    exit_time         TIMESTAMPTZ,
+    fee_amount        DECIMAL(10, 6),
+    fee_currency      VARCHAR(10),
     stripe_payment_id VARCHAR(255),
-    tx_hash       VARCHAR(66),
-    status        VARCHAR(20) DEFAULT 'active',
-    created_at    TIMESTAMPTZ DEFAULT NOW()
+    tx_hash           VARCHAR(66),
+    status            VARCHAR(20) DEFAULT 'active',
+    policy_grant_id   UUID,
+    policy_hash       VARCHAR(64),
+    created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_sessions_plate ON sessions(plate_number);
+CREATE INDEX idx_sessions_policy_grant ON sessions(policy_grant_id);
 CREATE INDEX idx_sessions_lot ON sessions(lot_id);
 CREATE INDEX idx_sessions_status ON sessions(status);
 
@@ -45,6 +48,27 @@ CREATE UNIQUE INDEX idx_sessions_one_active_per_plate
 -- Enforce valid session statuses
 ALTER TABLE sessions ADD CONSTRAINT chk_session_status
   CHECK (status IN ('active', 'completed', 'cancelled'));
+
+-- Policy grants (output of entry policy evaluation; one per session)
+CREATE TABLE policy_grants (
+    grant_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id       UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    policy_hash      VARCHAR(64) NOT NULL,
+    allowed_rails    JSONB NOT NULL,
+    allowed_assets   JSONB NOT NULL,
+    max_spend        JSONB,
+    require_approval BOOLEAN NOT NULL DEFAULT false,
+    reasons          JSONB NOT NULL,
+    expires_at       TIMESTAMPTZ NOT NULL,
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_policy_grants_session ON policy_grants(session_id);
+CREATE INDEX idx_policy_grants_expires_at ON policy_grants(expires_at);
+
+-- sessions.policy_grant_id references policy_grants.grant_id (nullable; set after grant is inserted)
+ALTER TABLE sessions ADD CONSTRAINT fk_sessions_policy_grant
+  FOREIGN KEY (policy_grant_id) REFERENCES policy_grants(grant_id);
 
 -- Parking lot configuration
 CREATE TABLE lots (
@@ -80,6 +104,7 @@ CREATE TABLE idempotency_keys (
 );
 
 -- Persistent XRPL/Xaman payment intents (survive API restarts)
+-- decision_id + policy_hash bind the payment to the exit-time policy decision for enforcement.
 CREATE TABLE xrpl_payment_intents (
     payment_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     plate_number    VARCHAR(20) NOT NULL,
@@ -89,6 +114,10 @@ CREATE TABLE xrpl_payment_intents (
     destination     VARCHAR(128) NOT NULL,
     token           VARCHAR(32) NOT NULL,
     network         VARCHAR(32) NOT NULL,
+    decision_id     VARCHAR(64),
+    policy_hash     VARCHAR(64),
+    rail            VARCHAR(20),
+    asset           JSONB,
     xaman_payload_uuid UUID,
     xaman_deep_link TEXT,
     xaman_qr_png    TEXT,
@@ -111,3 +140,22 @@ CREATE UNIQUE INDEX idx_xrpl_intents_unique_tx_hash
 CREATE UNIQUE INDEX idx_xrpl_intents_one_pending_per_plate_lot
   ON xrpl_payment_intents(plate_number, lot_id)
   WHERE status = 'pending';
+
+-- Policy audit trail: entry grants, payment decisions, settlement verification, enforcement failures.
+-- Used for enforcement (load decision by decision_id) and replay protection (tx_hash uniqueness for settlements).
+CREATE TABLE policy_events (
+    id           BIGSERIAL PRIMARY KEY,
+    event_type   VARCHAR(64) NOT NULL,
+    payment_id   UUID,
+    session_id   VARCHAR(64),
+    decision_id  VARCHAR(64),
+    tx_hash      VARCHAR(128),
+    payload      JSONB NOT NULL,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_policy_events_decision_id ON policy_events(decision_id);
+CREATE INDEX idx_policy_events_event_type ON policy_events(event_type);
+CREATE INDEX idx_policy_events_tx_hash ON policy_events(tx_hash) WHERE tx_hash IS NOT NULL;
+CREATE UNIQUE INDEX idx_policy_events_settlement_tx ON policy_events(tx_hash)
+  WHERE event_type = 'settlementVerified' AND tx_hash IS NOT NULL;

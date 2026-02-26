@@ -3,6 +3,10 @@
  * Pure types only — no DB, Express, or chain clients.
  */
 
+import type { Rail, Asset } from "@parker/settlement-core";
+
+export type { Rail, Asset };
+
 /** Semantic version of the policy schema. */
 export const POLICY_SCHEMA_VERSION = 1 as const;
 export type PolicySchemaVersion = typeof POLICY_SCHEMA_VERSION;
@@ -13,6 +17,7 @@ export type PolicyLayer = "platform" | "owner" | "vehicle" | "lot";
 /** Deny / approval reason codes (auditable). */
 export type PolicyReasonCode =
   | "OK"
+  | "LOT_NOT_ALLOWED"
   | "VENDOR_NOT_ALLOWED"
   | "GEO_NOT_ALLOWED"
   | "ASSET_NOT_ALLOWED"
@@ -26,13 +31,6 @@ export type PolicyReasonCode =
 
 export type PolicyDecisionAction = "ALLOW" | "DENY" | "REQUIRE_APPROVAL";
 
-export type Rail = "xrpl" | "evm" | "stripe" | "hosted";
-
-export type Asset =
-  | { kind: "XRP" }
-  | { kind: "IOU"; currency: string; issuer: string }
-  | { kind: "ERC20"; chainId: number; token: string };
-
 /** Geo circle for allowlist. */
 export interface GeoCircle {
   centerLat: number;
@@ -41,27 +39,37 @@ export interface GeoCircle {
 }
 
 /**
+ * Amount in minor units (integer). Use string for JSON safety and to avoid float/bigint serialization issues.
+ * E.g. USD cents, or 10^6 for USDC. All comparisons use BigInt(amountMinor).
+ */
+export interface MoneyMinor {
+  amountMinor: string;
+  currency: string;
+}
+
+/**
  * Versioned policy document (single layer).
  * Used as platform defaults or as overrides at owner / vehicle / lot.
+ * Caps and approval threshold are in minor units (string) for exact money logic.
  */
 export interface Policy {
   version: PolicySchemaVersion;
-  /** Lot/operator allowlist (empty or absent = no restriction). */
-  vendorAllowlist?: string[];
+  /** Allowed lot IDs (empty or absent = no restriction). Checked against lotId. */
+  lotAllowlist?: string[];
   /** Geo allowlist (vehicle must be within one circle). */
   geoAllowlist?: GeoCircle[];
   /** Allowed payment rails. */
   railAllowlist?: Rail[];
   /** Allowed assets (XRP, IOU, ERC20). */
   assetAllowlist?: Asset[];
-  /** Cap per single transaction (in quote currency minor units or normalized). */
-  capPerTx?: number;
-  /** Cap per session. */
-  capPerSession?: number;
-  /** Cap per day (rolling). */
-  capPerDay?: number;
-  /** If quote exceeds this, require explicit approval. */
-  requireApprovalOver?: number;
+  /** Cap per single transaction (minor units as string). */
+  capPerTxMinor?: string;
+  /** Cap per session (minor units as string). */
+  capPerSessionMinor?: string;
+  /** Cap per day rolling (minor units as string). */
+  capPerDayMinor?: string;
+  /** If quote amountMinor exceeds this, require explicit approval (minor units as string). */
+  requireApprovalOverMinor?: string;
 }
 
 /**
@@ -106,8 +114,8 @@ export interface SessionPolicyGrant {
   allowedRails: Rail[];
   /** Allowed assets for this session. */
   allowedAssets: Asset[];
-  /** Caps that will apply at payment time (if set). */
-  maxSpend?: { perTx?: number; perSession?: number; perDay?: number };
+  /** Caps that will apply at payment time (minor units as string). */
+  maxSpend?: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string };
   /** Grant validity expiry. */
   expiresAtISO: string;
   vehicleId?: string;
@@ -126,8 +134,10 @@ export interface PaymentPolicyContext {
   lotId: string;
   operatorId?: string;
   nowISO: string;
-  quote: { amount: number; currency: string };
-  spend: { dayTotal: number; sessionTotal: number };
+  /** Quote in minor units (e.g. cents, 10^6 for USDC). */
+  quote: MoneyMinor;
+  /** Cumulative spend in minor units (same currency as quote). */
+  spend: { dayTotalMinor: string; sessionTotalMinor: string };
   railsOffered: Rail[];
   assetsOffered: Asset[];
   riskScore?: number;
@@ -144,7 +154,8 @@ export interface PaymentPolicyDecision {
   rail?: Rail;
   asset?: Asset;
   reasons: PolicyReasonCode[];
-  maxSpend?: { perTx?: number; perSession?: number; perDay?: number };
+  /** Caps in minor units (string). Used by enforcePayment for exact comparison. */
+  maxSpend?: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string };
   expiresAtISO: string;
   decisionId: string;
   policyHash: string;
@@ -153,6 +164,7 @@ export interface PaymentPolicyDecision {
 /**
  * Minimal settlement result for enforcement (no chain client dependency).
  * Filled by the caller from chain/adapter output.
+ * amount: minor units as string (no decimal point); compare with BigInt(amount).
  */
 export interface SettlementResult {
   amount: string;

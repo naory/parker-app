@@ -14,10 +14,17 @@
 import type { PublicClient, Log } from 'viem'
 import { parseAbi } from 'viem'
 import { USDC_ADDRESSES } from '@parker/core'
+import { enforcePayment } from '@parker/policy-core'
+import type { PaymentPolicyDecision, SettlementResult, Asset } from '@parker/policy-core'
 
 import { db } from '../db'
 import { notifyGate, notifyDriver } from '../ws/index'
 import { isHederaEnabled, endParkingSessionOnHedera } from './hedera'
+
+const CHAIN_ID_BY_NETWORK: Record<string, number> = {
+  'base-sepolia': 84532,
+  'base': 8453,
+}
 
 // ---- Types ----
 
@@ -33,6 +40,12 @@ export interface PendingPayment {
   feeCurrency: string
   tokenId?: number
   createdAt: number
+  /** Policy decision binding (for enforcement at settlement) */
+  decisionId?: string
+  policyHash?: string
+  rail?: string
+  /** Asset as JSON string if needed (e.g. IOU/ERC20) */
+  asset?: string
 }
 
 // ---- State ----
@@ -89,6 +102,8 @@ export function startPaymentWatcher(publicClient: PublicClient | null, network =
 
   console.log(`[paymentWatcher] Watching USDC Transfer events on ${network} (${usdcAddress})`)
 
+  const chainId = CHAIN_ID_BY_NETWORK[network] ?? 0
+
   // Watch for Transfer events on the USDC contract
   publicClient.watchContractEvent({
     address: usdcAddress,
@@ -96,7 +111,7 @@ export function startPaymentWatcher(publicClient: PublicClient | null, network =
     eventName: 'Transfer',
     onLogs: (logs) => {
       for (const log of logs) {
-        handleTransferEvent(log)
+        handleTransferEvent(log, { usdcAddress, chainId })
       }
     },
     onError: (error) => {
@@ -121,10 +136,14 @@ export function startPaymentWatcher(publicClient: PublicClient | null, network =
 
 // ---- Event handler ----
 
-async function handleTransferEvent(log: Log) {
+async function handleTransferEvent(
+  log: Log,
+  ctx: { usdcAddress: string; chainId: number },
+) {
   const args = (log as any).args as { from: string; to: string; value: bigint } | undefined
   if (!args) return
 
+  const txHash = log.transactionHash ?? ''
   const { to, value } = args
 
   // Find a pending payment where the receiver matches
@@ -141,9 +160,63 @@ async function handleTransferEvent(log: Log) {
 
     if (diff > tolerance) continue
 
+    // Replay protection: same tx_hash must not settle twice
+    const alreadySettled = await db.hasSettlementForTxHash(txHash)
+    if (alreadySettled) {
+      console.warn(`[paymentWatcher] Replay ignored: tx=${txHash}`)
+      return
+    }
+
+    // Settlement enforcement when decision is bound
+    if (pending.decisionId) {
+      const decisionPayload = await db.getDecisionPayloadByDecisionId(pending.decisionId)
+      if (decisionPayload) {
+        const decision = decisionPayload as PaymentPolicyDecision
+        const asset: Asset = pending.asset
+          ? (JSON.parse(pending.asset) as Asset)
+          : { kind: 'ERC20', chainId: ctx.chainId, token: ctx.usdcAddress }
+        const settlement: SettlementResult = {
+          amount: value.toString(),
+          asset,
+          rail: 'evm',
+          txHash,
+          payer: args.from,
+        }
+        const enforcement = enforcePayment(decision, settlement)
+        if (!enforcement.allowed) {
+          await db.insertPolicyEvent({
+            eventType: 'enforcementFailed',
+            payload: {
+              decisionId: pending.decisionId,
+              reason: enforcement.reason,
+              settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
+            },
+            sessionId: pending.sessionId,
+            decisionId: pending.decisionId,
+            txHash,
+          })
+          console.warn(
+            `[paymentWatcher] Enforcement failed: session=${sessionId}, reason=${enforcement.reason}`,
+          )
+          return
+        }
+      }
+      await db.insertPolicyEvent({
+        eventType: 'settlementVerified',
+        payload: {
+          decisionId: pending.decisionId,
+          amount: value.toString(),
+          rail: 'evm',
+        },
+        sessionId: pending.sessionId,
+        decisionId: pending.decisionId,
+        txHash,
+      })
+    }
+
     // Match found — settle
     console.log(
-      `[paymentWatcher] On-chain payment matched: session=${sessionId}, tx=${log.transactionHash}`,
+      `[paymentWatcher] On-chain payment matched: session=${sessionId}, tx=${txHash}`,
     )
     pendingPayments.delete(sessionId)
 

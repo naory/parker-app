@@ -16,8 +16,15 @@ vi.mock('../../db', () => ({
     beginIdempotency: vi.fn(),
     completeIdempotency: vi.fn(),
     getActiveXrplPendingIntent: vi.fn(),
+    upsertXrplPendingIntent: vi.fn(),
     getXrplIntentByTxHash: vi.fn(),
     resolveXrplIntentByPaymentId: vi.fn(),
+    insertPolicyGrant: vi.fn(),
+    updateSessionPolicyGrant: vi.fn(),
+    getPolicyGrantExpiresAt: vi.fn(),
+    getSpendTotalsMinor: vi.fn(),
+    insertPolicyEvent: vi.fn(),
+    getDecisionPayloadByDecisionId: vi.fn(),
   },
 }))
 
@@ -111,6 +118,12 @@ describe('gate routes', () => {
     vi.mocked(db.completeIdempotency).mockResolvedValue(undefined)
     vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
     vi.mocked(db.resolveXrplIntentByPaymentId).mockResolvedValue(true)
+    vi.mocked(db.getSpendTotalsMinor).mockResolvedValue({ dayTotalMinor: '0', sessionTotalMinor: '0' })
+    vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(null)
+    vi.mocked(db.insertPolicyGrant).mockResolvedValue({ grantId: 'grant-1' } as any)
+    vi.mocked(db.updateSessionPolicyGrant).mockResolvedValue(undefined)
+    vi.mocked(db.insertPolicyEvent).mockResolvedValue(undefined)
+    vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(null)
   })
 
   describe('POST /api/gate/entry', () => {
@@ -199,6 +212,47 @@ describe('gate routes', () => {
 
       expect(res.status).toBe(409)
     })
+
+    it('entry creates policy grant and emits entryGrantCreated event', async () => {
+      vi.mocked(db.getLot).mockResolvedValue(mockLot)
+      vi.mocked(db.getDriverByPlate).mockResolvedValue(mockDriver)
+      vi.mocked(db.getActiveSession).mockResolvedValue(null)
+      vi.mocked(db.getActiveSessionsByLot).mockResolvedValue([])
+      vi.mocked(db.createSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(),
+        status: 'active',
+      } as any)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/entry')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(201)
+      expect(res.body.session.policyGrantId).toBe('grant-1')
+      expect(res.body.session.policyHash).toBeDefined()
+      expect(vi.mocked(db.insertPolicyGrant)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 's1',
+          policyHash: expect.any(String),
+          allowedRails: expect.any(Array),
+          allowedAssets: expect.any(Array),
+        }),
+      )
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'entryGrantCreated',
+          payload: expect.objectContaining({
+            grantId: 'grant-1',
+            sessionId: 's1',
+          }),
+          sessionId: 's1',
+        }),
+      )
+    })
   })
 
   describe('POST /api/gate/exit', () => {
@@ -232,6 +286,40 @@ describe('gate routes', () => {
         .send({ plateNumber: '1234567', lotId: 'LOT-1' })
 
       expect(res.status).toBe(404)
+    })
+
+    it('exit returns payment options and emits paymentDecisionCreated consistent with grant', async () => {
+      const futureExpiry = new Date(Date.now() + 30 * 60_000)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+        policyGrantId: 'grant-1',
+        policyHash: 'hash-1',
+      } as any)
+      vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(futureExpiry)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(200)
+      expect(res.body.paymentOptions).toBeDefined()
+      expect(res.body.paymentOptions.x402).toBeDefined()
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'paymentDecisionCreated',
+          decisionId: expect.any(String),
+          payload: expect.objectContaining({
+            action: expect.any(String),
+            policyHash: expect.any(String),
+          }),
+        }),
+      )
     })
 
     it('returns 400 for lot mismatch', async () => {
@@ -390,6 +478,67 @@ describe('gate routes', () => {
 
       expect(invalidVerificationContext.status).toBe(400)
       expect(invalidVerificationContext.body.error).toMatch(/XRPL payment verification required/i)
+      expect(vi.mocked(db.endSession)).not.toHaveBeenCalled()
+    })
+
+    it('settlement close requires matching decision: 403 when enforcement fails', async () => {
+      const paymentId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+        decisionId: 'dec-enforce-fail',
+        policyHash: 'ph1',
+        rail: 'xrpl',
+      } as any)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue({
+        action: 'ALLOW',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+        reasons: ['OK'],
+        maxSpend: { perTxMinor: '500' },
+        expiresAtISO: new Date().toISOString(),
+        decisionId: 'dec-enforce-fail',
+        policyHash: 'ph1',
+      } as any)
+      const expectedSmallest = BigInt(8 * 10 ** 6)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'E'.repeat(64))
+        .set('x-test-transfer-to', mockLot.operatorWallet)
+        .set('x-test-transfer-amount', expectedSmallest.toString())
+        .set('x-test-transfer-payment-reference', paymentId)
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(403)
+      expect(res.body.error).toMatch(/rejected by policy|Settlement rejected/i)
+      expect(res.body.reason).toBe('CAP_EXCEEDED_TX')
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'enforcementFailed',
+          decisionId: 'dec-enforce-fail',
+          payload: expect.objectContaining({ reason: 'CAP_EXCEEDED_TX' }),
+        }),
+      )
       expect(vi.mocked(db.endSession)).not.toHaveBeenCalled()
     })
   })

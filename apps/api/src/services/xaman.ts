@@ -19,6 +19,11 @@ interface XamanPaymentIntent {
   lotId: string
   expectedAmount: string
   receiverWallet: string
+  /** Policy decision binding (stored in memo for enforcement) */
+  decisionId?: string
+  policyHash?: string
+  rail?: string
+  asset?: unknown
 }
 
 const DEFAULT_XAMAN_API_URL = 'https://xumm.app'
@@ -67,7 +72,7 @@ export async function createXamanPayloadForPendingPayment(
     throw new Error('XRPL_ISSUER is required for non-XRP XRPL assets')
   }
 
-  const memoData = {
+  const memoData: Record<string, unknown> = {
     v: 1,
     paymentId: pending.paymentId,
     plate: pending.plate,
@@ -76,6 +81,10 @@ export async function createXamanPayloadForPendingPayment(
     amount: pending.expectedAmount,
     token,
   }
+  if (pending.decisionId) memoData.decisionId = pending.decisionId
+  if (pending.policyHash) memoData.policyHash = pending.policyHash
+  if (pending.rail) memoData.rail = pending.rail
+  if (pending.asset !== undefined) memoData.asset = pending.asset
 
   const amount = isXrp
     ? decimalToDrops(pending.expectedAmount)

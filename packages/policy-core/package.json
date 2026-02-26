@@ -5,18 +5,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup src/index.ts --dts --format esm --target es2022",
-    "test": "tsx --test test/**/*.test.ts"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@parker/tsconfig": "workspace:^",
     "@types/node": "^25.3.1",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "@parker/settlement-core": "workspace:*"
   }
 }

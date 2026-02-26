@@ -43,17 +43,31 @@ export function isStripeEnabled(): boolean {
  * @param session - The active parking session
  * @param lot - The lot configuration (provides currency)
  * @param feeAmount - Fee in the lot's local currency
+ * @param policyBind - Optional policy decision binding (decisionId, policyHash, rail) for enforcement
  * @returns The Stripe Checkout Session URL
  */
 export async function createParkingCheckout(
   session: SessionRecord,
   lot: Lot,
   feeAmount: number,
+  policyBind?: { decisionId: string; policyHash: string; rail: string },
 ): Promise<{ checkoutUrl: string; stripeSessionId: string }> {
   const stripe = getStripe()
 
   // Stripe expects amounts in the smallest currency unit (cents, agorot, etc.)
   const amountInSmallestUnit = Math.round(feeAmount * 100)
+
+  const metadata: Record<string, string> = {
+    sessionId: session.id,
+    plateNumber: session.plateNumber,
+    lotId: lot.id,
+    feeCurrency: lot.currency,
+  }
+  if (policyBind) {
+    metadata.decisionId = policyBind.decisionId
+    metadata.policyHash = policyBind.policyHash
+    metadata.rail = policyBind.rail
+  }
 
   const checkoutSession = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
@@ -71,12 +85,7 @@ export async function createParkingCheckout(
         quantity: 1,
       },
     ],
-    metadata: {
-      sessionId: session.id,
-      plateNumber: session.plateNumber,
-      lotId: lot.id,
-      feeCurrency: lot.currency,
-    },
+    metadata,
     success_url: `${STRIPE_SUCCESS_URL}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: STRIPE_CANCEL_URL,
   })
