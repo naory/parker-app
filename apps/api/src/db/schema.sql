@@ -109,7 +109,7 @@ CREATE TABLE xrpl_payment_intents (
     payment_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     plate_number    VARCHAR(20) NOT NULL,
     lot_id          VARCHAR(50) NOT NULL,
-    session_id      VARCHAR(64) NOT NULL,
+    session_id      UUID NOT NULL REFERENCES sessions(id),
     amount          DECIMAL(20, 6) NOT NULL,
     destination     VARCHAR(128) NOT NULL,
     token           VARCHAR(32) NOT NULL,

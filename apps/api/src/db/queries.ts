@@ -172,15 +172,14 @@ async function getPolicyGrantExpiresAt(grantId: string): Promise<Date | null> {
 }
 
 /**
- * Spend totals for a vehicle in a given currency (minor units).
- * dayTotalMinor: sum of completed sessions' fee_amount today, in minor units (2 decimals).
- * sessionTotalMinor: 0 for now (no partial payments).
+ * Spend totals for a vehicle in a given currency (fiat, raw from DB).
+ * Caller must convert to stablecoin minor units for policy (same unit as settlement).
+ * sessionTotalFiat: 0 for now (no partial payments).
  */
-async function getSpendTotalsMinor(
+async function getSpendTotalsFiat(
   plate: string,
   currency: string,
-): Promise<{ dayTotalMinor: string; sessionTotalMinor: string }> {
-  const decimals = 2 // fiat cents
+): Promise<{ dayTotalFiat: number; sessionTotalFiat: number }> {
   const { rows } = await pool.query(
     `SELECT COALESCE(SUM(fee_amount), 0) AS day_total
      FROM sessions
@@ -188,9 +187,8 @@ async function getSpendTotalsMinor(
        AND exit_time >= date_trunc('day', NOW())`,
     [plate, currency],
   )
-  const dayTotal = Number(rows[0]?.day_total ?? 0)
-  const dayTotalMinor = Math.round(dayTotal * 10 ** decimals).toString()
-  return { dayTotalMinor, sessionTotalMinor: '0' }
+  const dayTotalFiat = Number(rows[0]?.day_total ?? 0)
+  return { dayTotalFiat, sessionTotalFiat: 0 }
 }
 
 // ---- Policy events (audit + decision lookup for enforcement) ----
@@ -649,7 +647,7 @@ export const db = {
   insertPolicyGrant,
   updateSessionPolicyGrant,
   getPolicyGrantExpiresAt,
-  getSpendTotalsMinor,
+  getSpendTotalsFiat,
   insertPolicyEvent,
   getDecisionPayloadByDecisionId,
   hasSettlementForTxHash,

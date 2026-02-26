@@ -22,7 +22,7 @@ vi.mock('../../db', () => ({
     insertPolicyGrant: vi.fn(),
     updateSessionPolicyGrant: vi.fn(),
     getPolicyGrantExpiresAt: vi.fn(),
-    getSpendTotalsMinor: vi.fn(),
+    getSpendTotalsFiat: vi.fn(),
     insertPolicyEvent: vi.fn(),
     getDecisionPayloadByDecisionId: vi.fn(),
   },
@@ -54,7 +54,13 @@ vi.mock('@parker/alpr', () => ({
   recognizePlate: vi.fn(),
 }))
 
+vi.mock('@parker/policy-core', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@parker/policy-core')>()
+  return { ...mod, enforcePayment: vi.fn(mod.enforcePayment) }
+})
+
 import { db } from '../../db'
+import { enforcePayment } from '@parker/policy-core'
 import { isHederaEnabled, endParkingSessionOnHedera } from '../../services/hedera'
 
 const mockLot = {
@@ -118,7 +124,7 @@ describe('gate routes', () => {
     vi.mocked(db.completeIdempotency).mockResolvedValue(undefined)
     vi.mocked(db.getXrplIntentByTxHash).mockResolvedValue(null)
     vi.mocked(db.resolveXrplIntentByPaymentId).mockResolvedValue(true)
-    vi.mocked(db.getSpendTotalsMinor).mockResolvedValue({ dayTotalMinor: '0', sessionTotalMinor: '0' })
+    vi.mocked(db.getSpendTotalsFiat).mockResolvedValue({ dayTotalFiat: 0, sessionTotalFiat: 0 })
     vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(null)
     vi.mocked(db.insertPolicyGrant).mockResolvedValue({ grantId: 'grant-1' } as any)
     vi.mocked(db.updateSessionPolicyGrant).mockResolvedValue(undefined)
@@ -340,6 +346,84 @@ describe('gate routes', () => {
       expect(res.body.error).toMatch(/mismatch/i)
     })
 
+    it('golden path: fee → stablecoin quote → decision allow → verify settlement → enforce allow → close', async () => {
+      const paymentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      const decisionId = 'dec-golden'
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+        decisionId,
+        policyHash: 'ph-golden',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      } as any)
+      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue({
+        action: 'ALLOW',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        reasons: ['OK'],
+        maxSpend: { perTxMinor: '10000000' },
+        expiresAtISO: new Date(Date.now() + 5 * 60_000).toISOString(),
+        decisionId,
+        policyHash: 'ph-golden',
+      } as any)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+      vi.mocked(db.endSession).mockResolvedValue({
+        id: 's1',
+        tokenId: 123,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        exitTime: new Date(),
+        feeAmount: 8,
+        feeCurrency: 'USD',
+        status: 'completed',
+      } as any)
+
+      const app = createApp()
+      const expectedSmallest = BigInt(8 * 10 ** 6)
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'G'.repeat(64))
+        .set('x-test-transfer-to', mockLot.operatorWallet)
+        .set('x-test-transfer-amount', expectedSmallest.toString())
+        .set('x-test-transfer-payment-reference', paymentId)
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(200)
+      expect(vi.mocked(db.getDecisionPayloadByDecisionId)).toHaveBeenCalledWith(decisionId)
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'settlementVerified',
+          decisionId,
+          paymentId,
+        }),
+      )
+      expect(vi.mocked(db.resolveXrplIntentByPaymentId)).toHaveBeenCalledWith({
+        paymentId,
+        txHash: 'G'.repeat(64),
+      })
+      expect(vi.mocked(db.endSession)).toHaveBeenCalled()
+    })
+
     it('closes session and burns Hedera NFT on verified XRPL payment', async () => {
       vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
         paymentId: '11111111-1111-4111-8111-111111111111',
@@ -497,6 +581,7 @@ describe('gate routes', () => {
         decisionId: 'dec-enforce-fail',
         policyHash: 'ph1',
         rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
       } as any)
       vi.mocked(db.getActiveSession).mockResolvedValue({
         id: 's1',
@@ -506,16 +591,21 @@ describe('gate routes', () => {
         status: 'active',
       } as any)
       vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
-      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue({
+      const enforceFailDecision = {
         action: 'ALLOW',
         rail: 'xrpl',
-        asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
         reasons: ['OK'],
-        maxSpend: { perTxMinor: '500' },
+        maxSpend: { perTxMinor: '1' },
         expiresAtISO: new Date().toISOString(),
         decisionId: 'dec-enforce-fail',
         policyHash: 'ph1',
-      } as any)
+      }
+      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(enforceFailDecision as any)
+      vi.mocked(enforcePayment).mockReturnValueOnce({
+        allowed: false,
+        reason: 'CAP_EXCEEDED_TX',
+      })
       const expectedSmallest = BigInt(8 * 10 ** 6)
 
       const app = createApp()
@@ -529,6 +619,17 @@ describe('gate routes', () => {
         .set('x-test-transfer-payment-reference', paymentId)
         .send({ plateNumber: '1234567', lotId: 'LOT-1' })
 
+      expect(vi.mocked(db.getDecisionPayloadByDecisionId)).toHaveBeenCalledWith(
+        'dec-enforce-fail',
+      )
+      expect(vi.mocked(enforcePayment)).toHaveBeenCalledWith(
+        enforceFailDecision,
+        expect.objectContaining({
+          amount: expectedSmallest.toString(),
+          rail: 'xrpl',
+          asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        }),
+      )
       expect(res.status).toBe(403)
       expect(res.body.error).toMatch(/rejected by policy|Settlement rejected/i)
       expect(res.body.reason).toBe('CAP_EXCEEDED_TX')
@@ -536,6 +637,80 @@ describe('gate routes', () => {
         expect.objectContaining({
           eventType: 'enforcementFailed',
           decisionId: 'dec-enforce-fail',
+          payload: expect.objectContaining({ reason: 'CAP_EXCEEDED_TX' }),
+        }),
+      )
+      expect(vi.mocked(db.endSession)).not.toHaveBeenCalled()
+    })
+
+    it('cap exceeded: settlement would verify but enforcement blocks (perTxMinor)', async () => {
+      const paymentId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+      vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
+        paymentId,
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        sessionId: 's1',
+        amount: '8.000000',
+        destination: mockLot.operatorWallet,
+        token: 'USDC',
+        network: 'xrpl:testnet',
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 60_000),
+        decisionId: 'dec-cap',
+        policyHash: 'ph-cap',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      } as any)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+      const capExceededDecision = {
+        action: 'ALLOW',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        reasons: ['OK'],
+        maxSpend: { perTxMinor: '1' },
+        expiresAtISO: new Date(Date.now() + 5 * 60_000).toISOString(),
+        decisionId: 'dec-cap',
+        policyHash: 'ph-cap',
+      }
+      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(capExceededDecision as any)
+      vi.mocked(enforcePayment).mockReturnValueOnce({
+        allowed: false,
+        reason: 'CAP_EXCEEDED_TX',
+      })
+      const settlementAmount = BigInt(8 * 10 ** 6)
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .set('x-test-payment-verified', 'true')
+        .set('x-test-payment-rail', 'xrpl')
+        .set('x-test-payment-tx-hash', 'F'.repeat(64))
+        .set('x-test-transfer-to', mockLot.operatorWallet)
+        .set('x-test-transfer-amount', settlementAmount.toString())
+        .set('x-test-transfer-payment-reference', paymentId)
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(vi.mocked(enforcePayment)).toHaveBeenCalledWith(
+        capExceededDecision,
+        expect.objectContaining({
+          amount: settlementAmount.toString(),
+          rail: 'xrpl',
+        }),
+      )
+      expect(res.status).toBe(403)
+      expect(res.body.error).toMatch(/rejected by policy|Settlement rejected/i)
+      expect(res.body.reason).toBe('CAP_EXCEEDED_TX')
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'enforcementFailed',
+          decisionId: 'dec-cap',
           payload: expect.objectContaining({ reason: 'CAP_EXCEEDED_TX' }),
         }),
       )

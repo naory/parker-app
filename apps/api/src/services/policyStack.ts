@@ -36,7 +36,10 @@ export function getPlatformPolicy(): Policy {
 }
 
 /**
- * Build stack for entry. Today: platform only; operator/vehicle/lot can be added when we have DB sources.
+ * Build stack for entry. Today: platform only.
+ * TODO: merge in from DB when available:
+ *   - lot policy overrides (e.g. lot-specific caps / rail allowlist)
+ *   - vehicle/owner policy overrides (e.g. by plate or wallet)
  */
 export function buildEntryPolicyStack(_lotId: string, _plateNumber?: string): PolicyStack {
   return {

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { createHash } from 'node:crypto'
 import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
-import { calculateFee, normalizePlate } from '@parker/core'
+import { calculateFee, normalizePlate, USDC_ADDRESSES } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
 
 import { db } from '../db'
@@ -12,7 +12,52 @@ import {
   endParkingSessionOnHedera,
   findActiveSessionOnHedera,
 } from '../services/hedera'
-import { convertToStablecoin, X402_STABLECOIN, X402_NETWORK } from '../services/pricing'
+import {
+  convertToStablecoin,
+  X402_STABLECOIN,
+  X402_NETWORK,
+} from '../services/pricing'
+
+/** Stablecoin minor units (e.g. USDC 6 decimals). Policy money = settlement units. */
+const STABLECOIN_DECIMALS = 6
+
+/** Chain IDs for EVM policy asset (must match settlement verification). */
+const CHAIN_ID_BY_NETWORK: Record<string, number> = {
+  'base-sepolia': 84532,
+  base: 8453,
+}
+
+/**
+ * Build assets offered for policy from what the settlement adapter can verify.
+ * XRPL: XRP (optional) + IOU (XRPL_IOU_CURRENCY + XRPL_ISSUER). EVM: ERC20 (chainId + token).
+ */
+function buildAssetsOffered(railsOffered: Rail[]): Asset[] {
+  const assets: Asset[] = []
+  if (railsOffered.includes('xrpl')) {
+    if (process.env.XRPL_ALLOW_XRP === 'true') {
+      assets.push({ kind: 'XRP' })
+    }
+    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
+    const issuer = process.env.XRPL_ISSUER
+    if (issuer) {
+      assets.push({ kind: 'IOU', currency: iouCurrency, issuer })
+    }
+  }
+  if (railsOffered.includes('evm')) {
+    const network = X402_NETWORK
+    const chainId = CHAIN_ID_BY_NETWORK[network] ?? 0
+    const token = USDC_ADDRESSES[network]
+    if (chainId && token) {
+      assets.push({ kind: 'ERC20', chainId, token })
+    }
+  }
+  if (assets.length === 0) {
+    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
+    assets.push({ kind: 'IOU', currency: iouCurrency, issuer: process.env.XRPL_ISSUER ?? '' })
+  }
+  return assets
+}
+
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
 import {
   addPendingPayment,
@@ -39,7 +84,7 @@ import type {
   PaymentPolicyDecision,
   SettlementResult,
 } from '@parker/policy-core'
-// PaymentPolicyContext.quote uses MoneyMinor (amountMinor); .spend uses dayTotalMinor/sessionTotalMinor (policy-core minor-unit types)
+// PaymentPolicyContext: quote + spend in stablecoin minor units (same as settlement); policy caps = stablecoin minor
 import { buildEntryPolicyStack } from '../services/policyStack'
 
 export const gateRouter = Router()
@@ -383,10 +428,7 @@ gateRouter.post('/entry', async (req, res) => {
       railsOffered.push(X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm')
     }
     if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm') // fallback so policy can still restrict
-    const xrplIssuer = process.env.XRPL_ISSUER ?? ''
-    const assetsOffered: Asset[] = [
-      { kind: 'IOU', currency: lot.currency, issuer: xrplIssuer || 'unknown' },
-    ]
+    const assetsOffered = buildAssetsOffered(railsOffered)
     const entryCtx = {
       policy,
       lotId,
@@ -396,8 +438,7 @@ gateRouter.post('/entry', async (req, res) => {
       assetsOffered,
     }
     const grant = evaluateEntryPolicy(entryCtx)
-    const entryDenied = grant.allowedRails.length === 0 || grant.reasons.some((r) => r === 'LOT_NOT_ALLOWED' || r === 'GEO_NOT_ALLOWED' || r === 'RAIL_NOT_ALLOWED' || r === 'ASSET_NOT_ALLOWED')
-    if (entryDenied) {
+    if (grant.allowedRails.length === 0 || grant.allowedAssets.length === 0) {
       return reply(403, {
         error: 'Entry denied by policy',
         reasons: grant.reasons,
@@ -663,10 +704,20 @@ gateRouter.post('/exit', async (req, res) => {
     // ---- Phase 2: Payment (with exit-time policy decision) ----
 
     if (fee > 0 && !(req as any).paymentVerified) {
-      // 6. Compute PaymentPolicyContext: quote in minor units, spend totals, grant validity
-      const decimals = 2 // fiat minor units (cents)
-      const quoteAmountMinor = Math.round(fee * 10 ** decimals).toString()
-      const spend = await db.getSpendTotalsMinor(plate, currency)
+      // 6. Compute PaymentPolicyContext in stablecoin minor units (same as settlement enforcement)
+      const quoteStablecoin = convertToStablecoin(fee, currency)
+      const quoteAmountMinor = Math.round(
+        quoteStablecoin * 10 ** STABLECOIN_DECIMALS,
+      ).toString()
+      const spendFiat = await db.getSpendTotalsFiat(plate, currency)
+      const dayTotalMinor = Math.round(
+        convertToStablecoin(spendFiat.dayTotalFiat, currency) *
+          10 ** STABLECOIN_DECIMALS,
+      ).toString()
+      const sessionTotalMinor = Math.round(
+        convertToStablecoin(spendFiat.sessionTotalFiat, currency) *
+          10 ** STABLECOIN_DECIMALS,
+      ).toString()
       let sessionGrantId: string | undefined
       if (session?.policyGrantId) {
         const expiresAt = await db.getPolicyGrantExpiresAt(session.policyGrantId)
@@ -681,28 +732,20 @@ gateRouter.post('/exit', async (req, res) => {
         railsOffered.push(X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm')
       }
       if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm')
-      const xrplIssuer = process.env.XRPL_ISSUER ?? ''
-      const assetsOffered: Asset[] = [
-        { kind: 'IOU', currency, issuer: xrplIssuer || 'unknown' },
-      ]
+      const assetsOffered = buildAssetsOffered(railsOffered)
 
-      const paymentCtx = {
+      const paymentCtx: PaymentPolicyContext = {
         policy,
         lotId,
         operatorId: lot?.operatorWallet,
         nowISO: new Date().toISOString(),
         quote: { amountMinor: quoteAmountMinor, currency },
-        spend: {
-          dayTotalMinor: spend.dayTotalMinor,
-          sessionTotalMinor: spend.sessionTotalMinor,
-        },
+        spend: { dayTotalMinor, sessionTotalMinor },
         railsOffered,
         assetsOffered,
         sessionGrantId,
       }
-      const decision = evaluatePaymentPolicy(
-        paymentCtx as unknown as PaymentPolicyContext,
-      )
+      const decision = evaluatePaymentPolicy(paymentCtx)
 
       if (decision.action === 'DENY') {
         return reply(403, {
@@ -791,12 +834,12 @@ gateRouter.post('/exit', async (req, res) => {
           rail: decision.rail,
           asset: decision.asset ? JSON.stringify(decision.asset) : undefined,
         })
-        if (X402_NETWORK.startsWith('xrpl:')) {
+        if (X402_NETWORK.startsWith('xrpl:') && session?.id) {
           try {
             await db.upsertXrplPendingIntent({
               plateNumber: plate,
               lotId,
-              sessionId,
+              sessionId: session.id,
               amount: paymentOptions.x402.amount,
               destination: paymentOptions.x402.receiver,
               token: paymentOptions.x402.token,
