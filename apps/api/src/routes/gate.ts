@@ -133,7 +133,7 @@ gateRouter.post('/xrpl/xaman-intent', async (req, res) => {
         const session = await db.getActiveSession(plate)
         if (!session) {
           return res.status(404).json({
-            error: 'No active session found. Request /api/gate/exit first.',
+            error: 'No active session found for this plate/lot.',
           })
         }
         if (session.lotId !== lotId) {

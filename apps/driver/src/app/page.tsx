@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import Link from 'next/link'
 
-import type { PaymentOptions } from '@parker/core'
+import { isXrplNetwork, type PaymentOptions } from '@parker/core'
 import { WalletButton } from '@/components/WalletButton'
 import { SessionCard } from '@/components/SessionCard'
 import { PaymentPrompt } from '@/components/PaymentPrompt'
@@ -18,8 +18,16 @@ export default function Dashboard() {
   const { isAuthenticated, signIn, signing, token } = useAuth()
   const [sessionKey, setSessionKey] = useState(0)
   const [mounted, setMounted] = useState(false)
+  const [isXrplRailDeployment, setIsXrplRailDeployment] = useState(false)
 
   useEffect(() => setMounted(true), [])
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+    fetch(`${apiUrl}/api/gate/xrpl/xaman-config`)
+      .then((r) => r.json())
+      .then((data) => setIsXrplRailDeployment(isXrplNetwork(data?.network)))
+      .catch(() => setIsXrplRailDeployment(false))
+  }, [])
   const [pendingPayment, setPendingPayment] = useState<{
     fee: number
     currency: string
@@ -54,7 +62,7 @@ export default function Dashboard() {
     return null
   }
 
-  if (!isConnected) {
+  if (!isConnected && !isXrplRailDeployment) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-6">
         <h1 className="mb-2 text-3xl text-parker-800">
@@ -85,11 +93,11 @@ export default function Dashboard() {
             />
           )}
         </div>
-        <WalletButton />
+        {!isXrplRailDeployment && <WalletButton />}
       </header>
 
       {/* Sign-in prompt */}
-      {!isAuthenticated && (
+      {!isXrplRailDeployment && !isAuthenticated && (
         <button
           onClick={signIn}
           disabled={signing}

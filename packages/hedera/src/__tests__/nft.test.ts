@@ -52,11 +52,12 @@ import { mintParkingNFT, burnParkingNFT, getNftInfo } from '../nft'
 describe('mintParkingNFT', () => {
   it('mints and returns serial + txId', async () => {
     const client = {} as any
+    const encryptionKey = Buffer.alloc(32, 0)
     const result = await mintParkingNFT(client, '0.0.999', {
-      plateNumber: 'ABC123',
+      plateHash: '0x' + 'ab'.repeat(32),
       lotId: 'LOT-1',
       entryTime: 1700000000,
-    })
+    }, encryptionKey)
     expect(result.serial).toBe(42)
     expect(result.transactionId).toContain('0.0.123')
   })

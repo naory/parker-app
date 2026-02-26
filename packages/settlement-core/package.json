@@ -1,0 +1,25 @@
+{
+  "name": "@parker/settlement-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "x402-xrpl-settlement-adapter": "^0.1.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm --target es2022",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@parker/tsconfig": "workspace:^",
+    "@types/node": "^25.3.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "@parker/tsconfig": "workspace:*",
+    "@types/node": "^25.3.1",
     "typescript": "^5.4.0",
     "vitest": "^4.0.18"
   }

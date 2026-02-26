@@ -12,8 +12,11 @@ Country operator runs one deployment; lots are per-operator configs.
 
 Parker replaces fragmented centralized parking app flows (e.g., municipal/operator apps such as Pango, EasyPark, or RingGo) with a trustless, blockchain-based system. Parking tickets are NFTs, payments happen via x402 (Base or XRPL) or Stripe (credit card) — each lot configures its own local currency and accepted payment methods. Verification is instant — no more "communication errors" at the gate.
 
+
 For the architectural rationale, see `docs/WHY_BLOCKCHAIN.md`.
 For operational and fallback scenarios, see `docs/use-cases.md`.
+
+Parker is being extended with a **policy layer** designed for the emerging agentic economy (vehicles/agents with wallets). The policy and settlement boundaries now live as in-repo workspace packages (`@parker/policy-core`, `@parker/settlement-core`) so they can evolve quickly and still be extracted cleanly later.
 
 ### White-Label Deployment Model
 
@@ -46,6 +49,12 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 │  (Wallet)    │         │  (Express.js)    │         │  (Lot Ops) │
 └──────┬──────┘         └───────┬──────────┘         └────────────┘
        │                        │
+       │                        ▼
+       │              ┌────────────────────┐
+       │              │   Policy Layer      │
+       │              │  (caps/allowlists)  │
+       │              └─────────┬──────────┘
+       │                        │
        ▼                        ▼
 ┌──────────────┐        ┌──────────────┐
 │ x402 rail(s) │        │    Stripe    │
@@ -73,7 +82,8 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 
 1. Car approaches exit, plate scanned again
 2. System finds active parking session and calculates fee in the lot's local currency
-3. API returns **payment options** based on lot config:
+3. API returns **payment options** based on lot config *and policy evaluation*:
+   - **Policy decision** — evaluates caps (per-tx/session/day), vendor allowlists, asset allowlists (XRP / IOUs like RLUSD), rail preferences, and risk signals; may require explicit approval for anomalous scenarios
    - **x402 (crypto)** — fee converted via FX; payment proof verified per selected network (EVM tx hash or XRPL tx hash). XRPL UX is Xaman-first with manual tx-hash fallback.
    - **Stripe (card)** — Stripe Checkout session created in the lot's currency; driver redirected to Stripe-hosted page; webhook confirms payment
 4. On payment confirmation (either rail): parking NFT burned on **Hedera**, session closed in DB
@@ -125,7 +135,8 @@ The app has three main components:
 - **Hedera integration** via `@parker/hedera` (`@hashgraph/sdk`) — mints parking NFTs on entry, burns on exit
 - **Optional Base integration** via viem — DriverRegistry reads/sync on Base Sepolia
 - **Multi-currency payment** — each lot defines its own currency (USD, EUR, GBP, etc.) and accepted payment methods
-- **x402 payment middleware** — returns HTTP 402 with crypto amount (FX-converted from local currency); verifies payment proof on retry via network-aware adapters (EVM + XRPL)
+- **Policy layer (in progress)** — evaluates whether a payment is allowed (caps/allowlists/rails) and produces an auditable decision bound to each paymentId
+- **x402 payment middleware** — returns HTTP 402 with crypto amount (FX-converted from local currency) *after policy evaluation*; verifies payment proof on retry via network-aware adapters (EVM + XRPL)
 - **Stripe Checkout** — creates payment sessions in the lot's local currency; webhook-driven session closure
 - **Pricing service** — currency-agnostic FX conversion via configurable rates (`FX_RATE_{FROM}_{TO}` env vars)
 - WebSocket server for real-time gate and driver events
@@ -360,6 +371,8 @@ parker-app/
 │   ├── alpr/            # License plate recognition (Google Vision + country-aware plate normalization)
 │   ├── x402/            # x402 middleware/client + EVM verification primitives
 │   ├── x402-xrpl-settlement-adapter/ # XRPL settlement verification adapter
+│   ├── policy-core/      # (WIP) pure policy evaluation/enforcement (no DB/Express/chain clients)
+│   ├── settlement-core/  # (WIP) rail-agnostic settlement verification interface + implementations
 │   ├── observability/   # Structured logging + metrics primitives
 │   ├── tsconfig/        # Shared TypeScript configs
 │   └── eslint-config/   # Shared ESLint config
@@ -444,6 +457,7 @@ The API enforces the following invariants:
 - **Fee guardrails** — `calculateFee` handles zero/negative duration (minimum 1 billing increment), zero rate (fee = 0), and division-by-zero on billing interval (defaults to 15 min). Fees are rounded to 6 decimal places and capped by `maxDailyFee`
 - **Multi-currency** — each lot defines its own currency (ISO 4217); the pricing service converts to stablecoin via configurable FX rates for the x402 rail, while Stripe charges in the lot's native currency directly
 - **Payment-before-close** — the exit route returns payment options without closing the session; the session is only closed after payment confirmation (`X-PAYMENT` proof for x402, or Stripe webhook)
+- **Policy-gated payments** — payment options and settlement constraints are derived from a policy decision (caps/allowlists/rails), producing consistent and auditable outcomes
 - **Network-aware x402 verification** — `X-PAYMENT` proofs are verified according to `X402_NETWORK` (EVM receipt parsing or XRPL payment verification)
 - **Idempotent webhooks** — Stripe webhook handler checks if the session is still active before closing, preventing duplicate closures on retry
 - **Idempotent gate mutations** — `POST /api/gate/entry` and `POST /api/gate/exit` require an `Idempotency-Key`; duplicate retries return the cached response without re-running side effects
@@ -476,6 +490,10 @@ The API enforces the following invariants:
 - [x] Gate-side session cache for offline-capable exit validation
 - [x] On-chain payment verification (EVM via viem + XRPL via settlement adapter)
 - [x] XRPL payment verification via x402 settlement adapter (with manual tx-hash UX fallback)
+- [ ] Policy layer: define policy schema + decision logging (audit trail)
+- [ ] Policy layer: enforce per-tx/per-session/per-day spend caps + vendor/geo allowlists
+- [ ] Policy layer: rail selection (XRPL/EVM/Stripe) with explicit fallback rules
+- [ ] Policy layer: bind policy decision hash to paymentId and re-check at settlement verification time
 - [ ] Live FX rate feed (CoinGecko / Circle API) to replace static env var rates
 - [x] Wallet authentication (SIWE / EIP-4361)
 - [ ] Push notifications
