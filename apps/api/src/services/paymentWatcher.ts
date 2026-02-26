@@ -14,10 +14,10 @@
 import type { PublicClient, Log } from 'viem'
 import { parseAbi } from 'viem'
 import { USDC_ADDRESSES } from '@parker/core'
-import { enforcePayment } from '@parker/policy-core'
-import type { PaymentPolicyDecision, SettlementResult, Asset } from '@parker/policy-core'
+import type { SettlementResult, Asset } from '@parker/policy-core'
 
 import { db } from '../db'
+import { enforceOrReject } from './policy/enforceOrReject'
 import { notifyGate, notifyDriver } from '../ws/index'
 import { isHederaEnabled, endParkingSessionOnHedera } from './hedera'
 
@@ -163,56 +163,64 @@ async function handleTransferEvent(
     // Replay protection: same tx_hash must not settle twice
     const alreadySettled = await db.hasSettlementForTxHash(txHash)
     if (alreadySettled) {
+      await db.insertPolicyEvent({
+        eventType: 'riskSignal',
+        payload: { signal: 'REPLAY_SUSPICION', txHash, sessionId: pending.sessionId },
+        sessionId: pending.sessionId,
+        txHash,
+      })
       console.warn(`[paymentWatcher] Replay ignored: tx=${txHash}`)
       return
     }
 
-    // Settlement enforcement when decision is bound
-    if (pending.decisionId) {
-      const decisionPayload = await db.getDecisionPayloadByDecisionId(pending.decisionId)
-      if (decisionPayload) {
-        const decision = decisionPayload as PaymentPolicyDecision
-        const asset: Asset = pending.asset
-          ? (JSON.parse(pending.asset) as Asset)
-          : { kind: 'ERC20', chainId: ctx.chainId, token: ctx.usdcAddress }
-        const settlement: SettlementResult = {
-          amount: value.toString(),
-          asset,
-          rail: 'evm',
-          txHash,
-          payer: args.from,
-        }
-        const enforcement = enforcePayment(decision, settlement)
-        if (!enforcement.allowed) {
-          await db.insertPolicyEvent({
-            eventType: 'enforcementFailed',
-            payload: {
-              decisionId: pending.decisionId,
-              reason: enforcement.reason,
-              settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
-            },
-            sessionId: pending.sessionId,
-            decisionId: pending.decisionId,
-            txHash,
-          })
-          console.warn(
-            `[paymentWatcher] Enforcement failed: session=${sessionId}, reason=${enforcement.reason}`,
-          )
-          return
-        }
-      }
+    // Universal enforcement: never close session unless enforcement passes (require decisionId)
+    if (!pending.decisionId) {
+      console.warn(`[paymentWatcher] No decisionId bound — skipping settlement for session=${sessionId}`)
+      return
+    }
+    const asset: Asset = pending.asset
+      ? (JSON.parse(pending.asset) as Asset)
+      : { kind: 'ERC20', chainId: ctx.chainId, token: ctx.usdcAddress }
+    const settlement: SettlementResult = {
+      amount: value.toString(),
+      asset,
+      rail: 'evm',
+      txHash,
+      payer: args.from,
+    }
+    const enforcement = await enforceOrReject(
+      db.getDecisionPayloadByDecisionId.bind(db),
+      pending.decisionId,
+      settlement,
+    )
+    if (!enforcement.allowed) {
       await db.insertPolicyEvent({
-        eventType: 'settlementVerified',
+        eventType: 'enforcementFailed',
         payload: {
           decisionId: pending.decisionId,
-          amount: value.toString(),
-          rail: 'evm',
+          reason: enforcement.reason,
+          settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
         },
         sessionId: pending.sessionId,
         decisionId: pending.decisionId,
         txHash,
       })
+      console.warn(
+        `[paymentWatcher] Enforcement failed: session=${sessionId}, reason=${enforcement.reason}`,
+      )
+      return
     }
+    await db.insertPolicyEvent({
+      eventType: 'settlementVerified',
+      payload: {
+        decisionId: pending.decisionId,
+        amount: value.toString(),
+        rail: 'evm',
+      },
+      sessionId: pending.sessionId,
+      decisionId: pending.decisionId,
+      txHash,
+    })
 
     // Match found — settle
     console.log(

@@ -240,6 +240,19 @@ async function hasSettlementForTxHash(txHash: string): Promise<boolean> {
   return rows.length > 0
 }
 
+/** Median fee (completed sessions) for a lot — for amount-anomaly risk signal. */
+async function getMedianFeeForLot(lotId: string): Promise<number | null> {
+  const { rows } = await pool.query<{ median: string | number | null }>(
+    `SELECT (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY fee_amount))::float AS median
+     FROM sessions WHERE lot_id = $1 AND status = 'completed' AND fee_amount IS NOT NULL`,
+    [lotId],
+  )
+  const val = rows[0]?.median
+  if (val == null) return null
+  const n = typeof val === 'number' ? val : parseFloat(String(val))
+  return Number.isFinite(n) ? n : null
+}
+
 // ---- Lot Queries ----
 
 async function getLot(lotId: string): Promise<Lot | null> {
@@ -651,6 +664,7 @@ export const db = {
   insertPolicyEvent,
   getDecisionPayloadByDecisionId,
   hasSettlementForTxHash,
+  getMedianFeeForLot,
   getLot,
   updateLot,
   beginIdempotency,

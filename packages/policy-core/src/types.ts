@@ -27,7 +27,8 @@ export type PolicyReasonCode =
   | "CAP_EXCEEDED_DAY"
   | "PRICE_SPIKE"
   | "RISK_HIGH"
-  | "NEEDS_APPROVAL";
+  | "NEEDS_APPROVAL"
+  | "GRANT_EXPIRED";
 
 export type PolicyDecisionAction = "ALLOW" | "DENY" | "REQUIRE_APPROVAL";
 
@@ -159,6 +160,8 @@ export interface PaymentPolicyDecision {
   expiresAtISO: string;
   decisionId: string;
   policyHash: string;
+  /** Session grant id used for this decision, or null if no grant was used (audit invariant). */
+  sessionGrantId?: string | null;
 }
 
 /**

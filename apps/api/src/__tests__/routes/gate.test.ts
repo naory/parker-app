@@ -25,6 +25,7 @@ vi.mock('../../db', () => ({
     getSpendTotalsFiat: vi.fn(),
     insertPolicyEvent: vi.fn(),
     getDecisionPayloadByDecisionId: vi.fn(),
+    getMedianFeeForLot: vi.fn(),
   },
 }))
 
@@ -130,6 +131,7 @@ describe('gate routes', () => {
     vi.mocked(db.updateSessionPolicyGrant).mockResolvedValue(undefined)
     vi.mocked(db.insertPolicyEvent).mockResolvedValue(undefined)
     vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(null)
+    vi.mocked(db.getMedianFeeForLot).mockResolvedValue(null)
   })
 
   describe('POST /api/gate/entry', () => {
@@ -425,6 +427,7 @@ describe('gate routes', () => {
     })
 
     it('closes session and burns Hedera NFT on verified XRPL payment', async () => {
+      const decisionId = 'dec-hedera-close'
       vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({
         paymentId: '11111111-1111-4111-8111-111111111111',
         plateNumber: '1234567',
@@ -436,6 +439,18 @@ describe('gate routes', () => {
         network: 'xrpl:testnet',
         status: 'pending',
         expiresAt: new Date(Date.now() + 60_000),
+        decisionId,
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      } as any)
+      vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue({
+        action: 'ALLOW',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        reasons: ['OK'],
+        maxSpend: { perTxMinor: '10000000' },
+        expiresAtISO: new Date(Date.now() + 5 * 60_000).toISOString(),
+        decisionId,
+        policyHash: 'ph-hedera',
       } as any)
       vi.mocked(isHederaEnabled).mockReturnValue(true)
       vi.mocked(db.getActiveSession).mockResolvedValue({

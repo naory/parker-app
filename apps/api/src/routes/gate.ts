@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { createHash } from 'node:crypto'
 import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
-import { calculateFee, normalizePlate, USDC_ADDRESSES } from '@parker/core'
+import { calculateFee, normalizePlate } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
 
 import { db } from '../db'
@@ -18,46 +18,6 @@ import {
   X402_NETWORK,
 } from '../services/pricing'
 
-/** Stablecoin minor units (e.g. USDC 6 decimals). Policy money = settlement units. */
-const STABLECOIN_DECIMALS = 6
-
-/** Chain IDs for EVM policy asset (must match settlement verification). */
-const CHAIN_ID_BY_NETWORK: Record<string, number> = {
-  'base-sepolia': 84532,
-  base: 8453,
-}
-
-/**
- * Build assets offered for policy from what the settlement adapter can verify.
- * XRPL: XRP (optional) + IOU (XRPL_IOU_CURRENCY + XRPL_ISSUER). EVM: ERC20 (chainId + token).
- */
-function buildAssetsOffered(railsOffered: Rail[]): Asset[] {
-  const assets: Asset[] = []
-  if (railsOffered.includes('xrpl')) {
-    if (process.env.XRPL_ALLOW_XRP === 'true') {
-      assets.push({ kind: 'XRP' })
-    }
-    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
-    const issuer = process.env.XRPL_ISSUER
-    if (issuer) {
-      assets.push({ kind: 'IOU', currency: iouCurrency, issuer })
-    }
-  }
-  if (railsOffered.includes('evm')) {
-    const network = X402_NETWORK
-    const chainId = CHAIN_ID_BY_NETWORK[network] ?? 0
-    const token = USDC_ADDRESSES[network]
-    if (chainId && token) {
-      assets.push({ kind: 'ERC20', chainId, token })
-    }
-  }
-  if (assets.length === 0) {
-    const iouCurrency = process.env.XRPL_IOU_CURRENCY ?? 'RLUSD'
-    assets.push({ kind: 'IOU', currency: iouCurrency, issuer: process.env.XRPL_ISSUER ?? '' })
-  }
-  return assets
-}
-
 import { isStripeEnabled, createParkingCheckout } from '../services/stripe'
 import {
   addPendingPayment,
@@ -71,21 +31,16 @@ import {
   getXamanPayloadStatus,
   isXamanConfigured,
 } from '../services/xaman'
-import {
-  resolveEffectivePolicy,
-  evaluateEntryPolicy,
-  evaluatePaymentPolicy,
-  enforcePayment,
-} from '@parker/policy-core'
+import { evaluateEntryPolicy, resolveEffectivePolicy } from '@parker/policy-core'
 import type {
   Rail,
   Asset,
-  PaymentPolicyContext,
   PaymentPolicyDecision,
   SettlementResult,
 } from '@parker/policy-core'
 // PaymentPolicyContext: quote + spend in stablecoin minor units (same as settlement); policy caps = stablecoin minor
 import { buildEntryPolicyStack } from '../services/policyStack'
+import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
 
 export const gateRouter = Router()
 
@@ -704,65 +659,46 @@ gateRouter.post('/exit', async (req, res) => {
     // ---- Phase 2: Payment (with exit-time policy decision) ----
 
     if (fee > 0 && !(req as any).paymentVerified) {
-      // 6. Compute PaymentPolicyContext in stablecoin minor units (same as settlement enforcement)
-      const quoteStablecoin = convertToStablecoin(fee, currency)
-      const quoteAmountMinor = Math.round(
-        quoteStablecoin * 10 ** STABLECOIN_DECIMALS,
-      ).toString()
-      const spendFiat = await db.getSpendTotalsFiat(plate, currency)
-      const dayTotalMinor = Math.round(
-        convertToStablecoin(spendFiat.dayTotalFiat, currency) *
-          10 ** STABLECOIN_DECIMALS,
-      ).toString()
-      const sessionTotalMinor = Math.round(
-        convertToStablecoin(spendFiat.sessionTotalFiat, currency) *
-          10 ** STABLECOIN_DECIMALS,
-      ).toString()
-      let sessionGrantId: string | undefined
-      if (session?.policyGrantId) {
-        const expiresAt = await db.getPolicyGrantExpiresAt(session.policyGrantId)
-        if (expiresAt && expiresAt > new Date()) sessionGrantId = session.policyGrantId
+      const medianFee = await db.getMedianFeeForLot(lotId)
+      if (
+        medianFee != null &&
+        medianFee > 0 &&
+        fee > 2 * medianFee &&
+        session?.id
+      ) {
+        await db.insertPolicyEvent({
+          eventType: 'riskSignal',
+          payload: { signal: 'AMOUNT_ANOMALY', fee, medianFee, lotId },
+          sessionId: session.id,
+        })
       }
-
-      const stack = buildEntryPolicyStack(lotId, plate)
-      const policy = resolveEffectivePolicy(stack)
-      const railsOffered: Rail[] = []
-      if (lot?.paymentMethods?.includes('stripe')) railsOffered.push('stripe')
-      if (lot?.paymentMethods?.includes('x402')) {
-        railsOffered.push(X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm')
-      }
-      if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm')
-      const assetsOffered = buildAssetsOffered(railsOffered)
-
-      const paymentCtx: PaymentPolicyContext = {
-        policy,
+      const finalDecision = await evaluateExitPolicy({
+        session,
+        lot,
+        fee,
+        currency,
+        plate,
         lotId,
-        operatorId: lot?.operatorWallet,
-        nowISO: new Date().toISOString(),
-        quote: { amountMinor: quoteAmountMinor, currency },
-        spend: { dayTotalMinor, sessionTotalMinor },
-        railsOffered,
-        assetsOffered,
-        sessionGrantId,
-      }
-      const decision = evaluatePaymentPolicy(paymentCtx)
+        getSpendTotalsFiat: db.getSpendTotalsFiat.bind(db),
+        getPolicyGrantExpiresAt: db.getPolicyGrantExpiresAt.bind(db),
+      })
 
-      if (decision.action === 'DENY') {
+      if (finalDecision.action === 'DENY') {
         return reply(403, {
           error: 'Payment denied by policy',
-          reasons: decision.reasons,
-          decisionId: decision.decisionId,
+          reasons: finalDecision.reasons,
+          decisionId: finalDecision.decisionId,
         })
       }
 
       await db.insertPolicyEvent({
         eventType: 'paymentDecisionCreated',
-        payload: decision,
+        payload: finalDecision,
         sessionId,
-        decisionId: decision.decisionId,
+        decisionId: finalDecision.decisionId,
       })
 
-      // Build options for x402 and stripe; then filter by decision.rail when ALLOW
+      // Build options for x402 and stripe; then filter by finalDecision.rail when ALLOW
       const x402Option =
         (lot?.paymentMethods?.includes('x402') ?? true) &&
         (() => {
@@ -787,9 +723,9 @@ gateRouter.post('/exit', async (req, res) => {
       ) {
         try {
           const policyBind = {
-            decisionId: decision.decisionId,
-            policyHash: decision.policyHash,
-            rail: decision.rail ?? 'stripe',
+            decisionId: finalDecision.decisionId,
+            policyHash: finalDecision.policyHash,
+            rail: finalDecision.rail ?? 'stripe',
           }
           const { checkoutUrl } = await createParkingCheckout(session, lot, fee, policyBind)
           stripeOption = { checkoutUrl }
@@ -799,10 +735,10 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       const paymentOptions: PaymentOptions = {}
-      const approvalRequired = decision.action === 'REQUIRE_APPROVAL'
-      if (decision.action === 'ALLOW' && decision.rail) {
-        if (decision.rail === 'stripe' && stripeOption) paymentOptions.stripe = stripeOption
-        else if ((decision.rail === 'xrpl' || decision.rail === 'evm') && x402Option)
+      const approvalRequired = finalDecision.action === 'REQUIRE_APPROVAL'
+      if (finalDecision.action === 'ALLOW' && finalDecision.rail) {
+        if (finalDecision.rail === 'stripe' && stripeOption) paymentOptions.stripe = stripeOption
+        else if ((finalDecision.rail === 'xrpl' || finalDecision.rail === 'evm') && x402Option)
           paymentOptions.x402 = x402Option
       } else {
         if (x402Option) paymentOptions.x402 = x402Option
@@ -829,10 +765,10 @@ gateRouter.post('/exit', async (req, res) => {
           feeCurrency: currency,
           tokenId: session?.tokenId,
           createdAt: Date.now(),
-          decisionId: decision.decisionId,
-          policyHash: decision.policyHash,
-          rail: decision.rail,
-          asset: decision.asset ? JSON.stringify(decision.asset) : undefined,
+          decisionId: finalDecision.decisionId,
+          policyHash: finalDecision.policyHash,
+          rail: finalDecision.rail,
+          asset: finalDecision.asset ? JSON.stringify(finalDecision.asset) : undefined,
         })
         if (X402_NETWORK.startsWith('xrpl:') && session?.id) {
           try {
@@ -845,10 +781,10 @@ gateRouter.post('/exit', async (req, res) => {
               token: paymentOptions.x402.token,
               network: paymentOptions.x402.network,
               expiresAt: new Date(Date.now() + 15 * 60_000),
-              decisionId: decision.decisionId,
-              policyHash: decision.policyHash,
-              rail: decision.rail,
-              asset: decision.asset,
+              decisionId: finalDecision.decisionId,
+              policyHash: finalDecision.policyHash,
+              rail: finalDecision.rail,
+              asset: finalDecision.asset,
             })
           } catch (persistErr) {
             console.warn(
@@ -949,6 +885,13 @@ gateRouter.post('/exit', async (req, res) => {
       if (proofHash) {
         const existingByTx = await db.getXrplIntentByTxHash(proofHash)
         if (existingByTx && existingByTx.paymentId !== pendingIntent.paymentId) {
+          await db.insertPolicyEvent({
+            eventType: 'riskSignal',
+            payload: { signal: 'REPLAY_SUSPICION', txHash: proofHash, paymentId: pendingIntent.paymentId },
+            paymentId: pendingIntent.paymentId,
+            sessionId: pendingIntent.sessionId,
+            txHash: proofHash ?? undefined,
+          })
           paymentFailuresTotal.inc({ reason: 'xrpl_replay_detected' })
           return reply(409, {
             error: 'XRPL transaction hash has already been used',
@@ -957,6 +900,18 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       if (transfer.to !== pendingIntent.destination) {
+        await db.insertPolicyEvent({
+          eventType: 'riskSignal',
+          payload: {
+            signal: 'UNKNOWN_DESTINATION_WALLET',
+            expected: pendingIntent.destination,
+            actual: transfer.to,
+            paymentId: pendingIntent.paymentId,
+          },
+          paymentId: pendingIntent.paymentId,
+          sessionId: pendingIntent.sessionId,
+          txHash: proofHash ?? undefined,
+        })
         paymentFailuresTotal.inc({ reason: 'receiver_mismatch' })
         return reply(400, {
           error: 'Payment receiver mismatch',
@@ -982,47 +937,45 @@ gateRouter.post('/exit', async (req, res) => {
         })
       }
 
-      // Settlement enforcement: bind decision → settlement
+      // Settlement enforcement (universal path): never close session unless enforcement passes
+      const settlement: SettlementResult = {
+        amount: transfer.amount.toString(),
+        asset:
+          (pendingIntent.asset as Asset) ?? ({
+            kind: 'IOU',
+            currency: pendingIntent.token ?? X402_STABLECOIN,
+            issuer: process.env.XRPL_ISSUER ?? '',
+          } as Asset),
+        rail: 'xrpl',
+        txHash: proofHash,
+        payer: transfer.from,
+      }
+      const enforcement = await enforceOrReject(
+        db.getDecisionPayloadByDecisionId.bind(db),
+        pendingIntent.decisionId ?? undefined,
+        settlement,
+      )
+      if (!enforcement.allowed) {
+        await db.insertPolicyEvent({
+          eventType: 'enforcementFailed',
+          payload: {
+            decisionId: pendingIntent.decisionId,
+            reason: enforcement.reason,
+            settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
+          },
+          paymentId: pendingIntent.paymentId,
+          sessionId: pendingIntent.sessionId,
+          decisionId: pendingIntent.decisionId ?? undefined,
+          txHash: proofHash ?? undefined,
+        })
+        paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
+        return reply(403, {
+          error: 'Settlement rejected by policy',
+          reason: enforcement.reason,
+          decisionId: pendingIntent.decisionId,
+        })
+      }
       if (pendingIntent.decisionId) {
-        const decisionPayload = await db.getDecisionPayloadByDecisionId(
-          pendingIntent.decisionId,
-        )
-        if (decisionPayload) {
-          const decision = decisionPayload as PaymentPolicyDecision
-          const settlement: SettlementResult = {
-            amount: transfer.amount.toString(),
-            asset:
-              (pendingIntent.asset as Asset) ?? ({
-                kind: 'IOU',
-                currency: pendingIntent.token ?? X402_STABLECOIN,
-                issuer: process.env.XRPL_ISSUER ?? '',
-              } as Asset),
-            rail: 'xrpl',
-            txHash: proofHash,
-            payer: transfer.from,
-          }
-          const enforcement = enforcePayment(decision, settlement)
-          if (!enforcement.allowed) {
-            await db.insertPolicyEvent({
-              eventType: 'enforcementFailed',
-              payload: {
-                decisionId: pendingIntent.decisionId,
-                reason: enforcement.reason,
-                settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
-              },
-              paymentId: pendingIntent.paymentId,
-              sessionId: pendingIntent.sessionId,
-              decisionId: pendingIntent.decisionId,
-              txHash: proofHash ?? undefined,
-            })
-            paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
-            return reply(403, {
-              error: 'Settlement rejected by policy',
-              reason: enforcement.reason,
-              decisionId: pendingIntent.decisionId,
-            })
-          }
-        }
         await db.insertPolicyEvent({
           eventType: 'settlementVerified',
           payload: {

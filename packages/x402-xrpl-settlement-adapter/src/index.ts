@@ -31,7 +31,11 @@ function decodeHexMemoField(value: unknown): string | undefined {
   }
 }
 
-function extractPaymentReference(tx: Record<string, unknown>): string | undefined {
+/**
+ * Extract paymentId from XRPL tx JSON memo (MemoType: x402:xrpl:v1).
+ * Exported for unit tests and for use by Parker API when binding paymentId to settlement.
+ */
+export function extractPaymentIdFromTxJson(tx: Record<string, unknown>): string | undefined {
   const memos = tx.Memos
   if (!Array.isArray(memos)) return undefined
 
@@ -54,6 +58,10 @@ function extractPaymentReference(tx: Record<string, unknown>): string | undefine
     }
   }
   return undefined
+}
+
+function extractPaymentReference(tx: Record<string, unknown>): string | undefined {
+  return extractPaymentIdFromTxJson(tx)
 }
 
 /**
