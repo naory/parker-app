@@ -506,6 +506,7 @@ gateRouter.post('/entry', async (req, res) => {
       token_id: session.tokenId,
     })
 
+    // reply() calls completeIdempotency(responseBody), so retries return this same body (session.policyGrantId, policyHash, approvalRequiredBeforePayment)
     return reply(201, { session, ...(alprResult && { alpr: alprResult }) })
   } catch (error) {
     console.error('Gate entry failed:', error)

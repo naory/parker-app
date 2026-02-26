@@ -136,7 +136,7 @@ interface InsertPolicyGrantInput {
 async function insertPolicyGrant(input: InsertPolicyGrantInput): Promise<{ grantId: string }> {
   const { rows } = await pool.query(
     `INSERT INTO policy_grants (session_id, policy_hash, allowed_rails, allowed_assets, max_spend, require_approval, reasons, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8)
      RETURNING grant_id`,
     [
       input.sessionId,
@@ -238,7 +238,7 @@ export interface InsertPolicyEventInput {
 async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
   await pool.query(
     `INSERT INTO policy_events (event_type, payload, payment_id, session_id, decision_id, tx_hash)
-     VALUES ($1, $2, $3::uuid, $4, $5, $6)`,
+     VALUES ($1, $2::jsonb, $3::uuid, $4, $5, $6)`,
     [
       input.eventType,
       JSON.stringify(input.payload),
@@ -269,7 +269,7 @@ export interface InsertPolicyDecisionInput {
 async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<void> {
   await pool.query(
     `INSERT INTO policy_decisions (decision_id, policy_hash, session_grant_id, chosen_rail, chosen_asset, quote_minor, quote_currency, expires_at, action, reasons, require_approval, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+     VALUES ($1, $2, $3::uuid, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb)`,
     [
       input.decisionId,
       input.policyHash,
