@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
 import { calculateFee, normalizePlate } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
@@ -14,6 +14,8 @@ import {
 } from '../services/hedera'
 import {
   convertToStablecoin,
+  getFxRate,
+  getStablecoinBaseCurrency,
   X402_STABLECOIN,
   X402_NETWORK,
 } from '../services/pricing'
@@ -37,8 +39,9 @@ import type {
   Asset,
   PaymentPolicyDecision,
   SettlementResult,
+  SettlementQuote,
+  FiatMoneyMinor,
 } from '@parker/policy-core'
-// PaymentPolicyContext: quote + spend in stablecoin minor units (same as settlement); policy caps = stablecoin minor
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
 
@@ -692,9 +695,75 @@ gateRouter.post('/exit', async (req, res) => {
         })
       }
 
+      const priceFiat: FiatMoneyMinor | undefined = finalDecision.priceFiat ?? {
+        amountMinor: String(Math.round(fee * 100)),
+        currency,
+      }
+      const expiresAtQuotes = new Date(Date.now() + 15 * 60_000).toISOString()
+      const settlementQuotes: SettlementQuote[] = []
+
+      if (fee > 0 && priceFiat) {
+        if (
+          !usingFallback &&
+          lot?.paymentMethods?.includes('stripe') &&
+          isStripeEnabled() &&
+          session
+        ) {
+          settlementQuotes.push({
+            quoteId: randomUUID(),
+            rail: 'stripe',
+            amount: { amount: priceFiat.amountMinor, decimals: 2 },
+            destination: '',
+            expiresAt: expiresAtQuotes,
+          })
+        }
+        try {
+          const stablecoinAmount = convertToStablecoin(fee, currency)
+          const xrplOrEvm: Rail = X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm'
+          const baseCurrency = getStablecoinBaseCurrency()
+          const rate = getFxRate(currency, baseCurrency)
+          const atomicStablecoin = String(Math.round(stablecoinAmount * 1_000_000))
+          const operatorWallet = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
+          if (operatorWallet) {
+            settlementQuotes.push({
+              quoteId: randomUUID(),
+              rail: xrplOrEvm,
+              asset: finalDecision.asset ?? (xrplOrEvm === 'xrpl'
+                ? { kind: 'IOU', currency: X402_STABLECOIN, issuer: process.env.XRPL_ISSUER ?? '' }
+                : { kind: 'ERC20', chainId: X402_NETWORK.startsWith('base') ? 8453 : 84532, token: '0xUSDC' }),
+              amount: { amount: atomicStablecoin, decimals: 6 },
+              destination: operatorWallet,
+              expiresAt: expiresAtQuotes,
+              fx: {
+                baseCurrency: currency,
+                quoteAssetSymbol: X402_STABLECOIN,
+                rate: String(rate),
+                asOf: new Date().toISOString(),
+                provider: 'env',
+              },
+            })
+          }
+        } catch {
+          // no x402 quote if FX not configured
+        }
+      }
+
+      const decisionToPersist: PaymentPolicyDecision = {
+        ...finalDecision,
+        priceFiat,
+        settlementQuotes: settlementQuotes.length > 0 ? settlementQuotes : undefined,
+        chosen:
+          finalDecision.action === 'ALLOW' && finalDecision.rail && settlementQuotes.length > 0
+            ? (() => {
+                const q = settlementQuotes.find((sq) => sq.rail === finalDecision.rail)
+                return q ? { rail: q.rail, quoteId: q.quoteId } : undefined
+              })()
+            : undefined,
+      }
+
       await db.insertPolicyEvent({
         eventType: 'paymentDecisionCreated',
-        payload: finalDecision,
+        payload: decisionToPersist,
         sessionId,
         decisionId: finalDecision.decisionId,
       })
@@ -994,6 +1063,7 @@ gateRouter.post('/exit', async (req, res) => {
         rail: 'xrpl',
         txHash: proofHash,
         payer: transfer.from,
+        destination: pendingIntent.destination,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

@@ -7,6 +7,9 @@ import type { Rail, Asset } from "@parker/settlement-core";
 
 export type { Rail, Asset };
 
+/** ISO 4217 currency code (e.g. "USD", "EUR"). */
+export type ISO4217 = string;
+
 /** Semantic version of the policy schema. */
 export const POLICY_SCHEMA_VERSION = 1 as const;
 export type PolicySchemaVersion = typeof POLICY_SCHEMA_VERSION;
@@ -39,9 +42,55 @@ export interface GeoCircle {
   radiusMeters: number;
 }
 
+// ---- Canonical money primitives ----
+
 /**
- * Amount in minor units (integer). Use string for JSON safety and to avoid float/bigint serialization issues.
+ * Fiat amount in minor units (e.g. USD cents). String for JSON/bigint safety.
+ * All caps and spend totals use this; currency is explicit.
+ */
+export interface FiatMoneyMinor {
+  amountMinor: string;
+  currency: ISO4217;
+}
+
+/**
+ * On-chain amount in smallest unit (atomic). String for JSON/bigint safety.
+ * decimals: token decimals (e.g. 6 for USDC). amount = raw units (e.g. 1_000_000 = 1 USDC).
+ */
+export interface AtomicAmount {
+  amount: string;
+  decimals: number;
+}
+
+/**
+ * FX rate snapshot used to convert fiat → stablecoin for a settlement quote.
+ */
+export interface FxSnapshot {
+  baseCurrency: ISO4217;
+  quoteAssetSymbol: string;
+  rate: string;
+  asOf: string;
+  provider?: string;
+}
+
+/**
+ * Settlement quote: one payable option (rail + asset + atomic amount + destination).
+ * Stripe quotes have no asset; xrpl/evm have asset. Enforcement matches by quoteId or rail+asset.
+ */
+export interface SettlementQuote {
+  quoteId: string;
+  rail: Rail;
+  asset?: Asset;
+  amount: AtomicAmount;
+  destination: string;
+  expiresAt: string;
+  fx?: FxSnapshot;
+}
+
+/**
+ * Amount in minor units (integer). Use string for JSON safety.
  * E.g. USD cents, or 10^6 for USDC. All comparisons use BigInt(amountMinor).
+ * @deprecated Prefer FiatMoneyMinor for fiat; AtomicAmount for on-chain.
  */
 export interface MoneyMinor {
   amountMinor: string;
@@ -50,26 +99,21 @@ export interface MoneyMinor {
 
 /**
  * Versioned policy document (single layer).
- * Used as platform defaults or as overrides at owner / vehicle / lot.
- * Caps and approval threshold are in minor units (string) for exact money logic.
+ * Caps are in fiat minor units (lot currency); no amount at entry.
  */
 export interface Policy {
   version: PolicySchemaVersion;
-  /** Allowed lot IDs (empty or absent = no restriction). Checked against lotId. */
   lotAllowlist?: string[];
-  /** Geo allowlist (vehicle must be within one circle). */
   geoAllowlist?: GeoCircle[];
-  /** Allowed payment rails. */
   railAllowlist?: Rail[];
-  /** Allowed assets (XRP, IOU, ERC20). */
   assetAllowlist?: Asset[];
-  /** Cap per single transaction (minor units as string). */
+  /** Cap per single transaction (fiat minor, string). */
   capPerTxMinor?: string;
-  /** Cap per session (minor units as string). */
+  /** Cap per session (fiat minor, string). */
   capPerSessionMinor?: string;
-  /** Cap per day rolling (minor units as string). */
+  /** Cap per day rolling (fiat minor, string). */
   capPerDayMinor?: string;
-  /** If quote amountMinor exceeds this, require explicit approval (minor units as string). */
+  /** If price fiat minor exceeds this, require explicit approval. */
   requireApprovalOverMinor?: string;
 }
 
@@ -104,77 +148,91 @@ export interface EntryPolicyContext {
 
 /**
  * Output of entry policy evaluation.
- * Grants what is allowed for the session (rails, assets, caps) without a specific payment.
+ * No amount at entry; caps are fiat minor only (currency from lot at exit).
  */
 export interface SessionPolicyGrant {
-  /** Unique grant id (e.g. uuid). */
   grantId: string;
-  /** Hash of effective policy + key context (audit). */
   policyHash: string;
-  /** Allowed rails for this session. */
   allowedRails: Rail[];
-  /** Allowed assets for this session. */
   allowedAssets: Asset[];
-  /** Caps that will apply at payment time (minor units as string). */
+  /** Fiat caps (currency from lot). Used at exit for cap checks. */
+  capsFiatMinor?: {
+    perTx?: FiatMoneyMinor;
+    perSession?: FiatMoneyMinor;
+    perDay?: FiatMoneyMinor;
+  };
+  /** @deprecated Use capsFiatMinor; kept for backward compat. */
   maxSpend?: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string };
-  /** Grant validity expiry. */
   expiresAtISO: string;
   vehicleId?: string;
   lotId: string;
   operatorId?: string;
-  /** Reasons (e.g. OK or REQUIRE_APPROVAL if risk). */
   reasons: PolicyReasonCode[];
-  /** If true, payment will require explicit approval. */
   requireApproval?: boolean;
 }
 
-/** Context for payment/exit policy evaluation (includes quote and spend). */
+/** Context for payment/exit policy evaluation. Caps and spend are fiat minor (lot currency). */
 export interface PaymentPolicyContext {
   policy: Policy;
   vehicleId?: string;
   lotId: string;
   operatorId?: string;
   nowISO: string;
-  /** Quote in minor units (e.g. cents, 10^6 for USDC). */
-  quote: MoneyMinor;
-  /** Cumulative spend in minor units (same currency as quote). */
-  spend: { dayTotalMinor: string; sessionTotalMinor: string };
+  /** Price in fiat minor (lot currency). Prefer over quote. */
+  priceFiat?: FiatMoneyMinor;
+  /** Cumulative spend in fiat minor (same currency). Prefer over spend. */
+  spendTotalsFiat?: { dayTotal: FiatMoneyMinor; sessionTotal: FiatMoneyMinor };
   railsOffered: Rail[];
   assetsOffered: Asset[];
   riskScore?: number;
-  /** Optional: session grant id from entry (for audit chain). */
   sessionGrantId?: string;
+  /** @deprecated Use priceFiat. */
+  quote?: MoneyMinor;
+  /** @deprecated Use spendTotalsFiat. */
+  spend?: { dayTotalMinor: string; sessionTotalMinor: string };
 }
 
 /**
  * Output of payment/exit policy evaluation.
- * Decision: allow with chosen rail/asset, deny, or require approval.
+ * Persisted with priceFiat + settlementQuotes so enforcement can match atomic amount + destination.
  */
 export interface PaymentPolicyDecision {
   action: PolicyDecisionAction;
   rail?: Rail;
   asset?: Asset;
   reasons: PolicyReasonCode[];
-  /** Caps in minor units (string). Used by enforcePayment for exact comparison. */
-  maxSpend?: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string };
   expiresAtISO: string;
   decisionId: string;
   policyHash: string;
-  /** Session grant id used for this decision, or null if no grant was used (audit invariant). */
   sessionGrantId?: string | null;
+  /** Grant id this decision is scoped to (for enforcement grant match). */
+  grantId?: string | null;
+  /** Price in fiat minor (lot currency). */
+  priceFiat?: FiatMoneyMinor;
+  /** Settlement quotes generated after decision (Stripe + x402). */
+  settlementQuotes?: SettlementQuote[];
+  /** Selected rail + quoteId when one option is chosen. */
+  chosen?: { rail: Rail; quoteId: string };
+  createdAt?: string;
+  /** Caps in minor units (fiat). Used by enforcement for cap check when no quote. */
+  maxSpend?: { perTxMinor?: string; perSessionMinor?: string; perDayMinor?: string };
 }
 
 /**
- * Minimal settlement result for enforcement (no chain client dependency).
- * Filled by the caller from chain/adapter output.
- * amount: minor units as string (no decimal point); compare with BigInt(amount).
+ * Settlement result for enforcement: atomic amount + rail + asset + destination.
+ * Caller fills from chain/adapter. Enforcement matches against decision's settlement quote.
  */
 export interface SettlementResult {
+  /** Atomic amount (smallest unit, string). Must match quote.amount.amount. */
   amount: string;
   asset: Asset;
   rail: Rail;
   txHash?: string;
   payer?: string;
+  /** Destination (operator wallet); must match quote.destination. */
+  destination?: string;
+  /** Quote id being settled (if available). */
+  quoteId?: string;
 }
 
 /**

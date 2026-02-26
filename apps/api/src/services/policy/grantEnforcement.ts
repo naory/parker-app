@@ -2,7 +2,7 @@
  * Enforce that an exit decision stays within the entry grant (rail/asset ⊆ grant, caps at least as strict).
  */
 
-import type { PaymentPolicyDecision, PolicyReasonCode, Asset } from '@parker/policy-core'
+import type { PaymentPolicyDecision, PolicyReasonCode, Asset, Rail } from '@parker/policy-core'
 import type { PolicyGrantRecord } from '../../db/queries'
 
 function assetInList(asset: Asset, list: unknown[]): boolean {

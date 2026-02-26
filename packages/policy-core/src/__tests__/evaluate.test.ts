@@ -10,6 +10,8 @@ import {
   type PaymentPolicyContext,
   type PaymentPolicyDecision,
   type SettlementResult,
+  type FiatMoneyMinor,
+  type SettlementQuote,
 } from '../types.js'
 import type { Rail, Asset } from '../types.js'
 
@@ -265,6 +267,26 @@ describe('evaluatePaymentPolicy', () => {
       expect(decision.rail).toBe('stripe')
       expect(decision.asset).toBeUndefined()
     })
+
+    it('uses priceFiat and spendTotalsFiat when provided (fiat-only caps)', () => {
+      const policy: Policy = { ...basePolicy, capPerTxMinor: '1000' }
+      const priceFiat: FiatMoneyMinor = { amountMinor: '800', currency: 'USD' }
+      const spendTotalsFiat = {
+        dayTotal: { amountMinor: '0', currency: 'USD' },
+        sessionTotal: { amountMinor: '0', currency: 'USD' },
+      }
+      const decision = evaluatePaymentPolicy(
+        paymentCtx({
+          policy,
+          priceFiat,
+          spendTotalsFiat,
+          railsOffered: ['stripe'],
+          assetsOffered: [],
+        }),
+      )
+      expect(decision.action).toBe('ALLOW')
+      expect(decision.rail).toBe('stripe')
+    })
   })
 })
 
@@ -380,6 +402,67 @@ describe('enforcePayment', () => {
       const result = enforcePayment(stripeDecision, settlement)
       expect(result.allowed).toBe(false)
       expect(result.reason).toBe('CAP_EXCEEDED_TX')
+    })
+  })
+
+  describe('enforcement with settlementQuotes (quote-based)', () => {
+    const quoteId = 'quote-xrpl-1'
+    const xrplQuote: SettlementQuote = {
+      quoteId,
+      rail: 'xrpl',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      amount: { amount: '800000', decimals: 6 },
+      destination: 'rOperator',
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    }
+    const decisionWithQuotes: PaymentPolicyDecision = {
+      action: 'ALLOW',
+      rail: 'xrpl',
+      asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+      reasons: ['OK'],
+      expiresAtISO: nowISO,
+      decisionId: 'dec-q',
+      policyHash: 'hash-q',
+      settlementQuotes: [xrplQuote],
+      chosen: { rail: 'xrpl', quoteId },
+    }
+
+    it('allows when atomic amount and rail and asset match quote', () => {
+      const settlement: SettlementResult = {
+        amount: '800000',
+        asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+        rail: 'xrpl',
+        quoteId,
+        destination: 'rOperator',
+      }
+      const result = enforcePayment(decisionWithQuotes, settlement)
+      expect(result.allowed).toBe(true)
+    })
+
+    it('denies when atomic amount does not match quote', () => {
+      const settlement: SettlementResult = {
+        amount: '900000',
+        asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+        rail: 'xrpl',
+        quoteId,
+        destination: 'rOperator',
+      }
+      const result = enforcePayment(decisionWithQuotes, settlement)
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('CAP_EXCEEDED_TX')
+    })
+
+    it('denies when destination does not match quote', () => {
+      const settlement: SettlementResult = {
+        amount: '800000',
+        asset: { kind: 'IOU', currency: 'USD', issuer: 'rIssuer' },
+        rail: 'xrpl',
+        quoteId,
+        destination: 'rOther',
+      }
+      const result = enforcePayment(decisionWithQuotes, settlement)
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('RAIL_NOT_ALLOWED')
     })
   })
 })

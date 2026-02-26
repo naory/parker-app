@@ -53,7 +53,8 @@ export function createApp() {
       network: x402Network,
       token: process.env.X402_STABLECOIN || 'USDC',
       receiverWallet: process.env.LOT_OPERATOR_WALLET,
-      publicClient,
+      // Cast: viem PublicClient types can differ between @parker/core and @parker/x402
+      publicClient: publicClient as any,
       settlementAdapter,
     }),
   )

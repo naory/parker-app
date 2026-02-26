@@ -24,9 +24,8 @@ export const X402_NETWORK = process.env.X402_NETWORK || 'base-sepolia'
  * The stablecoin base currency is derived from the stablecoin symbol.
  * USDC → USD, EURC → EUR, etc. Override with X402_BASE_CURRENCY.
  */
-function getStablecoinBaseCurrency(): string {
+export function getStablecoinBaseCurrency(): string {
   if (process.env.X402_BASE_CURRENCY) return process.env.X402_BASE_CURRENCY.toUpperCase()
-  // Common stablecoin → base currency mappings
   const map: Record<string, string> = {
     USDC: 'USD',
     USDT: 'USD',

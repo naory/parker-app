@@ -12,9 +12,9 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
        │                        │                           │
        ▼                        ▼                           ▼
   PolicyGrantRecord         PaymentPolicyDecision      Session close
-  (grantId, allowedRails,   (decisionId, rail,        only if allowed
-   allowedAssets, caps,      asset, maxSpend,
-   expiresAt, requireApproval)  sessionGrantId)       EVM / XRPL / Stripe
+  (grantId, allowedRails,   (decisionId, priceFiat,  only if allowed
+   allowedAssets, caps      settlementQuotes, chosen, EVM / XRPL / Stripe
+   fiat minor, expiresAt)   sessionGrantId, rail, asset)
        │                        │
        └────────────────────────┘
          decision ⊆ grant
@@ -25,28 +25,23 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
    Entry policy is evaluated (lot, geo, rail/asset allowlists, risk). A `PolicyGrantRecord` is stored and its `grantId` is written to the session (`session.policyGrantId`). If risk is high or geo is missing, entry can still be allowed and the grant marked `requireApproval` so that payment will require approval. If no rails or (for crypto rails) no assets are allowed, entry is denied.
 
 2. **Decision (exit)**  
-   When the driver requests payment options, the API builds a payment context (quote and spend in **stablecoin minor** units, rails and assets offered from settlement). The payment decision (allow/deny/require-approval) is stored in `policy_events` with `event_type = 'paymentDecisionCreated'`. The decision must be within the entry grant (rail ∈ grant.allowedRails, asset ∈ grant.allowedAssets, caps at least as strict). The decision always carries `sessionGrantId` when the session has a `policyGrantId` (audit invariant). If the grant has expired, the decision is forced to `REQUIRE_APPROVAL` and `GRANT_EXPIRED` is **appended** to the existing reasons (not replaced).
+   The API builds a payment context with **priceFiat** (fiat minor, lot currency) and **spendTotalsFiat** (session/day totals in fiat minor). Caps are compared in fiat only. The payment decision (allow/deny/require-approval) is stored in `policy_events` with `event_type = 'paymentDecisionCreated'`. The persisted payload includes **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amounts, destination, FX snapshot), and **chosen** (rail + quoteId). The decision must be within the entry grant. The decision always carries `sessionGrantId` when the session has a `policyGrantId`. If the grant has expired, the decision is forced to `REQUIRE_APPROVAL` and `GRANT_EXPIRED` is **appended** to reasons.
 
 3. **Enforcement (settlement)**  
-   Every settlement path (EVM watcher, XRPL verify route, Stripe webhook) calls `enforceOrReject(decisionId, settlement)` before closing the session. Enforcement checks:
-   - **Rail** match  
-   - **Asset** match (skipped for `stripe` / `hosted`)  
-   - **Amount** ≤ decision `perTxMinor` cap  
-   - **Destination** and **tx uniqueness** are enforced by the route (receiver check, replay by `tx_hash`).  
-
-   If enforcement fails, an `enforcementFailed` event is stored and the session is **not** closed.
+   Every settlement path (EVM watcher, XRPL verify route, Stripe webhook) calls `enforceOrReject(decisionId, settlement)` before closing. When the decision has **settlementQuotes**, enforcement matches by rail + quoteId or rail+asset, then checks **atomic amount** (strict), **destination** (operator wallet), and asset for on-chain rails. Otherwise (legacy) it checks rail, asset, and amount vs `maxSpend.perTxMinor`. **Replay** (txHash/paymentId uniqueness) is enforced by each route. If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
 
 ---
 
-## Unit conventions
+## Units
 
-| Context        | Unit              | Meaning |
-|----------------|-------------------|--------|
-| **Fiat**       | Lot currency      | Display and DB spend totals (e.g. USD, EUR). `getSpendTotalsFiat` returns `dayTotalFiat`, `sessionTotalFiat` in fiat. |
-| **Stablecoin minor** | Integer, 6 decimals for USDC | Quote, spend, and caps in policy and settlement. Same unit as on-chain (e.g. 1 USDC = 1_000_000 minor). FX converts lot currency → stablecoin; policy uses stablecoin minor only. |
-| **MoneyMinor.currency** | Stablecoin symbol (e.g. `USDC`) | In payment context, `quote.currency` is the stablecoin symbol so that policy and caps are clearly in stablecoin, not fiat. |
+- **Caps and spend (policy)**  
+  All caps (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) and spend totals are in **fiat minor** (lot currency, e.g. USD cents). Entry grant stores these; exit evaluation compares price and spend in fiat minor only. No mixing of fiat and stablecoin in cap checks.
 
-Caps (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) and `requireApprovalOverMinor` are always in **stablecoin minor**. Spend totals passed into the payment context are converted from fiat to stablecoin minor in the API before calling policy-core.
+- **Settlement (enforcement)**  
+  Settlement is enforced in **atomic units** per rail: Stripe uses cents (2 decimals); x402 uses token smallest unit (e.g. 6 decimals for USDC). The decision’s **settlementQuotes** carry `AtomicAmount { amount, decimals }` and `destination`. Enforcement requires exact amount match and destination match when a quote is present.
+
+- **Decision payload**  
+  Persisted decision includes **priceFiat** (FiatMoneyMinor), **settlementQuotes** (each with amount, destination, expiresAt, optional **FxSnapshot** for x402), and **chosen** (rail, quoteId). This allows rehydration of expected atomic amount and destination from DB for enforcement.
 
 ---
 
@@ -68,7 +63,7 @@ Caps (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) and `requireAppro
 Each payment decision is stored in `policy_events` with:
 
 - `event_type = 'paymentDecisionCreated'`
-- `payload`: full decision (decisionId, policyHash, sessionGrantId, action, reasons, rail, asset, maxSpend, expiresAtISO)
+- `payload`: full decision including **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amount, destination, FX snapshot), **chosen** (rail, quoteId), decisionId, policyHash, sessionGrantId, grantId, action, reasons, rail, asset, maxSpend, expiresAtISO
 - `decision_id`, `session_id` for lookup
 
-Settlement verification events use `settlementVerified` and `enforcementFailed` with `tx_hash` where applicable. Replay protection is enforced per rail (e.g. `tx_hash` uniqueness for XRPL, `hasSettlementForTxHash` for EVM).
+Settlement verification events use `settlementVerified` and `enforcementFailed` with `tx_hash` where applicable. Replay protection is enforced per rail.

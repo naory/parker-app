@@ -1,6 +1,6 @@
 /**
- * Exit-time policy evaluation: build context, evaluate payment policy, apply grant expiry, set sessionGrantId.
- * Keeps packages/policy-core pure (no DB, no env); this layer does DB and env.
+ * Exit-time policy evaluation: build context (fiat-only caps), evaluate payment policy, apply grant expiry.
+ * Caps and spend are in fiat minor (lot currency); settlement quotes are generated after decision in gate.
  */
 
 import { resolveEffectivePolicy, evaluatePaymentPolicy } from '@parker/policy-core'
@@ -9,14 +9,20 @@ import type {
   PaymentPolicyDecision,
   PolicyReasonCode,
   Rail,
+  FiatMoneyMinor,
 } from '@parker/policy-core'
 import { buildEntryPolicyStack } from '../policyStack'
 import { buildAssetsOffered } from './assetsOffered'
 import { validateDecisionAgainstGrant } from './grantEnforcement'
-import { convertToStablecoin, X402_NETWORK, X402_STABLECOIN } from '../pricing'
+import { X402_NETWORK } from '../pricing'
 import type { PolicyGrantRecord } from '../../db/queries'
 
-const STABLECOIN_DECIMALS = 6
+/** Fiat minor units: assume 2 decimals (cents) for standard currencies. */
+const FIAT_MINOR_DECIMALS = 2
+
+function toFiatMinor(amount: number): string {
+  return String(Math.round(amount * 10 ** FIAT_MINOR_DECIMALS))
+}
 
 export interface EvaluateExitPolicyParams {
   session: { id: string; policyGrantId?: string | null } | null
@@ -31,8 +37,8 @@ export interface EvaluateExitPolicyParams {
 }
 
 /**
- * Evaluate payment policy at exit: build context (stablecoin minor, spend totals, rails/assets),
- * run policy-core, enforce grant expiry (force REQUIRE_APPROVAL if grant expired), set sessionGrantId on decision.
+ * Evaluate payment policy at exit: context uses priceFiat + spendTotalsFiat (fiat minor);
+ * caps are compared in fiat only.
  */
 export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Promise<PaymentPolicyDecision> {
   const {
@@ -47,15 +53,15 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     getPolicyGrantByGrantId,
   } = params
 
-  const quoteStablecoin = convertToStablecoin(fee, currency)
-  const quoteAmountMinor = Math.round(quoteStablecoin * 10 ** STABLECOIN_DECIMALS).toString()
   const spendFiat = await getSpendTotalsFiat(plate, currency)
-  const dayTotalMinor = Math.round(
-    convertToStablecoin(spendFiat.dayTotalFiat, currency) * 10 ** STABLECOIN_DECIMALS,
-  ).toString()
-  const sessionTotalMinor = Math.round(
-    convertToStablecoin(spendFiat.sessionTotalFiat, currency) * 10 ** STABLECOIN_DECIMALS,
-  ).toString()
+  const priceFiat: FiatMoneyMinor = {
+    amountMinor: toFiatMinor(fee),
+    currency,
+  }
+  const spendTotalsFiat = {
+    dayTotal: { amountMinor: toFiatMinor(spendFiat.dayTotalFiat), currency },
+    sessionTotal: { amountMinor: toFiatMinor(spendFiat.sessionTotalFiat), currency },
+  }
 
   let sessionGrantId: string | undefined
   if (session?.policyGrantId) {
@@ -73,14 +79,13 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
   if (railsOffered.length === 0) railsOffered.push('stripe', 'xrpl', 'evm')
   const assetsOffered = buildAssetsOffered(railsOffered)
 
-  // Quote and spend in stablecoin minor (same unit as caps); currency = stablecoin symbol for policy
   const paymentCtx: PaymentPolicyContext = {
     policy,
     lotId,
     operatorId: lot?.operatorWallet,
     nowISO: new Date().toISOString(),
-    quote: { amountMinor: quoteAmountMinor, currency: X402_STABLECOIN },
-    spend: { dayTotalMinor, sessionTotalMinor },
+    priceFiat,
+    spendTotalsFiat,
     railsOffered,
     assetsOffered,
     sessionGrantId,
@@ -96,10 +101,11 @@ export async function evaluateExitPolicy(params: EvaluateExitPolicyParams): Prom
     }
   }
 
-  // Invariant: decision always includes sessionGrantId when session has policyGrantId (audit trail)
   let finalDecision: PaymentPolicyDecision = {
     ...decision,
     sessionGrantId: session?.policyGrantId ?? sessionGrantId ?? null,
+    grantId: sessionGrantId ?? session?.policyGrantId ?? null,
+    priceFiat,
   }
 
   if (sessionGrantId) {

@@ -187,6 +187,7 @@ async function handleTransferEvent(
       rail: 'evm',
       txHash,
       payer: args.from,
+      destination: pending.receiverWallet,
     }
     const enforcement = await enforceOrReject(
       db.getDecisionPayloadByDecisionId.bind(db),

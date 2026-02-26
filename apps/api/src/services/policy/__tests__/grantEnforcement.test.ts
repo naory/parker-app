@@ -44,7 +44,7 @@ describe('validateDecisionAgainstGrant', () => {
     }
     const result = validateDecisionAgainstGrant(baseGrant, decision)
     expect(result.valid).toBe(false)
-    expect(result.reason).toBe('RAIL_NOT_ALLOWED')
+    if (!result.valid) expect(result.reason).toBe('RAIL_NOT_ALLOWED')
   })
 
   it('rejects when decision asset not in grant', () => {
@@ -60,7 +60,7 @@ describe('validateDecisionAgainstGrant', () => {
     }
     const result = validateDecisionAgainstGrant(baseGrant, decision)
     expect(result.valid).toBe(false)
-    expect(result.reason).toBe('ASSET_NOT_ALLOWED')
+    if (!result.valid) expect(result.reason).toBe('ASSET_NOT_ALLOWED')
   })
 
   it('rejects when decision perTxMinor exceeds grant', () => {
@@ -76,13 +76,13 @@ describe('validateDecisionAgainstGrant', () => {
     }
     const result = validateDecisionAgainstGrant(baseGrant, decision)
     expect(result.valid).toBe(false)
-    expect(result.reason).toBe('CAP_EXCEEDED_TX')
+    if (!result.valid) expect(result.reason).toBe('CAP_EXCEEDED_TX')
   })
 
   it('allows when decision is REQUIRE_APPROVAL (no rail/asset/cap check)', () => {
     const decision: PaymentPolicyDecision = {
       action: 'REQUIRE_APPROVAL',
-      reasons: ['GRANT_EXPIRED'],
+      reasons: ['NEEDS_APPROVAL' as const],
       expiresAtISO: new Date().toISOString(),
       decisionId: 'dec-1',
       policyHash: 'ph-1',
