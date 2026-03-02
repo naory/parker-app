@@ -44,7 +44,13 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
    - **XRPL verify route**: enforceOrReject → then settlementVerified → resolve intent → endSession (+ Hedera burn).
    - **EVM watcher**: enforceOrReject → then settlementVerified → settleSession (endSession + Hedera burn if enabled).
 
-   The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback); enforcement references **decisionId** (lookup) and the payload contains **sessionGrantId** and **policyHash**. **Minimum checks**: rail match, asset match (if applicable), amount (exact when quote present; otherwise ≥ allowed per cap), destination match, tx uniqueness / replay protection (`hasSettlementForTxHash`). If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
+   The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback); enforcement references **decisionId** (lookup) and the payload contains **sessionGrantId** and **policyHash**. **Minimum checks**: rail match, asset match (if applicable), quote match, amount (exact when quote present; otherwise compared to cap), destination match, tx uniqueness / replay protection (`hasSettlementForTxHash`).
+
+   Enforcement failure reasons are split by path:
+   - **Quote path** (decision has `settlementQuotes`): `QUOTE_MISMATCH`, `QUOTE_AMOUNT_MISMATCH`, `DESTINATION_MISMATCH`, plus rail/asset/action/expiry guards (`RAIL_NOT_ALLOWED`, `ASSET_NOT_ALLOWED`, `NEEDS_APPROVAL`).
+   - **Legacy cap path** (no `settlementQuotes`): rail/asset mismatch (`RAIL_NOT_ALLOWED`, `ASSET_NOT_ALLOWED`) and cap mismatch (`CAP_EXCEEDED_TX`), plus `NEEDS_APPROVAL` guards.
+
+   If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
 
 ---
 
@@ -76,6 +82,11 @@ We split money types so one “currency” field does not mean two different thi
 ## Environment (policy / settlement)
 
 Policy restricts which rails and assets are allowed via **railAllowlist** and **assetAllowlist**. Environment knobs below determine what the lot *offers*; policy then filters to what is *allowed* for the session.
+
+Allowlist semantics are explicit:
+- `undefined` allowlist = no restriction (accept whatever is offered).
+- `[]` allowlist = deny-all for that dimension.
+- non-empty allowlist = restrict to listed values.
 
 ### XRPL assets
 

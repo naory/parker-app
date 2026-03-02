@@ -101,7 +101,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
           active_lot_id: session.lotId,
           plate_number: plateNumber,
         })
-        return res.status(400).json({ error: 'Webhook metadata mismatch' })
+        return res.json({ received: true, ignored: true, reason: 'metadata_mismatch' })
       }
 
       // Settlement enforcement: must pass before closing (same as XRPL/EVM)

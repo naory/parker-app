@@ -358,6 +358,7 @@ export function enforcePayment(
   decision: PaymentPolicyDecision,
   settlement: SettlementResult
 ): EnforcementResult {
+  // Defensive guard for malformed/legacy decision payloads coming from persistence boundaries.
   if (!decision.decisionId) {
     return { allowed: false, reason: "NEEDS_APPROVAL" };
   }
@@ -391,12 +392,17 @@ export function enforcePayment(
   }
 
   const quote = findMatchingQuote(decision, settlement);
+  const hasQuotes = Boolean(decision.settlementQuotes?.length);
+
+  if (hasQuotes && !quote) {
+    return { allowed: false, reason: "QUOTE_MISMATCH" };
+  }
 
   if (quote) {
     const amountOk = BigInt(settlement.amount) === BigInt(quote.amount.amount);
-    if (!amountOk) return { allowed: false, reason: "CAP_EXCEEDED_TX" };
+    if (!amountOk) return { allowed: false, reason: "QUOTE_AMOUNT_MISMATCH" };
     if (quote.destination && settlement.destination && settlement.destination !== quote.destination) {
-      return { allowed: false, reason: "RAIL_NOT_ALLOWED" };
+      return { allowed: false, reason: "DESTINATION_MISMATCH" };
     }
     if (decision.rail !== "stripe" && decision.rail !== "hosted") {
       if (!quote.asset || !assetEqual(quote.asset, settlement.asset)) {

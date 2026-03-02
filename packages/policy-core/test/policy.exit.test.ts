@@ -45,4 +45,25 @@ describe("policy.exit", () => {
     );
     expect(decision.sessionGrantId).toBe("grant-xyz");
   });
+
+  it("treats undefined rail allowlist as no restriction", () => {
+    const decision = evaluatePaymentPolicy(
+      mkPaymentCtx({
+        policy: mkPolicy({ railAllowlist: undefined }),
+        railsOffered: ["stripe"],
+      }),
+    );
+    expect(decision.action).toBe("ALLOW");
+    expect(decision.rail).toBe("stripe");
+  });
+
+  it("treats empty rail allowlist as deny-all", () => {
+    const decision = evaluatePaymentPolicy(
+      mkPaymentCtx({
+        policy: mkPolicy({ railAllowlist: [] }),
+      }),
+    );
+    expect(decision.action).toBe("DENY");
+    expect(decision.reasons).toContain("RAIL_NOT_ALLOWED");
+  });
 });

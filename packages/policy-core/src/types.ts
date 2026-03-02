@@ -25,6 +25,9 @@ export type PolicyReasonCode =
   | "GEO_NOT_ALLOWED"
   | "ASSET_NOT_ALLOWED"
   | "RAIL_NOT_ALLOWED"
+  | "QUOTE_MISMATCH"
+  | "QUOTE_AMOUNT_MISMATCH"
+  | "DESTINATION_MISMATCH"
   | "CAP_EXCEEDED_TX"
   | "CAP_EXCEEDED_SESSION"
   | "CAP_EXCEEDED_DAY"
@@ -116,7 +119,9 @@ export interface Policy {
   /** @deprecated Use operatorAllowlist. */
   vendorAllowlist?: string[];
   geoAllowlist?: GeoCircle[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed rails. */
   railAllowlist?: Rail[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed assets. */
   assetAllowlist?: Asset[];
   /** Cap per single transaction (fiat minor, string). */
   capPerTxMinor?: string;

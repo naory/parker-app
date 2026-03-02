@@ -45,4 +45,24 @@ describe("policy.entry", () => {
     expect(Array.isArray(grant.reasons)).toBe(true);
     expect(grant.reasons.length).toBeGreaterThan(0);
   });
+
+  it("treats undefined allowlists as no restriction", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ railAllowlist: undefined, assetAllowlist: undefined }),
+      }),
+    );
+    expect(grant.grantAction).toBe("ALLOW");
+    expect(grant.allowedRails).toEqual(["xrpl", "stripe"]);
+  });
+
+  it("treats empty rail allowlist as deny-all", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ railAllowlist: [] }),
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("RAIL_NOT_ALLOWED");
+  });
 });

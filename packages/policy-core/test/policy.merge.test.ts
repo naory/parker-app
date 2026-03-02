@@ -35,7 +35,7 @@ describe("policy.merge", () => {
     expect(grant.reasons).toContain("RAIL_NOT_ALLOWED");
   });
 
-  it("caps merge rule is override precedence (strictest by layer, not numeric min)", () => {
+  it("caps merge uses layer override precedence (last writer wins)", () => {
     const platform = mkPolicy({ capPerTxMinor: "1000" });
     const owner = mkPolicy({ capPerTxMinor: "900" });
     const lot = mkPolicy({ capPerTxMinor: "950" });

@@ -188,7 +188,7 @@ describe('paymentWatcher enforcement', () => {
     expect(db.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'enforcementFailed',
-        payload: expect.objectContaining({ reason: 'RAIL_NOT_ALLOWED' }),
+        payload: expect.objectContaining({ reason: 'DESTINATION_MISMATCH' }),
       }),
     )
   })
