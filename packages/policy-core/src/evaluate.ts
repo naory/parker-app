@@ -26,7 +26,7 @@ function isoPlusMinutes(minutes: number, from: Date): string {
 }
 
 function pickFirstAllowed<T>(offered: T[], allowlist?: T[]): T | undefined {
-  if (!allowlist || allowlist.length === 0) return offered[0];
+  if (allowlist === undefined) return offered[0];
   return offered.find((x) => allowlist.includes(x));
 }
 
@@ -83,11 +83,11 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   }
 
   const allowedRails =
-    policy.railAllowlist && policy.railAllowlist.length > 0
+    policy.railAllowlist !== undefined
       ? railsOffered.filter((r) => policy.railAllowlist!.includes(r))
       : [...railsOffered];
   const allowedAssets =
-    policy.assetAllowlist && policy.assetAllowlist.length > 0
+    policy.assetAllowlist !== undefined
       ? assetsOffered.filter((a) => {
           const key = (x: Asset) =>
             x.kind === "XRP"
@@ -191,6 +191,19 @@ function getSpendTotals(ctx: PaymentPolicyContext): { dayTotal: string; sessionT
 export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyDecision {
   const { policy } = ctx;
 
+  if (
+    ctx.grantExpiresAtISO &&
+    Number.isFinite(Date.parse(ctx.grantExpiresAtISO)) &&
+    Date.parse(ctx.grantExpiresAtISO) <= Date.parse(ctx.nowISO)
+  ) {
+    const reasons: PolicyReasonCode[] = [
+      ...(ctx.grantReasons ?? []),
+      "GRANT_EXPIRED",
+      "NEEDS_APPROVAL",
+    ];
+    return requireApprovalPayment(ctx, [...new Set(reasons)]);
+  }
+
   const operatorAllowlist = policy.operatorAllowlist ?? policy.vendorAllowlist;
   if (operatorAllowlist && operatorAllowlist.length > 0) {
     if (!ctx.operatorId || !operatorAllowlist.includes(ctx.operatorId)) {
@@ -263,6 +276,7 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
     expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
     decisionId,
     policyHash,
+    sessionGrantId: ctx.sessionGrantId ?? null,
   };
 }
 
@@ -280,6 +294,7 @@ function denyPayment(
     expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
     decisionId,
     policyHash,
+    sessionGrantId: ctx.sessionGrantId ?? null,
   };
 }
 
@@ -297,6 +312,7 @@ function requireApprovalPayment(
     expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
     decisionId,
     policyHash,
+    sessionGrantId: ctx.sessionGrantId ?? null,
   };
 }
 
@@ -342,6 +358,10 @@ export function enforcePayment(
   decision: PaymentPolicyDecision,
   settlement: SettlementResult
 ): EnforcementResult {
+  if (!decision.decisionId) {
+    return { allowed: false, reason: "NEEDS_APPROVAL" };
+  }
+
   if (decision.action !== "ALLOW") {
     return { allowed: false, reason: decision.reasons[0] ?? "NEEDS_APPROVAL" };
   }

@@ -332,6 +332,17 @@ pnpm contracts:test
 pnpm contracts:deploy
 ```
 
+### Testing (Vitest)
+
+The workspace uses **Vitest** as the single test runner for all Node packages and the API app (contracts use Hardhat). Do not mix runners (e.g. no `node --test` alongside Vitest in the same package).
+
+**Test layout:**
+
+- **Packages (unit):** `packages/<name>/test/*.test.ts`
+- **API (integration):** `apps/api/test/*.test.ts` (with subdirs `test/routes/`, `test/services/`, `test/middleware/`, `test/policy/` as needed)
+
+Run tests per package: `pnpm --filter <package-name> test`, or from repo root `pnpm --filter api test`, etc.
+
 ## Project Structure
 
 ```

@@ -92,6 +92,17 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         })
         return res.json({ received: true })
       }
+      if (session.id !== sessionId || session.lotId !== lotId) {
+        paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_mismatch' })
+        logger.warn('stripe_webhook_metadata_mismatch', {
+          metadata_session_id: sessionId,
+          active_session_id: session.id,
+          metadata_lot_id: lotId,
+          active_lot_id: session.lotId,
+          plate_number: plateNumber,
+        })
+        return res.status(400).json({ error: 'Webhook metadata mismatch' })
+      }
 
       // Settlement enforcement: must pass before closing (same as XRPL/EVM)
       const amountMinor = String(stripeSession.amount_total ?? 0)

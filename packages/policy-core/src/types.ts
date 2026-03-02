@@ -190,6 +190,10 @@ export interface PaymentPolicyContext {
   lotId: string;
   operatorId?: string;
   nowISO: string;
+  /** Optional grant expiry bound at exit-time policy evaluation. */
+  grantExpiresAtISO?: string;
+  /** Optional reasons from grant evaluation to preserve on grant-expired escalation. */
+  grantReasons?: PolicyReasonCode[];
   /** Price in fiat minor (lot currency). Prefer over quote. */
   priceFiat?: FiatMoneyMinor;
   /** Cumulative spend in fiat minor (same currency). Prefer over spend. */
