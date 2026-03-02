@@ -250,6 +250,14 @@ app.use('/api/webhooks', webhooksRouter)
 - Driver and gate UIs always provide manual fallback: submit XRPL transaction hash
 - API verification remains deterministic because settlement is validated server-side from the tx hash
 
+### 6.6 Policy Allowlist Semantics
+
+Allowlist fields in policy (`railAllowlist`, `assetAllowlist`, and similar allowlists) follow these semantics:
+
+- `undefined` -> no restriction
+- `[]` -> deny all
+- `[values]` -> restrict to those values
+
 ## 7. Driver App — Detailed Spec
 
 ### 7.1 Screens

@@ -38,11 +38,11 @@ export async function enforceOrReject(
   settlement: SettlementResult,
 ): Promise<EnforcementResult> {
   if (!decisionId || decisionId.trim().length === 0) {
-    return { allowed: false, reason: 'NEEDS_APPROVAL' as PolicyReasonCode }
+    return { allowed: false, reason: 'DECISION_NOT_FOUND' as PolicyReasonCode }
   }
   const payload = await getDecisionPayload(decisionId)
   if (!payload || typeof payload !== 'object') {
-    return { allowed: false, reason: 'NEEDS_APPROVAL' as PolicyReasonCode }
+    return { allowed: false, reason: 'DECISION_NOT_FOUND' as PolicyReasonCode }
   }
   const decision = payload as PaymentPolicyDecision
   return enforcePayment(decision, settlement)

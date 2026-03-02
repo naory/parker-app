@@ -47,8 +47,9 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
    The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback); enforcement references **decisionId** (lookup) and the payload contains **sessionGrantId** and **policyHash**. **Minimum checks**: rail match, asset match (if applicable), quote match, amount (exact when quote present; otherwise compared to cap), destination match, tx uniqueness / replay protection (`hasSettlementForTxHash`).
 
    Enforcement failure reasons are split by path:
-   - **Quote path** (decision has `settlementQuotes`): `QUOTE_MISMATCH`, `QUOTE_AMOUNT_MISMATCH`, `DESTINATION_MISMATCH`, plus rail/asset/action/expiry guards (`RAIL_NOT_ALLOWED`, `ASSET_NOT_ALLOWED`, `NEEDS_APPROVAL`).
+   - **Quote path** (decision has `settlementQuotes`): `QUOTE_NOT_FOUND`, `QUOTE_AMOUNT_MISMATCH`, `DESTINATION_MISMATCH`, plus rail/asset/action/expiry guards (`RAIL_NOT_ALLOWED`, `ASSET_NOT_ALLOWED`, `NEEDS_APPROVAL`).
    - **Legacy cap path** (no `settlementQuotes`): rail/asset mismatch (`RAIL_NOT_ALLOWED`, `ASSET_NOT_ALLOWED`) and cap mismatch (`CAP_EXCEEDED_TX`), plus `NEEDS_APPROVAL` guards.
+   - **Lookup/invariant path**: `DECISION_NOT_FOUND` (missing or unreadable decision payload) and `POLICY_HASH_MISMATCH` (settlement bound to a different policy hash).
 
    If enforcement fails, `enforcementFailed` is stored and the session is **not** closed.
 

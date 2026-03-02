@@ -49,6 +49,14 @@ describe("policy.enforce", () => {
     expect(missingSessionGrant).toEqual({ allowed: false, reason: "NEEDS_APPROVAL" });
   });
 
+  it("rejects policy hash mismatch with dedicated reason", () => {
+    const result = enforcePayment(
+      mkDecision({ policyHash: "ph-expected" }),
+      mkSettlement({ expectedPolicyHash: "ph-other" }),
+    );
+    expect(result).toEqual({ allowed: false, reason: "POLICY_HASH_MISMATCH" });
+  });
+
   it("rejects quote destination mismatch with dedicated reason", () => {
     const result = enforcePayment(
       mkDecision({
@@ -123,7 +131,7 @@ describe("policy.enforce", () => {
         amount: "1000",
       }),
     );
-    expect(result).toEqual({ allowed: false, reason: "QUOTE_MISMATCH" });
+    expect(result).toEqual({ allowed: false, reason: "QUOTE_NOT_FOUND" });
   });
 
   it("allows exact match", () => {

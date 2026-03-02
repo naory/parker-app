@@ -384,7 +384,7 @@ export function enforcePayment(
     settlement.expectedPolicyHash.length > 0 &&
     decision.policyHash !== settlement.expectedPolicyHash
   ) {
-    return { allowed: false, reason: "NEEDS_APPROVAL" };
+    return { allowed: false, reason: "POLICY_HASH_MISMATCH" };
   }
 
   if (decision.rail !== settlement.rail) {
@@ -395,7 +395,7 @@ export function enforcePayment(
   const hasQuotes = Boolean(decision.settlementQuotes?.length);
 
   if (hasQuotes && !quote) {
-    return { allowed: false, reason: "QUOTE_MISMATCH" };
+    return { allowed: false, reason: "QUOTE_NOT_FOUND" };
   }
 
   if (quote) {
