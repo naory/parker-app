@@ -252,11 +252,13 @@ app.use('/api/webhooks', webhooksRouter)
 
 ### 6.6 Policy Allowlist Semantics
 
-Allowlist fields in policy (`railAllowlist`, `assetAllowlist`, and similar allowlists) follow these semantics:
+Allowlist fields in policy (`lotAllowlist`, `railAllowlist`, `assetAllowlist`) follow these semantics:
 
 - `undefined` -> no restriction
 - `[]` -> deny all
 - `[values]` -> restrict to those values
+
+Cap fields (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) merge as numeric min across layers (platform/owner/vehicle/lot), so lower layers can only tighten caps, not loosen stricter upstream limits.
 
 ## 7. Driver App — Detailed Spec
 

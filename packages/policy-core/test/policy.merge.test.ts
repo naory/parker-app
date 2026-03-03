@@ -35,12 +35,24 @@ describe("policy.merge", () => {
     expect(grant.reasons).toContain("RAIL_NOT_ALLOWED");
   });
 
-  it("caps merge uses layer override precedence (last writer wins)", () => {
-    const platform = mkPolicy({ capPerTxMinor: "1000" });
-    const owner = mkPolicy({ capPerTxMinor: "900" });
-    const lot = mkPolicy({ capPerTxMinor: "950" });
+  it("caps merge uses strictest numeric min across layers", () => {
+    const platform = mkPolicy({
+      capPerTxMinor: "1000",
+      capPerSessionMinor: "5000",
+      capPerDayMinor: "10000",
+    });
+    const owner = mkPolicy({
+      capPerTxMinor: "900",
+      capPerSessionMinor: "6000",
+    });
+    const lot = mkPolicy({
+      capPerTxMinor: "950",
+      capPerDayMinor: "9000",
+    });
 
     const merged = resolveEffectivePolicy({ platform, owner, lot });
-    expect(merged.capPerTxMinor).toBe("950");
+    expect(merged.capPerTxMinor).toBe("900");
+    expect(merged.capPerSessionMinor).toBe("5000");
+    expect(merged.capPerDayMinor).toBe("9000");
   });
 });

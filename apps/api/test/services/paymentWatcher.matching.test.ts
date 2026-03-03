@@ -9,6 +9,9 @@ vi.mock('../../src/db', () => ({
     getDecisionPayloadByDecisionId: vi.fn(() =>
       Promise.resolve({
         action: 'ALLOW',
+        decisionId: 'dec-1',
+        policyHash: 'ph-1',
+        expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
         rail: 'evm',
         asset: { kind: 'ERC20', chainId: 84532, token: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
         reasons: ['OK'],

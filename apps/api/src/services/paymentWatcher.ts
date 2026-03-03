@@ -143,6 +143,8 @@ async function handleTransferEvent(
   const logAddress = (log as any).address as string | undefined
   if (logAddress && logAddress.toLowerCase() !== ctx.usdcAddress.toLowerCase()) return
 
+  // Some viem transports/clients do not populate chainId on each log object.
+  // Keep this as a best-effort extra guard; contract address match is primary.
   const logChainId = (log as any).chainId as number | undefined
   if (typeof logChainId === 'number' && ctx.chainId !== 0 && logChainId !== ctx.chainId) return
 

@@ -63,7 +63,7 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
     }
   }
 
-  if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(lotId)) {
+  if (policy.lotAllowlist !== undefined && !policy.lotAllowlist.includes(lotId)) {
     return denyEntry(ctx, ["LOT_NOT_ALLOWED"]);
   }
 
@@ -211,7 +211,7 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
     }
   }
 
-  if (policy.lotAllowlist && policy.lotAllowlist.length > 0 && !policy.lotAllowlist.includes(ctx.lotId)) {
+  if (policy.lotAllowlist !== undefined && !policy.lotAllowlist.includes(ctx.lotId)) {
     return denyPayment(ctx, ["LOT_NOT_ALLOWED"]);
   }
 

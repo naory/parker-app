@@ -65,4 +65,25 @@ describe("policy.entry", () => {
     expect(grant.grantAction).toBe("DENY");
     expect(grant.reasons).toContain("RAIL_NOT_ALLOWED");
   });
+
+  it("treats empty asset allowlist as deny-all for crypto rails", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ assetAllowlist: [] }),
+        railsOffered: ["xrpl"],
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("ASSET_NOT_ALLOWED");
+  });
+
+  it("treats empty lot allowlist as deny-all", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ lotAllowlist: [] }),
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("LOT_NOT_ALLOWED");
+  });
 });

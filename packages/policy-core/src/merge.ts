@@ -52,7 +52,16 @@ function mergeAssetAllowlist(
   return a.filter((x) => keysB.has(key(x)));
 }
 
-/** Merge two policies: base + override. Override wins for scalars; allowlists intersected. */
+function mergeCapMin(
+  a: string | undefined,
+  b: string | undefined,
+): string | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return BigInt(a) <= BigInt(b) ? a : b;
+}
+
+/** Merge two policies: allowlists intersect; caps use strictest numeric min. */
 function mergeTwo(base: Policy, override: Policy): Policy {
   return {
     version: POLICY_SCHEMA_VERSION,
@@ -65,14 +74,9 @@ function mergeTwo(base: Policy, override: Policy): Policy {
     geoAllowlist: mergeGeoAllowlist(base.geoAllowlist, override.geoAllowlist),
     railAllowlist: mergeRailAllowlist(base.railAllowlist, override.railAllowlist),
     assetAllowlist: mergeAssetAllowlist(base.assetAllowlist, override.assetAllowlist),
-    capPerTxMinor:
-      override.capPerTxMinor !== undefined ? override.capPerTxMinor : base.capPerTxMinor,
-    capPerSessionMinor:
-      override.capPerSessionMinor !== undefined
-        ? override.capPerSessionMinor
-        : base.capPerSessionMinor,
-    capPerDayMinor:
-      override.capPerDayMinor !== undefined ? override.capPerDayMinor : base.capPerDayMinor,
+    capPerTxMinor: mergeCapMin(base.capPerTxMinor, override.capPerTxMinor),
+    capPerSessionMinor: mergeCapMin(base.capPerSessionMinor, override.capPerSessionMinor),
+    capPerDayMinor: mergeCapMin(base.capPerDayMinor, override.capPerDayMinor),
     requireApprovalOverMinor:
       override.requireApprovalOverMinor !== undefined
         ? override.requireApprovalOverMinor

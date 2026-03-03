@@ -66,4 +66,25 @@ describe("policy.exit", () => {
     expect(decision.action).toBe("DENY");
     expect(decision.reasons).toContain("RAIL_NOT_ALLOWED");
   });
+
+  it("treats empty asset allowlist as deny-all for crypto rails", () => {
+    const decision = evaluatePaymentPolicy(
+      mkPaymentCtx({
+        policy: mkPolicy({ assetAllowlist: [] }),
+        railsOffered: ["xrpl"],
+      }),
+    );
+    expect(decision.action).toBe("DENY");
+    expect(decision.reasons).toContain("ASSET_NOT_ALLOWED");
+  });
+
+  it("treats empty lot allowlist as deny-all", () => {
+    const decision = evaluatePaymentPolicy(
+      mkPaymentCtx({
+        policy: mkPolicy({ lotAllowlist: [] }),
+      }),
+    );
+    expect(decision.action).toBe("DENY");
+    expect(decision.reasons).toContain("LOT_NOT_ALLOWED");
+  });
 });

@@ -210,6 +210,31 @@ describe('stripe webhook hardening', () => {
     expect(mockDb.endSession).not.toHaveBeenCalled()
   })
 
+  it('metadata missing returns 400 and does not close', async () => {
+    mockStripe.verifyWebhookSignature.mockReturnValueOnce({
+      ...stripeEvent,
+      data: {
+        object: {
+          ...stripeEvent.data.object,
+          metadata: {
+            ...stripeEvent.data.object.metadata,
+            sessionId: undefined,
+          },
+        },
+      },
+    } as any)
+
+    const res = await request(app)
+      .post('/api/webhooks/stripe')
+      .set('stripe-signature', 'sig')
+      .set('content-type', 'application/json')
+      .send(Buffer.from('raw'))
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/missing session metadata/i)
+    expect(mockDb.endSession).not.toHaveBeenCalled()
+  })
+
   it('calls enforcement before closing session', async () => {
     const res = await request(app)
       .post('/api/webhooks/stripe')

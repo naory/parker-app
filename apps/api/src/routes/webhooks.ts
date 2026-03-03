@@ -61,7 +61,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
     const { sessionId, plateNumber, lotId, feeCurrency, decisionId } = stripeSession.metadata
 
     if (!sessionId || !plateNumber || !lotId) {
-      paymentFailuresTotal.inc({ rail: 'stripe', reason: 'missing_metadata' })
+      paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_missing' })
       logger.warn('stripe_webhook_missing_metadata', { metadata: stripeSession.metadata })
       return res.status(400).json({ error: 'Missing session metadata' })
     }

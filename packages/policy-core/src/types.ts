@@ -115,6 +115,7 @@ export interface MoneyMinor {
  */
 export interface Policy {
   version: PolicySchemaVersion;
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed lot ids. */
   lotAllowlist?: string[];
   /** Operator/vendor allowlist by operator id/wallet (not lot id). */
   operatorAllowlist?: string[];
