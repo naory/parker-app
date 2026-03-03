@@ -25,6 +25,11 @@ export type PolicyReasonCode =
   | "GEO_NOT_ALLOWED"
   | "ASSET_NOT_ALLOWED"
   | "RAIL_NOT_ALLOWED"
+  | "QUOTE_NOT_FOUND"
+  | "QUOTE_AMOUNT_MISMATCH"
+  | "DESTINATION_MISMATCH"
+  | "DECISION_NOT_FOUND"
+  | "POLICY_HASH_MISMATCH"
   | "CAP_EXCEEDED_TX"
   | "CAP_EXCEEDED_SESSION"
   | "CAP_EXCEEDED_DAY"
@@ -110,13 +115,17 @@ export interface MoneyMinor {
  */
 export interface Policy {
   version: PolicySchemaVersion;
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed lot ids. */
   lotAllowlist?: string[];
-  /** Operator/vendor allowlist by operator id/wallet (not lot id). */
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed operator ids/wallets. */
   operatorAllowlist?: string[];
   /** @deprecated Use operatorAllowlist. */
   vendorAllowlist?: string[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed geo circles. */
   geoAllowlist?: GeoCircle[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed rails. */
   railAllowlist?: Rail[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed assets. */
   assetAllowlist?: Asset[];
   /** Cap per single transaction (fiat minor, string). */
   capPerTxMinor?: string;
@@ -190,6 +199,10 @@ export interface PaymentPolicyContext {
   lotId: string;
   operatorId?: string;
   nowISO: string;
+  /** Optional grant expiry bound at exit-time policy evaluation. */
+  grantExpiresAtISO?: string;
+  /** Optional reasons from grant evaluation to preserve on grant-expired escalation. */
+  grantReasons?: PolicyReasonCode[];
   /** Price in fiat minor (lot currency). Prefer over quote. */
   priceFiat?: FiatMoneyMinor;
   /** Cumulative spend in fiat minor (same currency). Prefer over spend. */
@@ -249,6 +262,8 @@ export interface SettlementResult {
   expectedSessionGrantId?: string | null;
   /** Optional expected policy hash for invariant checks. */
   expectedPolicyHash?: string;
+  /** Optional evaluation time for deterministic enforcement replay (ISO string). */
+  nowISO?: string;
 }
 
 /**

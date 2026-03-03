@@ -41,6 +41,7 @@ import type {
   SettlementResult,
   SettlementQuote,
   FiatMoneyMinor,
+  PolicyReasonCode,
 } from '@parker/policy-core'
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
@@ -58,12 +59,18 @@ const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
   .filter(Boolean)
 
 /** User-friendly short messages for policy reason codes (for client display). */
-const REASON_WHY: Record<string, string> = {
+const REASON_WHY: Partial<Record<PolicyReasonCode, string>> = {
   OK: 'Payment allowed',
   LOT_NOT_ALLOWED: 'This lot is not allowed by policy',
+  VENDOR_NOT_ALLOWED: 'Operator is not allowed by policy',
   GEO_NOT_ALLOWED: 'Location not in allowed area',
   ASSET_NOT_ALLOWED: 'Payment asset not allowed',
   RAIL_NOT_ALLOWED: 'Payment method not allowed',
+  QUOTE_NOT_FOUND: 'Settlement quote not found',
+  QUOTE_AMOUNT_MISMATCH: 'Settlement amount does not match quote',
+  DESTINATION_MISMATCH: 'Settlement destination does not match quote',
+  DECISION_NOT_FOUND: 'Policy decision not found',
+  POLICY_HASH_MISMATCH: 'Settlement does not match decision policy hash',
   CAP_EXCEEDED_TX: 'Amount exceeds per-transaction limit',
   CAP_EXCEEDED_SESSION: 'Amount exceeds session limit',
   CAP_EXCEEDED_DAY: 'Amount exceeds daily limit',
@@ -71,6 +78,12 @@ const REASON_WHY: Record<string, string> = {
   RISK_HIGH: 'Risk check requires approval',
   NEEDS_APPROVAL: 'Approval required before payment',
   GRANT_EXPIRED: 'Session grant expired; approval required',
+}
+
+function reasonsForDisplay(reasons: PolicyReasonCode[] | undefined): PolicyReasonCode[] {
+  if (!reasons || reasons.length === 0) return []
+  const hasNonOk = reasons.some((r) => r !== 'OK')
+  return hasNonOk ? reasons.filter((r) => r !== 'OK') : reasons
 }
 
 const LOT_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
@@ -930,7 +943,7 @@ gateRouter.post('/exit', async (req, res) => {
           policyHash: finalDecision.policyHash,
           sessionGrantId: finalDecision.sessionGrantId ?? undefined,
           action: finalDecision.action,
-          why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+          why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
           reasons: finalDecision.reasons ?? [],
         }
         notifyDriver(plate, {
@@ -971,7 +984,7 @@ gateRouter.post('/exit', async (req, res) => {
         policyHash: finalDecision.policyHash,
         sessionGrantId: finalDecision.sessionGrantId ?? undefined,
         action: finalDecision.action,
-        why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+        why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
         reasons: finalDecision.reasons ?? [],
         grantId: finalDecision.grantId ?? finalDecision.sessionGrantId ?? undefined,
         expiresAt: finalDecision.expiresAtISO,
@@ -1190,7 +1203,7 @@ gateRouter.post('/exit', async (req, res) => {
         payer: transfer.from,
         destination: pendingIntent.destination,
         expectedSessionGrantId: session?.policyGrantId ?? null,
-        expectedPolicyHash: pendingIntent.policyHash ?? session?.policyHash,
+        expectedPolicyHash: pendingIntent.policyHash ?? undefined,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

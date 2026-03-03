@@ -250,6 +250,16 @@ app.use('/api/webhooks', webhooksRouter)
 - Driver and gate UIs always provide manual fallback: submit XRPL transaction hash
 - API verification remains deterministic because settlement is validated server-side from the tx hash
 
+### 6.6 Policy Allowlist Semantics
+
+Allowlist fields in policy (`operatorAllowlist`/`vendorAllowlist`, `lotAllowlist`, `geoAllowlist`, `railAllowlist`, `assetAllowlist`) follow these semantics:
+
+- `undefined` -> no restriction
+- `[]` -> deny all
+- `[values]` -> restrict to those values
+
+Cap fields (`capPerTxMinor`, `capPerSessionMinor`, `capPerDayMinor`) merge as numeric min across layers (platform/owner/vehicle/lot), so lower layers can only tighten caps, not loosen stricter upstream limits.
+
 ## 7. Driver App — Detailed Spec
 
 ### 7.1 Screens

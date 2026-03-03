@@ -83,6 +83,7 @@ DEPLOYMENT_COUNTRIES=DE,FR,ES,IT,NL,GB,AT,BE
 2. System finds active parking session and calculates fee in the lot's local currency
 3. API returns **payment options** based on lot config *and policy evaluation*:
    - **Policy decision** — evaluates caps (per-tx/session/day in stablecoin minor units), lot/geo/rail/asset allowlists (XRP, IOUs e.g. USDC/RLUSD, EVM ERC20), and risk signals; may require explicit approval. Decision is bound to the payment intent (`decisionId`).
+     - Allowlist semantics are strict: `undefined` = no restriction, `[]` = deny-all, `[values]` = restrict to listed values.
    - **x402 (crypto)** — fee converted via FX to stablecoin; payment proof verified per selected network (EVM tx hash or XRPL tx hash). On XRPL, after verification the settlement is **enforced** against the decision (amount ≤ per-tx cap, same rail/asset); if enforcement fails, exit returns 403 and session is not closed. XRPL UX is Xaman-first with manual tx-hash fallback.
    - **Stripe (card)** — Stripe Checkout session created in the lot's currency; driver redirected to Stripe-hosted page; webhook confirms payment
 4. On payment confirmation (either rail): parking NFT burned on **Hedera**, session closed in DB
@@ -331,6 +332,17 @@ pnpm contracts:test
 # Deploy DriverRegistry to Base Sepolia (requires PRIVATE_KEY in contracts/.env)
 pnpm contracts:deploy
 ```
+
+### Testing (Vitest)
+
+The workspace uses **Vitest** as the single test runner for all Node packages and the API app (contracts use Hardhat). Do not mix runners (e.g. no `node --test` alongside Vitest in the same package).
+
+**Test layout:**
+
+- **Packages (unit):** `packages/<name>/test/*.test.ts`
+- **API (integration):** `apps/api/test/*.test.ts` (with subdirs `test/routes/`, `test/services/`, `test/middleware/`, `test/policy/` as needed)
+
+Run tests per package: `pnpm --filter <package-name> test`, or from repo root `pnpm --filter api test`, etc.
 
 ## Project Structure
 

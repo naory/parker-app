@@ -140,6 +140,14 @@ async function handleTransferEvent(
   log: Log,
   ctx: { usdcAddress: string; chainId: number },
 ) {
+  const logAddress = (log as any).address as string | undefined
+  if (logAddress && logAddress.toLowerCase() !== ctx.usdcAddress.toLowerCase()) return
+
+  // Some viem transports/clients do not populate chainId on each log object.
+  // Keep this as a best-effort extra guard; contract address match is primary.
+  const logChainId = (log as any).chainId as number | undefined
+  if (typeof logChainId === 'number' && ctx.chainId !== 0 && logChainId !== ctx.chainId) return
+
   const args = (log as any).args as { from: string; to: string; value: bigint } | undefined
   if (!args) return
 
@@ -190,7 +198,7 @@ async function handleTransferEvent(
       payer: args.from,
       destination: pending.receiverWallet,
       expectedSessionGrantId: session?.policyGrantId ?? null,
-      expectedPolicyHash: pending.policyHash ?? session?.policyHash,
+      expectedPolicyHash: pending.policyHash ?? undefined,
     }
     const enforcement = await enforceOrReject(
       db.getDecisionPayloadByDecisionId.bind(db),

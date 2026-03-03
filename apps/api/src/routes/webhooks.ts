@@ -54,14 +54,16 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         lotId?: string
         feeCurrency?: string
         decisionId?: string
+        policyHash?: string
       }
       amount_total?: number | null
     }
 
-    const { sessionId, plateNumber, lotId, feeCurrency, decisionId } = stripeSession.metadata
+    const { sessionId, plateNumber, lotId, feeCurrency, decisionId, policyHash } =
+      stripeSession.metadata
 
     if (!sessionId || !plateNumber || !lotId) {
-      paymentFailuresTotal.inc({ rail: 'stripe', reason: 'missing_metadata' })
+      paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_missing' })
       logger.warn('stripe_webhook_missing_metadata', { metadata: stripeSession.metadata })
       return res.status(400).json({ error: 'Missing session metadata' })
     }
@@ -92,6 +94,17 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         })
         return res.json({ received: true })
       }
+      if (session.id !== sessionId || session.lotId !== lotId) {
+        paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_mismatch' })
+        logger.warn('stripe_webhook_metadata_mismatch', {
+          metadata_session_id: sessionId,
+          active_session_id: session.id,
+          metadata_lot_id: lotId,
+          active_lot_id: session.lotId,
+          plate_number: plateNumber,
+        })
+        return res.json({ received: true, ignored: true, reason: 'metadata_mismatch' })
+      }
 
       // Settlement enforcement: must pass before closing (same as XRPL/EVM)
       const amountMinor = String(stripeSession.amount_total ?? 0)
@@ -100,7 +113,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         rail: 'stripe' as const,
         asset: { kind: 'IOU' as const, currency: feeCurrency || 'USD', issuer: '' },
         expectedSessionGrantId: session.policyGrantId ?? null,
-        expectedPolicyHash: session.policyHash,
+        expectedPolicyHash: policyHash || undefined,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),
