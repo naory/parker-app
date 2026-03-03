@@ -84,10 +84,12 @@ We split money types so one “currency” field does not mean two different thi
 
 Policy restricts which rails and assets are allowed via **railAllowlist** and **assetAllowlist**. Environment knobs below determine what the lot *offers*; policy then filters to what is *allowed* for the session.
 
-Allowlist semantics are explicit for `lotAllowlist`, `railAllowlist`, and `assetAllowlist`:
+Allowlist semantics are explicit for `operatorAllowlist`/`vendorAllowlist`, `lotAllowlist`, `geoAllowlist`, `railAllowlist`, and `assetAllowlist`:
 - `undefined` allowlist = no restriction (accept whatever is offered).
 - `[]` allowlist = deny-all for that dimension.
 - non-empty allowlist = restrict to listed values.
+
+Note: `geoAllowlist` is evaluated at entry policy time (where geo context exists).
 
 Cap semantics are explicit for layered policy merge:
 - `capPerTxMinor`, `capPerSessionMinor`, and `capPerDayMinor` merge as **numeric min** across provided layers.

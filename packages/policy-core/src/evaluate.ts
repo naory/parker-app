@@ -16,6 +16,7 @@ import type {
   SettlementQuote,
   EnforcementResult,
 } from "./types.js";
+import { POLICY_SCHEMA_VERSION } from "./types.js";
 
 function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -57,7 +58,7 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
   let requireApproval = false;
 
   const operatorAllowlist = policy.operatorAllowlist ?? policy.vendorAllowlist;
-  if (operatorAllowlist && operatorAllowlist.length > 0) {
+  if (operatorAllowlist !== undefined) {
     if (!ctx.operatorId || !operatorAllowlist.includes(ctx.operatorId)) {
       return denyEntry(ctx, ["VENDOR_NOT_ALLOWED"]);
     }
@@ -67,7 +68,7 @@ export function evaluateEntryPolicy(ctx: EntryPolicyContext): SessionPolicyGrant
     return denyEntry(ctx, ["LOT_NOT_ALLOWED"]);
   }
 
-  if (policy.geoAllowlist && policy.geoAllowlist.length > 0) {
+  if (policy.geoAllowlist !== undefined) {
     if (!ctx.geo) {
       return denyEntry(ctx, ["GEO_NOT_ALLOWED"]);
     }
@@ -184,6 +185,52 @@ function getSpendTotals(ctx: PaymentPolicyContext): { dayTotal: string; sessionT
   return { dayTotal: "0", sessionTotal: "0" };
 }
 
+function getPriceFiatForHash(
+  ctx: PaymentPolicyContext,
+): { amountMinor: string; currency: string } | null {
+  if (ctx.priceFiat?.amountMinor != null && ctx.priceFiat.currency) {
+    return { amountMinor: ctx.priceFiat.amountMinor, currency: ctx.priceFiat.currency };
+  }
+  if (ctx.quote?.amountMinor != null) {
+    return {
+      amountMinor: ctx.quote.amountMinor,
+      currency: ctx.quote.currencyId ?? ctx.quote.currency ?? "UNKNOWN",
+    };
+  }
+  return null;
+}
+
+function hashPaymentDecisionPayload(
+  ctx: PaymentPolicyContext,
+  input: {
+    action: PaymentPolicyDecision["action"];
+    rail?: Rail;
+    asset?: Asset;
+    expiresAtISO: string;
+  },
+): string {
+  return sha256(
+    JSON.stringify({
+      schemaVersion: POLICY_SCHEMA_VERSION,
+      policy: ctx.policy,
+      lotId: ctx.lotId,
+      operatorId: ctx.operatorId ?? null,
+      vehicleId: ctx.vehicleId ?? null,
+      sessionGrantId: ctx.sessionGrantId ?? null,
+      action: input.action,
+      rail: input.rail ?? null,
+      asset: input.asset ?? null,
+      priceFiat: getPriceFiatForHash(ctx),
+      caps: {
+        perTxMinor: ctx.policy.capPerTxMinor ?? null,
+        perSessionMinor: ctx.policy.capPerSessionMinor ?? null,
+        perDayMinor: ctx.policy.capPerDayMinor ?? null,
+      },
+      expiresAtISO: input.expiresAtISO,
+    }),
+  );
+}
+
 /**
  * Evaluate policy at payment/exit (with price and spend in fiat minor).
  * Caps are compared in fiat only; rails/assets chosen for settlement quotes later.
@@ -205,7 +252,7 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
   }
 
   const operatorAllowlist = policy.operatorAllowlist ?? policy.vendorAllowlist;
-  if (operatorAllowlist && operatorAllowlist.length > 0) {
+  if (operatorAllowlist !== undefined) {
     if (!ctx.operatorId || !operatorAllowlist.includes(ctx.operatorId)) {
       return denyPayment(ctx, ["VENDOR_NOT_ALLOWED"]);
     }
@@ -258,10 +305,9 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
     if (!asset) return denyPayment(ctx, ["ASSET_NOT_ALLOWED"]);
   }
 
+  const expiresAtISO = isoPlusMinutes(5, new Date(ctx.nowISO));
   const decisionId = crypto.randomUUID();
-  const policyHash = sha256(
-    JSON.stringify({ policy, lotId: ctx.lotId, priceFiat: ctx.priceFiat ?? ctx.quote, rail, asset })
-  );
+  const policyHash = hashPaymentDecisionPayload(ctx, { action: "ALLOW", rail, asset, expiresAtISO });
 
   return {
     action: "ALLOW",
@@ -273,7 +319,7 @@ export function evaluatePaymentPolicy(ctx: PaymentPolicyContext): PaymentPolicyD
       perSessionMinor: policy.capPerSessionMinor,
       perDayMinor: policy.capPerDayMinor,
     },
-    expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
+    expiresAtISO,
     decisionId,
     policyHash,
     sessionGrantId: ctx.sessionGrantId ?? null,
@@ -284,14 +330,13 @@ function denyPayment(
   ctx: PaymentPolicyContext,
   reasons: PolicyReasonCode[]
 ): PaymentPolicyDecision {
+  const expiresAtISO = isoPlusMinutes(5, new Date(ctx.nowISO));
   const decisionId = crypto.randomUUID();
-  const policyHash = sha256(
-    JSON.stringify({ policy: ctx.policy, lotId: ctx.lotId, quote: ctx.quote })
-  );
+  const policyHash = hashPaymentDecisionPayload(ctx, { action: "DENY", expiresAtISO });
   return {
     action: "DENY",
     reasons,
-    expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
+    expiresAtISO,
     decisionId,
     policyHash,
     sessionGrantId: ctx.sessionGrantId ?? null,
@@ -302,14 +347,16 @@ function requireApprovalPayment(
   ctx: PaymentPolicyContext,
   reasons: PolicyReasonCode[]
 ): PaymentPolicyDecision {
+  const expiresAtISO = isoPlusMinutes(5, new Date(ctx.nowISO));
   const decisionId = crypto.randomUUID();
-  const policyHash = sha256(
-    JSON.stringify({ policy: ctx.policy, lotId: ctx.lotId, quote: ctx.quote })
-  );
+  const policyHash = hashPaymentDecisionPayload(ctx, {
+    action: "REQUIRE_APPROVAL",
+    expiresAtISO,
+  });
   return {
     action: "REQUIRE_APPROVAL",
     reasons,
-    expiresAtISO: isoPlusMinutes(5, new Date(ctx.nowISO)),
+    expiresAtISO,
     decisionId,
     policyHash,
     sessionGrantId: ctx.sessionGrantId ?? null,
@@ -329,6 +376,14 @@ function assetEqual(a: Asset, b: Asset): boolean {
   return false;
 }
 
+function enforcementNowMs(settlement: SettlementResult): number {
+  if (settlement.nowISO) {
+    const parsed = Date.parse(settlement.nowISO);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
 /**
  * Find the settlement quote that matches this settlement (by rail + quoteId or rail + asset).
  */
@@ -338,14 +393,18 @@ function findMatchingQuote(
 ): SettlementQuote | undefined {
   const quotes = decision.settlementQuotes;
   if (!quotes?.length) return undefined;
+
   if (settlement.quoteId) {
-    const byId = quotes.find((q) => q.quoteId === settlement.quoteId);
-    if (byId && byId.rail === settlement.rail) return byId;
+    // Explicit quote binding: when quoteId is present, require exact quoteId + rail match.
+    return quotes.find((q) => q.quoteId === settlement.quoteId && q.rail === settlement.rail);
   }
+
   return quotes.find(
     (q) =>
       q.rail === settlement.rail &&
-      (decision.rail === "stripe" || decision.rail === "hosted" || (q.asset && assetEqual(q.asset, settlement.asset)))
+      (settlement.rail === "stripe" ||
+        settlement.rail === "hosted" ||
+        (q.asset && assetEqual(q.asset, settlement.asset)))
   );
 }
 
@@ -367,7 +426,7 @@ export function enforcePayment(
     return { allowed: false, reason: decision.reasons[0] ?? "NEEDS_APPROVAL" };
   }
 
-  if (Date.parse(decision.expiresAtISO) <= Date.now()) {
+  if (Date.parse(decision.expiresAtISO) <= enforcementNowMs(settlement)) {
     return { allowed: false, reason: "NEEDS_APPROVAL" };
   }
 
@@ -401,7 +460,7 @@ export function enforcePayment(
   if (quote) {
     const amountOk = BigInt(settlement.amount) === BigInt(quote.amount.amount);
     if (!amountOk) return { allowed: false, reason: "QUOTE_AMOUNT_MISMATCH" };
-    if (quote.destination && settlement.destination && settlement.destination !== quote.destination) {
+    if (quote.destination && settlement.destination !== quote.destination) {
       return { allowed: false, reason: "DESTINATION_MISMATCH" };
     }
     if (decision.rail !== "stripe" && decision.rail !== "hosted") {

@@ -117,10 +117,11 @@ export interface Policy {
   version: PolicySchemaVersion;
   /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed lot ids. */
   lotAllowlist?: string[];
-  /** Operator/vendor allowlist by operator id/wallet (not lot id). */
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed operator ids/wallets. */
   operatorAllowlist?: string[];
   /** @deprecated Use operatorAllowlist. */
   vendorAllowlist?: string[];
+  /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed geo circles. */
   geoAllowlist?: GeoCircle[];
   /** Allowlist semantics: undefined = no restriction, [] = deny-all, [x...] = allow only listed rails. */
   railAllowlist?: Rail[];
@@ -261,6 +262,8 @@ export interface SettlementResult {
   expectedSessionGrantId?: string | null;
   /** Optional expected policy hash for invariant checks. */
   expectedPolicyHash?: string;
+  /** Optional evaluation time for deterministic enforcement replay (ISO string). */
+  nowISO?: string;
 }
 
 /**

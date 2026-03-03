@@ -87,4 +87,14 @@ describe("policy.exit", () => {
     expect(decision.action).toBe("DENY");
     expect(decision.reasons).toContain("LOT_NOT_ALLOWED");
   });
+
+  it("treats empty operator allowlist as deny-all", () => {
+    const decision = evaluatePaymentPolicy(
+      mkPaymentCtx({
+        policy: mkPolicy({ operatorAllowlist: [] }),
+      }),
+    );
+    expect(decision.action).toBe("DENY");
+    expect(decision.reasons).toContain("VENDOR_NOT_ALLOWED");
+  });
 });

@@ -54,11 +54,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         lotId?: string
         feeCurrency?: string
         decisionId?: string
+        policyHash?: string
       }
       amount_total?: number | null
     }
 
-    const { sessionId, plateNumber, lotId, feeCurrency, decisionId } = stripeSession.metadata
+    const { sessionId, plateNumber, lotId, feeCurrency, decisionId, policyHash } =
+      stripeSession.metadata
 
     if (!sessionId || !plateNumber || !lotId) {
       paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_missing' })
@@ -111,7 +113,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         rail: 'stripe' as const,
         asset: { kind: 'IOU' as const, currency: feeCurrency || 'USD', issuer: '' },
         expectedSessionGrantId: session.policyGrantId ?? null,
-        expectedPolicyHash: session.policyHash,
+        expectedPolicyHash: policyHash || undefined,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

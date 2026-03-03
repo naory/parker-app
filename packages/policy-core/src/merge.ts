@@ -21,7 +21,7 @@ function mergeGeoAllowlist(
   if (a === undefined && b === undefined) return undefined;
   if (a === undefined) return b;
   if (b === undefined) return a;
-  return b.length > 0 ? b : a;
+  return b;
 }
 
 function mergeRailAllowlist(

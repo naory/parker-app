@@ -86,4 +86,25 @@ describe("policy.entry", () => {
     expect(grant.grantAction).toBe("DENY");
     expect(grant.reasons).toContain("LOT_NOT_ALLOWED");
   });
+
+  it("treats empty operator allowlist as deny-all", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ operatorAllowlist: [] }),
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("VENDOR_NOT_ALLOWED");
+  });
+
+  it("treats empty geo allowlist as deny-all", () => {
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy: mkPolicy({ geoAllowlist: [] }),
+        geo: { lat: 32.08, lng: 34.78 },
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("GEO_NOT_ALLOWED");
+  });
 });

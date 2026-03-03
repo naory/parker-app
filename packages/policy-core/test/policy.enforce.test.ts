@@ -35,6 +35,20 @@ describe("policy.enforce", () => {
     expect(result).toEqual({ allowed: false, reason: "NEEDS_APPROVAL" });
   });
 
+  it("uses settlement.nowISO for deterministic expiry checks when provided", () => {
+    const allowedBeforeExpiry = enforcePayment(
+      mkDecision({ expiresAtISO: "2026-01-01T00:00:00.000Z" }),
+      mkSettlement({ nowISO: "2025-01-01T00:00:00.000Z" }),
+    );
+    expect(allowedBeforeExpiry).toEqual({ allowed: true });
+
+    const deniedAfterExpiry = enforcePayment(
+      mkDecision({ expiresAtISO: "2026-01-01T00:00:00.000Z" }),
+      mkSettlement({ nowISO: "2027-01-01T00:00:00.000Z" }),
+    );
+    expect(deniedAfterExpiry).toEqual({ allowed: false, reason: "NEEDS_APPROVAL" });
+  });
+
   it("rejects missing decisionId and missing sessionGrantId when required", () => {
     const missingDecisionId = enforcePayment(
       mkDecision({ decisionId: "" }),
@@ -78,6 +92,32 @@ describe("policy.enforce", () => {
         asset: ASSET_ERC20_USDC,
         amount: "1000",
         destination: "0xActual",
+      }),
+    );
+    expect(result).toEqual({ allowed: false, reason: "DESTINATION_MISMATCH" });
+  });
+
+  it("rejects missing settlement destination when quote binds destination", () => {
+    const result = enforcePayment(
+      mkDecision({
+        rail: "evm",
+        asset: ASSET_ERC20_USDC,
+        settlementQuotes: [
+          {
+            quoteId: "q-1",
+            rail: "evm",
+            asset: ASSET_ERC20_USDC,
+            amount: { amount: "1000", decimals: 6 },
+            destination: "0xExpected",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+      mkSettlement({
+        rail: "evm",
+        asset: ASSET_ERC20_USDC,
+        amount: "1000",
+        destination: undefined,
       }),
     );
     expect(result).toEqual({ allowed: false, reason: "DESTINATION_MISMATCH" });
@@ -129,6 +169,32 @@ describe("policy.enforce", () => {
         rail: "evm",
         asset: { kind: "ERC20", chainId: 84532, token: "0xDifferentToken" },
         amount: "1000",
+      }),
+    );
+    expect(result).toEqual({ allowed: false, reason: "QUOTE_NOT_FOUND" });
+  });
+
+  it("does not fall back to rail+asset when quoteId is provided but not found", () => {
+    const result = enforcePayment(
+      mkDecision({
+        rail: "evm",
+        asset: ASSET_ERC20_USDC,
+        settlementQuotes: [
+          {
+            quoteId: "q-expected",
+            rail: "evm",
+            asset: ASSET_ERC20_USDC,
+            amount: { amount: "1000", decimals: 6 },
+            destination: "0xExpected",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+      mkSettlement({
+        rail: "evm",
+        asset: ASSET_ERC20_USDC,
+        amount: "1000",
+        quoteId: "q-other",
       }),
     );
     expect(result).toEqual({ allowed: false, reason: "QUOTE_NOT_FOUND" });

@@ -41,6 +41,7 @@ import type {
   SettlementResult,
   SettlementQuote,
   FiatMoneyMinor,
+  PolicyReasonCode,
 } from '@parker/policy-core'
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
@@ -58,12 +59,18 @@ const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
   .filter(Boolean)
 
 /** User-friendly short messages for policy reason codes (for client display). */
-const REASON_WHY: Record<string, string> = {
+const REASON_WHY: Partial<Record<PolicyReasonCode, string>> = {
   OK: 'Payment allowed',
   LOT_NOT_ALLOWED: 'This lot is not allowed by policy',
+  VENDOR_NOT_ALLOWED: 'Operator is not allowed by policy',
   GEO_NOT_ALLOWED: 'Location not in allowed area',
   ASSET_NOT_ALLOWED: 'Payment asset not allowed',
   RAIL_NOT_ALLOWED: 'Payment method not allowed',
+  QUOTE_NOT_FOUND: 'Settlement quote not found',
+  QUOTE_AMOUNT_MISMATCH: 'Settlement amount does not match quote',
+  DESTINATION_MISMATCH: 'Settlement destination does not match quote',
+  DECISION_NOT_FOUND: 'Policy decision not found',
+  POLICY_HASH_MISMATCH: 'Settlement does not match decision policy hash',
   CAP_EXCEEDED_TX: 'Amount exceeds per-transaction limit',
   CAP_EXCEEDED_SESSION: 'Amount exceeds session limit',
   CAP_EXCEEDED_DAY: 'Amount exceeds daily limit',
@@ -1190,7 +1197,7 @@ gateRouter.post('/exit', async (req, res) => {
         payer: transfer.from,
         destination: pendingIntent.destination,
         expectedSessionGrantId: session?.policyGrantId ?? null,
-        expectedPolicyHash: pendingIntent.policyHash ?? session?.policyHash,
+        expectedPolicyHash: pendingIntent.policyHash ?? undefined,
       }
       const enforcement = await enforceOrReject(
         db.getDecisionPayloadByDecisionId.bind(db),

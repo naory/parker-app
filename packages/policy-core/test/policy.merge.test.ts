@@ -55,4 +55,21 @@ describe("policy.merge", () => {
     expect(merged.capPerSessionMinor).toBe("5000");
     expect(merged.capPerDayMinor).toBe("9000");
   });
+
+  it("geo allowlist empty at higher layer is explicit deny-all", () => {
+    const platform = mkPolicy({
+      geoAllowlist: [{ centerLat: 32.08, centerLng: 34.78, radiusMeters: 5000 }],
+    });
+    const lot = mkPolicy({ geoAllowlist: [] });
+    const policy = resolveEffectivePolicy({ platform, lot });
+
+    const grant = evaluateEntryPolicy(
+      mkEntryCtx({
+        policy,
+        geo: { lat: 32.08, lng: 34.78 },
+      }),
+    );
+    expect(grant.grantAction).toBe("DENY");
+    expect(grant.reasons).toContain("GEO_NOT_ALLOWED");
+  });
 });

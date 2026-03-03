@@ -198,7 +198,7 @@ async function handleTransferEvent(
       payer: args.from,
       destination: pending.receiverWallet,
       expectedSessionGrantId: session?.policyGrantId ?? null,
-      expectedPolicyHash: pending.policyHash ?? session?.policyHash,
+      expectedPolicyHash: pending.policyHash ?? undefined,
     }
     const enforcement = await enforceOrReject(
       db.getDecisionPayloadByDecisionId.bind(db),
