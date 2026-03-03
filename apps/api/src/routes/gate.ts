@@ -80,6 +80,12 @@ const REASON_WHY: Partial<Record<PolicyReasonCode, string>> = {
   GRANT_EXPIRED: 'Session grant expired; approval required',
 }
 
+function reasonsForDisplay(reasons: PolicyReasonCode[] | undefined): PolicyReasonCode[] {
+  if (!reasons || reasons.length === 0) return []
+  const hasNonOk = reasons.some((r) => r !== 'OK')
+  return hasNonOk ? reasons.filter((r) => r !== 'OK') : reasons
+}
+
 const LOT_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
 const XRPL_PAYLOAD_UUID_REGEX =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/
@@ -937,7 +943,7 @@ gateRouter.post('/exit', async (req, res) => {
           policyHash: finalDecision.policyHash,
           sessionGrantId: finalDecision.sessionGrantId ?? undefined,
           action: finalDecision.action,
-          why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+          why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
           reasons: finalDecision.reasons ?? [],
         }
         notifyDriver(plate, {
@@ -978,7 +984,7 @@ gateRouter.post('/exit', async (req, res) => {
         policyHash: finalDecision.policyHash,
         sessionGrantId: finalDecision.sessionGrantId ?? undefined,
         action: finalDecision.action,
-        why: (finalDecision.reasons ?? []).map((r) => REASON_WHY[r] ?? r),
+        why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
         reasons: finalDecision.reasons ?? [],
         grantId: finalDecision.grantId ?? finalDecision.sessionGrantId ?? undefined,
         expiresAt: finalDecision.expiresAtISO,
