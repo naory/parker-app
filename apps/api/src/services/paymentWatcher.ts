@@ -201,12 +201,35 @@ async function handleTransferEvent(
       expectedSessionGrantId: session?.policyGrantId ?? null,
       expectedPolicyHash: pending.policyHash ?? undefined,
     }
+    await db.insertPolicyEvent({
+      eventType: LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+      payload: {
+        decisionId: pending.decisionId,
+        amount: settlement.amount,
+        rail: settlement.rail,
+        txHash,
+      },
+      sessionId: pending.sessionId,
+      decisionId: pending.decisionId,
+      txHash,
+    })
     const enforcement = await enforceOrReject(
       db.getDecisionPayloadByDecisionId.bind(db),
       pending.decisionId,
       settlement,
     )
     if (!enforcement.allowed) {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_FAILED,
+        payload: {
+          decisionId: pending.decisionId,
+          reason: enforcement.reason,
+          settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
+        },
+        sessionId: pending.sessionId,
+        decisionId: pending.decisionId,
+        txHash,
+      })
       if (session) {
         await sessionLifecycleService.markPaymentFailed(session, {
           reason: 'settlement_rejected',
@@ -231,6 +254,16 @@ async function handleTransferEvent(
       )
       return
     }
+    await db.insertPolicyEvent({
+      eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_PASSED,
+      payload: {
+        decisionId: pending.decisionId,
+        settlement: { amount: settlement.amount, rail: settlement.rail, txHash },
+      },
+      sessionId: pending.sessionId,
+      decisionId: pending.decisionId,
+      txHash,
+    })
     // Decision→grant linkage: decision must reference session's grant when session has one
     if (session?.policyGrantId && pending.decisionId) {
       const decisionPayload = (await db.getDecisionPayloadByDecisionId(pending.decisionId)) as

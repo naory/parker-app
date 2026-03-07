@@ -428,6 +428,15 @@ gateRouter.post('/entry', async (req, res) => {
     }
     const grant = evaluateEntryPolicy(entryCtx)
     if (grant.grantAction === 'DENY') {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.POLICY_GRANT_DENIED,
+        payload: {
+          lotId,
+          plateNumber: plate,
+          policyHash: grant.policyHash,
+          reasons: grant.reasons,
+        },
+      })
       return reply(403, {
         error: 'Entry denied by policy',
         reasons: grant.reasons,
@@ -829,6 +838,18 @@ gateRouter.post('/exit', async (req, res) => {
         sessionId,
         decisionId: finalDecision.decisionId,
       })
+      if (finalDecision.action === 'REQUIRE_APPROVAL') {
+        await db.insertPolicyEvent({
+          eventType: LIFECYCLE_EVENT.PAYMENT_APPROVAL_REQUIRED,
+          payload: {
+            decisionId: finalDecision.decisionId,
+            reasons: finalDecision.reasons,
+            policyHash: finalDecision.policyHash,
+          },
+          sessionId,
+          decisionId: finalDecision.decisionId,
+        })
+      }
 
       try {
         await db.insertPolicyDecision({
@@ -1169,6 +1190,19 @@ gateRouter.post('/exit', async (req, res) => {
       const proofHash = paymentTxHash || transfer.txHash
       settlementDecisionId = pendingIntent.decisionId ?? undefined
       settlementTxHash = proofHash ?? undefined
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+        payload: {
+          amount: transfer.amount.toString(),
+          rail: 'xrpl',
+          txHash: proofHash,
+          paymentId: pendingIntent.paymentId,
+        },
+        paymentId: pendingIntent.paymentId,
+        sessionId: pendingIntent.sessionId,
+        decisionId: pendingIntent.decisionId ?? undefined,
+        txHash: proofHash ?? undefined,
+      })
       // Replay protection (shared with Stripe/EVM): policy_events settlementVerified tx_hash uniqueness
       if (proofHash) {
         const alreadySettled = await db.hasSettlementForTxHash(proofHash)
@@ -1260,6 +1294,17 @@ gateRouter.post('/exit', async (req, res) => {
         settlement,
       )
       if (!enforcement.allowed) {
+        await db.insertPolicyEvent({
+          eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_FAILED,
+          payload: {
+            reason: enforcement.reason,
+            settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
+          },
+          paymentId: pendingIntent.paymentId,
+          sessionId: pendingIntent.sessionId,
+          decisionId: pendingIntent.decisionId ?? undefined,
+          txHash: proofHash ?? undefined,
+        })
         if (!usingFallback && session) {
           await sessionLifecycleService.markPaymentFailed(session, {
             reason: 'settlement_rejected',
@@ -1287,6 +1332,16 @@ gateRouter.post('/exit', async (req, res) => {
           decisionId: pendingIntent.decisionId,
         })
       }
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_PASSED,
+        payload: {
+          settlement: { amount: settlement.amount, rail: settlement.rail, txHash: settlement.txHash },
+        },
+        paymentId: pendingIntent.paymentId,
+        sessionId: pendingIntent.sessionId,
+        decisionId: pendingIntent.decisionId ?? undefined,
+        txHash: proofHash ?? undefined,
+      })
       // Decision→grant linkage: decision must reference session's grant when session has one
       if (session?.policyGrantId && pendingIntent.decisionId) {
         const decisionPayload = await db.getDecisionPayloadByDecisionId(pendingIntent.decisionId) as { sessionGrantId?: string | null } | null
@@ -1358,6 +1413,18 @@ gateRouter.post('/exit', async (req, res) => {
     } else if (transfer) {
       settlementTxHash = paymentTxHash || transfer.txHash
       settlementTxHashUnique = true
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+        payload: {
+          decisionId: settlementDecisionId,
+          amount: transfer.amount.toString(),
+          rail: paymentVerificationRail ?? (X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm'),
+          txHash: settlementTxHash,
+        },
+        sessionId,
+        decisionId: settlementDecisionId,
+        txHash: settlementTxHash,
+      })
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       const sameReceiver = X402_NETWORK.startsWith('xrpl:')
         ? transfer.to === expectedReceiver

@@ -110,6 +110,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
 
       // Settlement enforcement: must pass before closing (same as XRPL/EVM)
       const amountMinor = String(stripeSession.amount_total ?? 0)
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+        payload: { decisionId: decisionId ?? undefined, amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+        sessionId,
+        decisionId: decisionId ?? undefined,
+        txHash: stripeSession.id,
+      })
       const settlement = {
         amount: amountMinor,
         rail: 'stripe' as const,
@@ -123,6 +130,16 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         settlement,
       )
       if (!enforcement.allowed) {
+        await db.insertPolicyEvent({
+          eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_FAILED,
+          payload: {
+            reason: enforcement.reason,
+            settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+          },
+          sessionId,
+          decisionId: decisionId ?? undefined,
+          txHash: stripeSession.id,
+        })
         await sessionLifecycleService.markPaymentFailed(session, {
           reason: 'settlement_rejected',
           decisionId: decisionId ?? undefined,
@@ -146,6 +163,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         })
         return res.json({ received: true })
       }
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_PASSED,
+        payload: { settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id } },
+        sessionId,
+        decisionId: decisionId ?? undefined,
+        txHash: stripeSession.id,
+      })
       // Decision→grant linkage: decision must reference session's grant when session has one
       if (session.policyGrantId && decisionId) {
         const decisionPayload = (await db.getDecisionPayloadByDecisionId(decisionId)) as

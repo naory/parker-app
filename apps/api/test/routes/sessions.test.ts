@@ -7,6 +7,7 @@ vi.mock('../../src/db', () => ({
   db: {
     getActiveSession: vi.fn(),
     getSessionHistory: vi.fn(),
+    getSessionTimeline: vi.fn(),
   },
 }))
 
@@ -88,6 +89,48 @@ describe('sessions routes', () => {
       await request(app).get('/api/sessions/history/1234567?limit=abc&offset=-5')
 
       expect(db.getSessionHistory).toHaveBeenCalledWith('1234567', 50, 0)
+    })
+  })
+
+  describe('GET /api/sessions/:sessionId/timeline', () => {
+    it('returns ordered timeline events with default limit', async () => {
+      vi.mocked(db.getSessionTimeline).mockResolvedValue([
+        {
+          id: 1,
+          sessionId: 's1',
+          eventType: 'SESSION_CREATED',
+          timestamp: new Date('2026-03-07T09:11:02.000Z'),
+          metadata: { plateNumber: '1234567' },
+        } as any,
+        {
+          id: 2,
+          sessionId: 's1',
+          eventType: 'SESSION_CLOSED',
+          timestamp: new Date('2026-03-07T09:18:46.000Z'),
+          metadata: {},
+        } as any,
+      ])
+
+      const app = createApp()
+      const res = await request(app).get('/api/sessions/s1/timeline')
+
+      expect(res.status).toBe(200)
+      expect(db.getSessionTimeline).toHaveBeenCalledWith('s1', 500)
+      expect(res.body).toEqual([
+        expect.objectContaining({ event: 'SESSION_CREATED' }),
+        expect.objectContaining({ event: 'SESSION_CLOSED' }),
+      ])
+    })
+
+    it('respects and caps timeline limit', async () => {
+      vi.mocked(db.getSessionTimeline).mockResolvedValue([])
+      const app = createApp()
+
+      await request(app).get('/api/sessions/s1/timeline?limit=1500')
+      expect(db.getSessionTimeline).toHaveBeenCalledWith('s1', 1000)
+
+      await request(app).get('/api/sessions/s1/timeline?limit=10')
+      expect(db.getSessionTimeline).toHaveBeenCalledWith('s1', 10)
     })
   })
 })
