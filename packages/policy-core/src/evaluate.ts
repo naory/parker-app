@@ -460,8 +460,11 @@ export function enforcePayment(
   if (quote) {
     const amountOk = BigInt(settlement.amount) === BigInt(quote.amount.amount);
     if (!amountOk) return { allowed: false, reason: "QUOTE_AMOUNT_MISMATCH" };
-    if (quote.destination && settlement.destination !== quote.destination) {
-      return { allowed: false, reason: "DESTINATION_MISMATCH" };
+    if (quote.destination) {
+      // If a quote binds destination, settlement must provide it and match exactly.
+      if (!settlement.destination || settlement.destination !== quote.destination) {
+        return { allowed: false, reason: "DESTINATION_MISMATCH" };
+      }
     }
     if (decision.rail !== "stripe" && decision.rail !== "hosted") {
       if (!quote.asset || !assetEqual(quote.asset, settlement.asset)) {

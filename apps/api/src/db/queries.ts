@@ -1,5 +1,9 @@
 import { pool } from './index'
-import type { DriverRecord, SessionRecord, Lot } from '@parker/core'
+import type { DriverRecord, SessionRecord, Lot, SessionState } from '@parker/core'
+import { assertSessionTransition, assertSessionTransitionPath } from '@parker/core'
+import type { DecisionState } from '@parker/core'
+import { assertDecisionTransition } from '@parker/core'
+import { LIFECYCLE_EVENT } from '@parker/core'
 
 // ---- Driver Queries ----
 
@@ -67,6 +71,7 @@ interface CreateSessionInput {
 }
 
 async function createSession(input: CreateSessionInput): Promise<SessionRecord> {
+  assertSessionTransition('pending_entry', 'active')
   const { rows } = await pool.query(
     `INSERT INTO sessions (plate_number, lot_id, token_id, entry_time, status)
      VALUES ($1, $2, $3, NOW(), 'active')
@@ -78,7 +83,11 @@ async function createSession(input: CreateSessionInput): Promise<SessionRecord> 
 
 async function getActiveSession(plate: string): Promise<SessionRecord | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM sessions WHERE plate_number = $1 AND status = 'active'`,
+    `SELECT * FROM sessions
+     WHERE plate_number = $1
+       AND status IN ('active', 'payment_required', 'approval_required', 'payment_failed')
+     ORDER BY entry_time DESC
+     LIMIT 1`,
     [plate],
   )
   return rows[0] ? mapSession(rows[0]) : null
@@ -86,26 +95,246 @@ async function getActiveSession(plate: string): Promise<SessionRecord | null> {
 
 async function getActiveSessionsByLot(lotId: string): Promise<SessionRecord[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM sessions WHERE lot_id = $1 AND status = 'active' ORDER BY entry_time DESC`,
+    `SELECT * FROM sessions
+     WHERE lot_id = $1
+       AND status IN ('active', 'payment_required', 'approval_required', 'payment_failed')
+     ORDER BY entry_time DESC`,
     [lotId],
   )
   return rows.map(mapSession)
 }
 
-interface EndSessionInput {
-  feeAmount: number
-  feeCurrency: string
+interface TransitionSessionInput {
+  to: SessionState
+  reason: string
+  decisionId?: string
+  txHash?: string
+  metadata?: TransitionInvariantMetadata
+  feeAmount?: number
+  feeCurrency?: string
   stripePaymentId?: string
 }
 
-async function endSession(plate: string, input: EndSessionInput): Promise<SessionRecord | null> {
+interface TransitionInvariantMetadata extends Record<string, unknown> {
+  // active -> payment_required
+  entryPolicyPassed?: boolean
+  // payment_required -> payment_verified
+  decisionValidated?: boolean
+  decisionNotExpired?: boolean
+  settlementProofVerified?: boolean
+  enforcementPassed?: boolean
+  txHashUnique?: boolean
+  // payment_verified -> closed
+  settlementEventPersisted?: boolean
+  nftBurnSucceeded?: boolean
+  allowDelayedNftBurn?: boolean
+}
+
+interface SettleSessionAfterVerifiedInput {
+  reason: string
+  decisionId?: string
+  txHash?: string
+  metadata?: TransitionInvariantMetadata
+  feeAmount?: number
+  feeCurrency?: string
+  stripePaymentId?: string
+}
+
+function normalizeSessionState(status: string): SessionState {
+  switch (status) {
+    case 'pending_entry':
+    case 'active':
+    case 'payment_required':
+    case 'approval_required':
+    case 'payment_verified':
+    case 'payment_failed':
+    case 'closed':
+    case 'denied':
+      return status
+    case 'completed':
+      return 'closed' // legacy pre-state-machine value
+    case 'cancelled':
+      return 'denied' // legacy pre-state-machine value
+    default:
+      throw new Error(`Unknown session status: ${String(status)}`)
+  }
+}
+
+function sessionStateToPersistedStatus(state: SessionState): SessionState {
+  return state
+}
+
+function assertTransitionInvariants(
+  session: SessionRecord,
+  input: TransitionSessionInput,
+): void {
+  const metadata = input.metadata ?? {}
+
+  if (session.status === 'active' && input.to === 'payment_required') {
+    if (!session.policyGrantId) {
+      throw new Error('Invariant failed: active -> payment_required requires policy grant')
+    }
+    if (metadata.entryPolicyPassed !== true) {
+      throw new Error('Invariant failed: active -> payment_required requires entry policy passed')
+    }
+  }
+
+  if (session.status === 'payment_required' && input.to === 'payment_verified') {
+    if (!input.decisionId || input.decisionId.trim().length === 0) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires decisionId',
+      )
+    }
+    if (metadata.decisionValidated !== true) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires decision validation',
+      )
+    }
+    if (metadata.decisionNotExpired !== true) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires non-expired decision',
+      )
+    }
+    if (metadata.settlementProofVerified !== true) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires settlement proof',
+      )
+    }
+    if (metadata.enforcementPassed !== true) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires enforcement pass',
+      )
+    }
+    if (metadata.txHashUnique !== true) {
+      throw new Error(
+        'Invariant failed: payment_required -> payment_verified requires unique txHash',
+      )
+    }
+  }
+
+  if (session.status === 'payment_verified' && input.to === 'closed') {
+    if (metadata.settlementEventPersisted !== true) {
+      throw new Error(
+        'Invariant failed: payment_verified -> closed requires persisted settlement verification',
+      )
+    }
+    const burnSatisfied =
+      metadata.nftBurnSucceeded === true || metadata.allowDelayedNftBurn === true
+    if (!burnSatisfied) {
+      throw new Error(
+        'Invariant failed: payment_verified -> closed requires NFT burn success or delayed-burn semantics',
+      )
+    }
+  }
+}
+
+async function transitionSession(
+  session: SessionRecord,
+  input: TransitionSessionInput,
+): Promise<SessionRecord | null> {
+  assertTransitionInvariants(session, input)
+  const fromState = normalizeSessionState(session.status)
+  assertSessionTransition(fromState, input.to)
+  const nextStatus = sessionStateToPersistedStatus(input.to)
+
   const { rows } = await pool.query(
-    `UPDATE sessions SET exit_time = NOW(), fee_amount = $2, fee_currency = $3, stripe_payment_id = $4, status = 'completed'
-     WHERE plate_number = $1 AND status = 'active'
+    `UPDATE sessions
+     SET status = $2,
+         exit_time = CASE
+           WHEN $2 = 'closed' AND exit_time IS NULL THEN NOW()
+           ELSE exit_time
+         END,
+         fee_amount = COALESCE($3, fee_amount),
+         fee_currency = COALESCE($4, fee_currency),
+         stripe_payment_id = COALESCE($5, stripe_payment_id)
+     WHERE id = $1 AND status = $6
      RETURNING *`,
-    [plate, input.feeAmount, input.feeCurrency, input.stripePaymentId ?? null],
+    [
+      session.id,
+      nextStatus,
+      input.feeAmount ?? null,
+      input.feeCurrency ?? null,
+      input.stripePaymentId ?? null,
+      session.status,
+    ],
   )
-  return rows[0] ? mapSession(rows[0]) : null
+  if (!rows[0]) return null
+
+  const payload = {
+    from: fromState,
+    to: input.to,
+    reason: input.reason,
+    metadata: input.metadata ?? {},
+  }
+  await insertPolicyEvent({
+    eventType: LIFECYCLE_EVENT.SESSION_STATE_TRANSITION,
+    payload,
+    sessionId: session.id,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+  })
+
+  return mapSession(rows[0])
+}
+
+async function settleSessionAfterVerified(
+  session: SessionRecord,
+  input: SettleSessionAfterVerifiedInput,
+): Promise<SessionRecord | null> {
+  let current = session
+
+  if (current.status === 'active' || current.status === 'payment_failed') {
+    const transitioned = await transitionSession(current, {
+      to: 'payment_required',
+      reason: input.reason,
+      decisionId: input.decisionId,
+      txHash: input.txHash,
+      metadata: {
+        ...(input.metadata ?? {}),
+        autoTransition: true,
+        toState: 'payment_required',
+        entryPolicyPassed: true,
+      },
+    })
+    if (!transitioned) return null
+    current = transitioned
+  }
+
+  assertSessionTransitionPath([current.status, 'payment_verified', 'closed'])
+
+  const verified = await transitionSession(current, {
+    to: 'payment_verified',
+    reason: input.reason,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+    metadata: input.metadata,
+  })
+  if (!verified) return null
+
+  const closed = await transitionSession(verified, {
+    to: 'closed',
+    reason: input.reason,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+    metadata: input.metadata,
+    feeAmount: input.feeAmount,
+    feeCurrency: input.feeCurrency,
+    stripePaymentId: input.stripePaymentId,
+  })
+  if (!closed) return null
+
+  await insertPolicyEvent({
+    eventType: LIFECYCLE_EVENT.SESSION_CLOSED,
+    payload: {
+      reason: input.reason,
+      metadata: input.metadata ?? {},
+    },
+    sessionId: closed.id,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+  })
+
+  return closed
 }
 
 async function getSessionHistory(
@@ -217,7 +446,7 @@ async function getFiatSpendTotalsByCurrency(
   const { rows } = await pool.query(
     `SELECT COALESCE(SUM(fee_amount), 0) AS day_total
      FROM sessions
-     WHERE plate_number = $1 AND status = 'completed' AND fee_currency = $2
+     WHERE plate_number = $1 AND status IN ('closed', 'completed') AND fee_currency = $2
        AND exit_time >= date_trunc('day', NOW())`,
     [plate, currency],
   )
@@ -270,6 +499,11 @@ export interface InsertPolicyDecisionInput {
   payload: unknown
 }
 
+interface TransitionDecisionStateInput {
+  to: DecisionState
+  from: DecisionState[]
+}
+
 /** Insert decision; JSONB columns receive serialized JSON and ::jsonb cast stores native JSONB (not text). */
 async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<void> {
   const chosenAssetJson =
@@ -277,8 +511,8 @@ async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<v
   const reasonsJson = JSON.stringify(input.reasons)
   const payloadJson = JSON.stringify(input.payload)
   await pool.query(
-    `INSERT INTO policy_decisions (decision_id, policy_hash, session_grant_id, chosen_rail, chosen_asset, quote_minor, quote_currency, expires_at, action, reasons, require_approval, payload)
-     VALUES ($1, $2, $3::uuid, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb)`,
+    `INSERT INTO policy_decisions (decision_id, decision_state, policy_hash, session_grant_id, chosen_rail, chosen_asset, quote_minor, quote_currency, expires_at, action, reasons, require_approval, payload)
+     VALUES ($1, 'created', $2, $3::uuid, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb)`,
     [
       input.decisionId,
       input.policyHash,
@@ -296,6 +530,49 @@ async function insertPolicyDecision(input: InsertPolicyDecisionInput): Promise<v
   )
 }
 
+function normalizeDecisionState(state: string): DecisionState {
+  switch (state) {
+    case 'created':
+    case 'approved':
+    case 'consumed':
+    case 'expired':
+    case 'rejected':
+      return state
+    default:
+      throw new Error(`Unknown decision state: ${state}`)
+  }
+}
+
+async function transitionDecisionState(
+  decisionId: string,
+  input: TransitionDecisionStateInput,
+): Promise<boolean> {
+  if (!input.from.length) return false
+  for (const from of input.from) {
+    assertDecisionTransition(from, input.to)
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE policy_decisions
+     SET decision_state = $2
+     WHERE decision_id = $1
+       AND decision_state = ANY($3::text[])
+     RETURNING decision_state`,
+    [decisionId, input.to, input.from],
+  )
+
+  if (!rows[0]) return false
+  normalizeDecisionState(rows[0].decision_state)
+  return true
+}
+
+async function consumeDecisionOnce(decisionId: string): Promise<boolean> {
+  return transitionDecisionState(decisionId, {
+    to: 'consumed',
+    from: ['created', 'approved'],
+  })
+}
+
 /** Get payment decision payload by decision_id (policy_decisions first, then events fallback). */
 async function getDecisionPayloadByDecisionId(
   decisionId: string,
@@ -307,9 +584,9 @@ async function getDecisionPayloadByDecisionId(
   if (decisionRows[0]?.payload) return decisionRows[0].payload
   const { rows: eventRows } = await pool.query(
     `SELECT payload FROM policy_events
-     WHERE event_type = 'paymentDecisionCreated' AND decision_id = $1
+     WHERE event_type = $2 AND decision_id = $1
      ORDER BY created_at DESC LIMIT 1`,
-    [decisionId],
+    [decisionId, LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED],
   )
   return eventRows[0]?.payload ?? null
 }
@@ -318,8 +595,8 @@ async function getDecisionPayloadByDecisionId(
 async function hasSettlementForTxHash(txHash: string): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM policy_events
-     WHERE event_type = 'settlementVerified' AND tx_hash = $1 LIMIT 1`,
-    [txHash],
+     WHERE event_type IN ($2, $3) AND tx_hash = $1 LIMIT 1`,
+    [txHash, LIFECYCLE_EVENT.SETTLEMENT_VERIFIED, 'settlementVerified'],
   )
   return rows.length > 0
 }
@@ -328,20 +605,20 @@ async function hasSettlementForTxHash(txHash: string): Promise<boolean> {
 async function hasSettlementForDecisionRail(decisionId: string, rail: string): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM policy_events
-     WHERE event_type = 'settlementVerified'
+     WHERE event_type IN ($3, $4)
        AND decision_id = $1
        AND payload->>'rail' = $2
      LIMIT 1`,
-    [decisionId, rail],
+    [decisionId, rail, LIFECYCLE_EVENT.SETTLEMENT_VERIFIED, 'settlementVerified'],
   )
   return rows.length > 0
 }
 
-/** Median fee (completed sessions) for a lot — for amount-anomaly risk signal. */
+/** Median fee (closed sessions) for a lot — for amount-anomaly risk signal. */
 async function getMedianFeeForLot(lotId: string): Promise<number | null> {
   const { rows } = await pool.query<{ median: string | number | null }>(
     `SELECT (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY fee_amount))::float AS median
-     FROM sessions WHERE lot_id = $1 AND status = 'completed' AND fee_amount IS NOT NULL`,
+     FROM sessions WHERE lot_id = $1 AND status IN ('closed', 'completed') AND fee_amount IS NOT NULL`,
     [lotId],
   )
   const val = rows[0]?.median
@@ -696,7 +973,7 @@ function mapSession(row: any): SessionRecord {
     feeCurrency: row.fee_currency ?? undefined,
     stripePaymentId: row.stripe_payment_id ?? undefined,
     txHash: row.tx_hash,
-    status: row.status,
+    status: normalizeSessionState(row.status),
     policyGrantId: row.policy_grant_id ?? undefined,
     policyHash: row.policy_hash ?? undefined,
     approvalRequiredBeforePayment: row.approval_required_before_payment === true,
@@ -753,7 +1030,8 @@ export const db = {
   createSession,
   getActiveSession,
   getActiveSessionsByLot,
-  endSession,
+  transitionSession,
+  settleSessionAfterVerified,
   getSessionHistory,
   insertPolicyGrant,
   updateSessionPolicyGrant,
@@ -763,6 +1041,8 @@ export const db = {
   getSpendTotalsFiat,
   insertPolicyEvent,
   insertPolicyDecision,
+  transitionDecisionState,
+  consumeDecisionOnce,
   getDecisionPayloadByDecisionId,
   hasSettlementForTxHash,
   hasSettlementForDecisionRail,

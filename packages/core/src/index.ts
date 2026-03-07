@@ -1,4 +1,6 @@
 export * from './types'
+export * from './state-machine'
+export * from './lifecycle-events'
 export * from './chain'
 export * from './utils'
 export * from './contracts'

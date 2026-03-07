@@ -30,7 +30,7 @@ CREATE TABLE sessions (
     fee_currency      VARCHAR(10),
     stripe_payment_id VARCHAR(255),
     tx_hash           VARCHAR(66),
-    status            VARCHAR(20) DEFAULT 'active',
+    status            VARCHAR(20) DEFAULT 'pending_entry',
     policy_grant_id   UUID,
     policy_hash       VARCHAR(64),
     approval_required_before_payment BOOLEAN NOT NULL DEFAULT false,
@@ -42,13 +42,25 @@ CREATE INDEX idx_sessions_policy_grant ON sessions(policy_grant_id);
 CREATE INDEX idx_sessions_lot ON sessions(lot_id);
 CREATE INDEX idx_sessions_status ON sessions(status);
 
--- Prevent duplicate active sessions for the same plate (race-condition guard)
-CREATE UNIQUE INDEX idx_sessions_one_active_per_plate
-  ON sessions(plate_number) WHERE status = 'active';
+-- Prevent duplicate open sessions for the same vehicle+lot (race-condition guard)
+CREATE UNIQUE INDEX idx_sessions_one_open_per_plate_lot
+  ON sessions(plate_number, lot_id)
+  WHERE status IN ('active', 'payment_required', 'approval_required', 'payment_failed');
 
 -- Enforce valid session statuses
 ALTER TABLE sessions ADD CONSTRAINT chk_session_status
-  CHECK (status IN ('active', 'completed', 'cancelled'));
+  CHECK (
+    status IN (
+      'pending_entry',
+      'active',
+      'payment_required',
+      'approval_required',
+      'payment_verified',
+      'payment_failed',
+      'closed',
+      'denied'
+    )
+  );
 
 -- Policy grants (output of entry policy evaluation; one per session)
 CREATE TABLE policy_grants (
@@ -146,6 +158,7 @@ CREATE UNIQUE INDEX idx_xrpl_intents_one_pending_per_plate_lot
 -- decision_id is unique (PRIMARY KEY). Indexes below for enforcement lookups.
 CREATE TABLE policy_decisions (
     decision_id       VARCHAR(64) PRIMARY KEY,
+    decision_state    VARCHAR(16) NOT NULL DEFAULT 'created',
     policy_hash       VARCHAR(64) NOT NULL,
     session_grant_id  UUID,
     chosen_rail       VARCHAR(20),
@@ -160,8 +173,13 @@ CREATE TABLE policy_decisions (
     payload           JSONB NOT NULL
 );
 
+ALTER TABLE policy_decisions ADD CONSTRAINT chk_policy_decision_state
+  CHECK (decision_state IN ('created', 'approved', 'consumed', 'expired', 'rejected'));
+
 CREATE INDEX idx_policy_decisions_session_grant ON policy_decisions(session_grant_id);
 CREATE INDEX idx_policy_decisions_expires_at ON policy_decisions(expires_at);
+ALTER TABLE policy_decisions ADD CONSTRAINT fk_policy_decisions_session_grant
+  FOREIGN KEY (session_grant_id) REFERENCES policy_grants(grant_id);
 
 -- Policy audit trail: entry grants, payment decisions, settlement verification, enforcement failures.
 CREATE TABLE policy_events (
@@ -179,6 +197,8 @@ CREATE INDEX idx_policy_events_decision_id ON policy_events(decision_id);
 CREATE INDEX idx_policy_events_event_type ON policy_events(event_type);
 CREATE INDEX idx_policy_events_tx_hash ON policy_events(tx_hash) WHERE tx_hash IS NOT NULL;
 CREATE UNIQUE INDEX idx_policy_events_settlement_tx ON policy_events(tx_hash)
-  WHERE event_type = 'settlementVerified' AND tx_hash IS NOT NULL;
+  WHERE event_type = 'SETTLEMENT_VERIFIED' AND tx_hash IS NOT NULL;
+CREATE UNIQUE INDEX idx_policy_events_settlement_decision_once ON policy_events(decision_id)
+  WHERE event_type = 'SETTLEMENT_VERIFIED' AND decision_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_policy_events_settlement_decision_rail ON policy_events(decision_id, (payload->>'rail'))
-  WHERE event_type = 'settlementVerified' AND decision_id IS NOT NULL AND payload ? 'rail';
+  WHERE event_type = 'SETTLEMENT_VERIFIED' AND decision_id IS NOT NULL AND payload ? 'rail';

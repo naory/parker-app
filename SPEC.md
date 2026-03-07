@@ -471,7 +471,7 @@ When the DB is unreachable, the exit flow falls back to Hedera's Mirror Node RES
 
 ```
 Normal exit:
-  DB.getActiveSession(plate) → fee calc → payment → DB.endSession() → Hedera.burn()
+  DB.getActiveSession(plate) → fee calc → payment → DB.transitionSession()/settleSessionAfterVerified → Hedera.burn()
 
 DB-down exit:
   MirrorNode.getNFTByPlate(plate) → verify NFT exists + read metadata

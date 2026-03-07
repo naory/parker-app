@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('../../src/db', () => ({
   db: {
-    endSession: vi.fn(),
+    settleSessionAfterVerified: vi.fn(),
+    transitionSession: vi.fn(),
     hasSettlementForTxHash: vi.fn(() => Promise.resolve(false)),
     hasSettlementForDecisionRail: vi.fn(() => Promise.resolve(false)),
+    consumeDecisionOnce: vi.fn(() => Promise.resolve(true)),
     getDecisionPayloadByDecisionId: vi.fn(() =>
       Promise.resolve({
         action: 'ALLOW',
@@ -15,7 +17,16 @@ vi.mock('../../src/db', () => ({
       }),
     ),
     insertPolicyEvent: vi.fn(() => Promise.resolve()),
-    getActiveSession: vi.fn(() => Promise.resolve({ policyGrantId: null })),
+    getActiveSession: vi.fn(() =>
+      Promise.resolve({
+        id: 'sess-1',
+        plateNumber: 'ABC123',
+        lotId: 'LOT-1',
+        entryTime: new Date(),
+        status: 'payment_required',
+        policyGrantId: null,
+      }),
+    ),
   },
 }))
 
@@ -104,10 +115,10 @@ describe('paymentWatcher enforcement', () => {
     onLogs([makeTransferLog('0xReceiver', 1_500_000n, '0xtx-rail-mismatch')])
     await new Promise((r) => setTimeout(r, 50))
 
-    expect(db.endSession).not.toHaveBeenCalled()
+    expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     expect(db.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'enforcementFailed',
+        eventType: 'SETTLEMENT_REJECTED',
         payload: expect.objectContaining({ reason: 'RAIL_NOT_ALLOWED' }),
       }),
     )
@@ -128,10 +139,10 @@ describe('paymentWatcher enforcement', () => {
     onLogs([makeTransferLog('0xReceiver', 1_500_000n, '0xtx-asset-mismatch')])
     await new Promise((r) => setTimeout(r, 50))
 
-    expect(db.endSession).not.toHaveBeenCalled()
+    expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     expect(db.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'enforcementFailed',
+        eventType: 'SETTLEMENT_REJECTED',
         payload: expect.objectContaining({ reason: 'ASSET_NOT_ALLOWED' }),
       }),
     )
@@ -150,10 +161,10 @@ describe('paymentWatcher enforcement', () => {
     onLogs([makeTransferLog('0xReceiver', 1_500_000n, '0xtx-amount-mismatch')])
     await new Promise((r) => setTimeout(r, 50))
 
-    expect(db.endSession).not.toHaveBeenCalled()
+    expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     expect(db.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'enforcementFailed',
+        eventType: 'SETTLEMENT_REJECTED',
         payload: expect.objectContaining({ reason: 'CAP_EXCEEDED_TX' }),
       }),
     )
@@ -184,10 +195,10 @@ describe('paymentWatcher enforcement', () => {
     onLogs([makeTransferLog('0xReceiver', 1_500_000n, '0xtx-destination-mismatch')])
     await new Promise((r) => setTimeout(r, 50))
 
-    expect(db.endSession).not.toHaveBeenCalled()
+    expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     expect(db.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'enforcementFailed',
+        eventType: 'SETTLEMENT_REJECTED',
         payload: expect.objectContaining({ reason: 'DESTINATION_MISMATCH' }),
       }),
     )

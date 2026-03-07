@@ -21,6 +21,30 @@ export interface ParkingSession {
 
 // ---- Off-chain types (API / DB) ----
 
+/**
+ * Lifecycle state for the product-facing session object.
+ * This is the canonical business state machine target.
+ */
+export type SessionState =
+  | 'pending_entry'
+  | 'active'
+  | 'payment_required'
+  | 'approval_required'
+  | 'payment_verified'
+  | 'payment_failed'
+  | 'closed'
+  | 'denied'
+
+/**
+ * Lifecycle state for payment decisions (authorization object).
+ */
+export type DecisionState = 'created' | 'approved' | 'consumed' | 'expired' | 'rejected'
+
+/**
+ * Lifecycle state for settlement evidence (proof object).
+ */
+export type SettlementState = 'pending' | 'verified' | 'rejected'
+
 export interface Lot {
   id: string
   name: string
@@ -50,7 +74,7 @@ export interface SessionRecord {
   feeCurrency?: string
   stripePaymentId?: string
   txHash?: string
-  status: 'active' | 'completed' | 'cancelled'
+  status: SessionState
   /** Policy grant from entry-time evaluation (nullable until grant persisted). */
   policyGrantId?: string
   /** Denormalized policy hash for quick checks. */

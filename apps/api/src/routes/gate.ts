@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { createHash, randomUUID } from 'node:crypto'
 import type { GateEntryRequest, GateExitRequest, PaymentOptions } from '@parker/core'
 import { calculateFee, normalizePlate } from '@parker/core'
+import { LIFECYCLE_EVENT } from '@parker/core'
 import { recognizePlate } from '@parker/alpr'
 
 import { db } from '../db'
@@ -45,6 +46,7 @@ import type {
 } from '@parker/policy-core'
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
+import { sessionLifecycleService } from '../services/sessionLifecycle'
 
 export const gateRouter = Router()
 
@@ -451,7 +453,7 @@ gateRouter.post('/entry', async (req, res) => {
     // Create session in DB (includes Hedera serial if minted)
     let session
     try {
-      session = await db.createSession({
+      session = await sessionLifecycleService.activateSession({
         plateNumber: plate,
         lotId,
         tokenId,
@@ -481,7 +483,7 @@ gateRouter.post('/entry', async (req, res) => {
         approvalRequiredBeforePayment: grant.requireApproval === true,
       }
       await db.insertPolicyEvent({
-        eventType: 'entryGrantCreated',
+        eventType: LIFECYCLE_EVENT.POLICY_GRANT_ISSUED,
         payload: {
           grantId,
           policyHash: grant.policyHash,
@@ -710,7 +712,7 @@ gateRouter.post('/exit', async (req, res) => {
         session?.id
       ) {
         await db.insertPolicyEvent({
-          eventType: 'riskSignal',
+          eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
           payload: { signal: 'AMOUNT_ANOMALY', fee, medianFee, lotId },
           sessionId: session.id,
         })
@@ -741,6 +743,13 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       if (finalDecision.action === 'DENY') {
+        if (!usingFallback && session) {
+          await sessionLifecycleService.denySession(session, {
+            reason: 'payment_denied',
+            decisionId: finalDecision.decisionId,
+            metadata: { source: 'gate_exit', action: finalDecision.action },
+          })
+        }
         return reply(403, {
           error: 'Payment denied by policy',
           reasons: finalDecision.reasons,
@@ -815,7 +824,7 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       await db.insertPolicyEvent({
-        eventType: 'paymentDecisionCreated',
+        eventType: LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
         payload: decisionToPersist,
         sessionId,
         decisionId: finalDecision.decisionId,
@@ -878,6 +887,36 @@ gateRouter.post('/exit', async (req, res) => {
 
       const paymentOptions: PaymentOptions = {}
       const approvalRequired = finalDecision.action === 'REQUIRE_APPROVAL'
+      if (!usingFallback && session) {
+        const targetState = approvalRequired ? 'approval_required' : 'payment_required'
+        if (session.status !== targetState) {
+          const forceApprovalForMissingGrant =
+            targetState === 'payment_required' && !session.policyGrantId
+          const transitioned =
+            forceApprovalForMissingGrant || targetState === 'approval_required'
+              ? await sessionLifecycleService.requireApproval(session, {
+                  reason: forceApprovalForMissingGrant
+                    ? 'payment_requires_grant'
+                    : 'payment_decision_created',
+                  decisionId: finalDecision.decisionId,
+                  metadata: { source: 'gate_exit', action: finalDecision.action },
+                })
+              : await sessionLifecycleService.requirePayment(session, {
+                  reason: 'payment_decision_created',
+                  decisionId: finalDecision.decisionId,
+                  metadata: { source: 'gate_exit', action: finalDecision.action },
+                })
+          if (!transitioned) {
+            return reply(409, {
+              error: 'Session transition conflict',
+              plateNumber: plate,
+              from: session.status,
+              to: targetState,
+            })
+          }
+          session = transitioned
+        }
+      }
       if (finalDecision.action === 'ALLOW' && finalDecision.rail) {
         if (finalDecision.rail === 'stripe' && stripeOption) paymentOptions.stripe = stripeOption
         else if ((finalDecision.rail === 'xrpl' || finalDecision.rail === 'evm') && x402Option)
@@ -1041,6 +1080,11 @@ gateRouter.post('/exit', async (req, res) => {
       | 'xrpl'
       | 'evm'
       | undefined
+    let settlementDecisionId: string | undefined
+    let settlementTxHash: string | undefined
+    let settlementTxHashUnique = false
+    let settlementEventPersisted = false
+    let settlementProofVerified = false
     const isDevSimulated =
       process.env.NODE_ENV === 'development' &&
       (req as any).paymentTxHash === 'simulated-dev-payment'
@@ -1123,12 +1167,14 @@ gateRouter.post('/exit', async (req, res) => {
       }
 
       const proofHash = paymentTxHash || transfer.txHash
+      settlementDecisionId = pendingIntent.decisionId ?? undefined
+      settlementTxHash = proofHash ?? undefined
       // Replay protection (shared with Stripe/EVM): policy_events settlementVerified tx_hash uniqueness
       if (proofHash) {
         const alreadySettled = await db.hasSettlementForTxHash(proofHash)
         if (alreadySettled) {
           await db.insertPolicyEvent({
-            eventType: 'riskSignal',
+            eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
             payload: { signal: 'REPLAY_SUSPICION', txHash: proofHash, paymentId: pendingIntent.paymentId },
             paymentId: pendingIntent.paymentId,
             sessionId: pendingIntent.sessionId,
@@ -1140,7 +1186,7 @@ gateRouter.post('/exit', async (req, res) => {
         const existingByTx = await db.getXrplIntentByTxHash(proofHash)
         if (existingByTx && existingByTx.paymentId !== pendingIntent.paymentId) {
           await db.insertPolicyEvent({
-            eventType: 'riskSignal',
+            eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
             payload: { signal: 'REPLAY_SUSPICION', txHash: proofHash, paymentId: pendingIntent.paymentId },
             paymentId: pendingIntent.paymentId,
             sessionId: pendingIntent.sessionId,
@@ -1149,11 +1195,14 @@ gateRouter.post('/exit', async (req, res) => {
           paymentFailuresTotal.inc({ reason: 'xrpl_replay_detected' })
           return reply(409, { error: 'XRPL transaction hash has already been used' })
         }
+        settlementTxHashUnique = true
+      } else {
+        settlementTxHashUnique = true
       }
 
       if (transfer.to !== pendingIntent.destination) {
         await db.insertPolicyEvent({
-          eventType: 'riskSignal',
+          eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
           payload: {
             signal: 'UNKNOWN_DESTINATION_WALLET',
             expected: pendingIntent.destination,
@@ -1211,8 +1260,16 @@ gateRouter.post('/exit', async (req, res) => {
         settlement,
       )
       if (!enforcement.allowed) {
+        if (!usingFallback && session) {
+          await sessionLifecycleService.markPaymentFailed(session, {
+            reason: 'settlement_rejected',
+            decisionId: pendingIntent.decisionId ?? undefined,
+            txHash: proofHash ?? undefined,
+            metadata: { source: 'gate_exit', reason: enforcement.reason },
+          })
+        }
         await db.insertPolicyEvent({
-          eventType: 'enforcementFailed',
+          eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
           payload: {
             decisionId: pendingIntent.decisionId,
             reason: enforcement.reason,
@@ -1234,8 +1291,16 @@ gateRouter.post('/exit', async (req, res) => {
       if (session?.policyGrantId && pendingIntent.decisionId) {
         const decisionPayload = await db.getDecisionPayloadByDecisionId(pendingIntent.decisionId) as { sessionGrantId?: string | null } | null
         if (decisionPayload?.sessionGrantId != null && decisionPayload.sessionGrantId !== session.policyGrantId) {
+          if (!usingFallback && session) {
+            await sessionLifecycleService.markPaymentFailed(session, {
+              reason: 'settlement_rejected',
+              decisionId: pendingIntent.decisionId,
+              txHash: proofHash ?? undefined,
+              metadata: { source: 'gate_exit', reason: 'NEEDS_APPROVAL' },
+            })
+          }
           await db.insertPolicyEvent({
-            eventType: 'enforcementFailed',
+            eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
             payload: {
               decisionId: pendingIntent.decisionId,
               reason: 'NEEDS_APPROVAL',
@@ -1255,19 +1320,16 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
       if (pendingIntent.decisionId) {
-        const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
-          pendingIntent.decisionId,
-          'xrpl',
-        )
-        if (alreadySettledDecisionRail) {
-          paymentFailuresTotal.inc({ reason: 'xrpl_decision_rail_replay_detected' })
+        const consumed = await db.consumeDecisionOnce(pendingIntent.decisionId)
+        if (!consumed) {
+          paymentFailuresTotal.inc({ reason: 'decision_already_consumed' })
           return reply(409, {
-            error: 'Decision has already been settled on this rail',
+            error: 'Decision has already been consumed',
             decisionId: pendingIntent.decisionId,
           })
         }
         await db.insertPolicyEvent({
-          eventType: 'settlementVerified',
+          eventType: LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
           payload: {
             decisionId: pendingIntent.decisionId,
             paymentId: pendingIntent.paymentId,
@@ -1279,7 +1341,9 @@ gateRouter.post('/exit', async (req, res) => {
           decisionId: pendingIntent.decisionId,
           txHash: proofHash ?? undefined,
         })
+        settlementEventPersisted = true
       }
+      settlementProofVerified = true
 
       const resolved = await db.resolveXrplIntentByPaymentId({
         paymentId: pendingIntent.paymentId,
@@ -1292,6 +1356,8 @@ gateRouter.post('/exit', async (req, res) => {
         })
       }
     } else if (transfer) {
+      settlementTxHash = paymentTxHash || transfer.txHash
+      settlementTxHashUnique = true
       const expectedReceiver = lot?.operatorWallet || process.env.LOT_OPERATOR_WALLET || ''
       const sameReceiver = X402_NETWORK.startsWith('xrpl:')
         ? transfer.to === expectedReceiver
@@ -1323,14 +1389,30 @@ gateRouter.post('/exit', async (req, res) => {
           })
         }
       }
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
+        payload: {
+          decisionId: settlementDecisionId,
+          amount: transfer.amount.toString(),
+          rail: paymentVerificationRail ?? (X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm'),
+        },
+        sessionId,
+        decisionId: settlementDecisionId,
+        txHash: settlementTxHash,
+      })
+      settlementEventPersisted = true
+      settlementProofVerified = true
     }
 
     // Burn parking NFT on Hedera
     const serialToBurn = session?.tokenId || fallbackSerial
+    let nftBurnSucceeded = !isHederaEnabled() || !serialToBurn
     if (isHederaEnabled() && serialToBurn) {
       try {
         await endParkingSessionOnHedera(serialToBurn)
+        nftBurnSucceeded = true
       } catch (err) {
+        nftBurnSucceeded = false
         console.error('Hedera NFT burn failed (continuing with off-chain):', err)
       }
     }
@@ -1338,7 +1420,24 @@ gateRouter.post('/exit', async (req, res) => {
     // End session in DB (skip if using fallback and DB is down)
     let closedSession = null
     if (!usingFallback) {
-      closedSession = await db.endSession(plate, {
+      if (!session) {
+        return reply(409, { error: 'No active session found for transition', plateNumber: plate })
+      }
+      closedSession = await sessionLifecycleService.closeSession(session, {
+        reason: 'settlement_verified',
+        decisionId: settlementDecisionId,
+        txHash: settlementTxHash,
+        metadata: {
+          source: 'gate_exit',
+          decisionValidated: true,
+          decisionNotExpired: true,
+          settlementProofVerified,
+          enforcementPassed: true,
+          txHashUnique: settlementTxHashUnique,
+          settlementEventPersisted,
+          nftBurnSucceeded,
+          allowDelayedNftBurn: true,
+        },
         feeAmount: fee,
         feeCurrency: currency,
       })
@@ -1348,10 +1447,27 @@ gateRouter.post('/exit', async (req, res) => {
     } else {
       // Try DB close, but don't block the gate if it fails
       try {
-        closedSession = await db.endSession(plate, {
-          feeAmount: fee,
-          feeCurrency: currency,
-        })
+        const activeSession = await db.getActiveSession(plate)
+        if (activeSession) {
+          closedSession = await sessionLifecycleService.closeSession(activeSession, {
+            reason: 'settlement_verified',
+            decisionId: settlementDecisionId,
+            txHash: settlementTxHash,
+            metadata: {
+              source: 'gate_exit_fallback',
+              decisionValidated: true,
+              decisionNotExpired: true,
+              settlementProofVerified,
+              enforcementPassed: true,
+              txHashUnique: settlementTxHashUnique,
+              settlementEventPersisted,
+              nftBurnSucceeded,
+              allowDelayedNftBurn: true,
+            },
+            feeAmount: fee,
+            feeCurrency: currency,
+          })
+        }
       } catch (dbErr) {
         console.warn(
           '[exit] DB close failed during fallback — NFT burned, gate will open:',
@@ -1393,7 +1509,7 @@ gateRouter.post('/exit', async (req, res) => {
     })
 
     return reply(200, {
-      session: closedSession || { id: sessionId, plateNumber: plate, lotId, status: 'completed' },
+      session: closedSession || { id: sessionId, plateNumber: plate, lotId, status: 'closed' },
       fee,
       currency,
       durationMinutes: Math.round(durationMinutes),

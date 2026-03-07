@@ -1,4 +1,5 @@
 import { Router, raw } from 'express'
+import { LIFECYCLE_EVENT } from '@parker/core'
 
 import { db } from '../db'
 import { notifyGate, notifyDriver } from '../ws/index'
@@ -10,6 +11,7 @@ import {
 import { verifyWebhookSignature, isStripeEnabled } from '../services/stripe'
 import { logger, paymentFailuresTotal } from '../services/observability'
 import { enforceOrReject } from '../services/policy'
+import { sessionLifecycleService } from '../services/sessionLifecycle'
 
 export const webhooksRouter = Router()
 
@@ -121,9 +123,15 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         settlement,
       )
       if (!enforcement.allowed) {
+        await sessionLifecycleService.markPaymentFailed(session, {
+          reason: 'settlement_rejected',
+          decisionId: decisionId ?? undefined,
+          txHash: stripeSession.id,
+          metadata: { source: 'stripe_webhook', reason: enforcement.reason },
+        })
         paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
         await db.insertPolicyEvent({
-          eventType: 'enforcementFailed',
+          eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
           payload: {
             decisionId: decisionId ?? undefined,
             reason: enforcement.reason,
@@ -147,9 +155,15 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
           decisionPayload?.sessionGrantId != null &&
           decisionPayload.sessionGrantId !== session.policyGrantId
         ) {
+          await sessionLifecycleService.markPaymentFailed(session, {
+            reason: 'settlement_rejected',
+            decisionId,
+            txHash: stripeSession.id,
+            metadata: { source: 'stripe_webhook', reason: 'NEEDS_APPROVAL' },
+          })
           paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
           await db.insertPolicyEvent({
-            eventType: 'enforcementFailed',
+            eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
             payload: {
               decisionId,
               reason: 'NEEDS_APPROVAL',
@@ -165,16 +179,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         }
       }
       if (decisionId) {
-        const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
-          decisionId,
-          'stripe',
-        )
-        if (alreadySettledDecisionRail) {
-          logger.info('stripe_webhook_decision_rail_replay_ignored', { decision_id: decisionId })
-          return res.json({ received: true })
+        const consumed = await db.consumeDecisionOnce(decisionId)
+        if (!consumed) {
+          logger.info('stripe_webhook_decision_consumed_ignored', { decision_id: decisionId })
+          return res.json({ received: true, ignored: true, reason: 'decision_already_consumed' })
         }
         await db.insertPolicyEvent({
-          eventType: 'settlementVerified',
+          eventType: LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
           payload: { decisionId, amount: amountMinor, rail: 'stripe' },
           sessionId,
           decisionId,
@@ -183,10 +194,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
       }
 
       // Burn Hedera NFT if configured
+      let nftBurnSucceeded = !isHederaEnabled() || !session.tokenId
       if (isHederaEnabled() && session.tokenId) {
         try {
           await endParkingSessionOnHedera(session.tokenId)
+          nftBurnSucceeded = true
         } catch (err) {
+          nftBurnSucceeded = false
           paymentFailuresTotal.inc({ rail: 'stripe', reason: 'hedera_burn_failed' })
           logger.warn(
             'stripe_webhook_hedera_burn_failed',
@@ -200,7 +214,22 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
       }
 
       // Close the session
-      const closedSession = await db.endSession(plateNumber, {
+      const closedSession = await sessionLifecycleService.closeSession(session, {
+        reason: 'settlement_verified',
+        decisionId: decisionId ?? undefined,
+        txHash: stripeSession.id,
+        metadata: {
+          source: 'stripe_webhook',
+          rail: 'stripe',
+          decisionValidated: true,
+          decisionNotExpired: true,
+          settlementProofVerified: true,
+          enforcementPassed: true,
+          txHashUnique: true,
+          settlementEventPersisted: true,
+          nftBurnSucceeded,
+          allowDelayedNftBurn: true,
+        },
         feeAmount,
         feeCurrency: feeCurrency || 'USD',
         stripePaymentId: stripeSession.id,
