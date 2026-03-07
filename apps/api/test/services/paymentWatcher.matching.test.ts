@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Mock dependencies before imports (asset must match watcher settlement: base-sepolia USDC)
 vi.mock('../../src/db', () => ({
   db: {
-    endSession: vi.fn(),
+    settleSessionAfterVerified: vi.fn(),
+    transitionSession: vi.fn(),
     hasSettlementForTxHash: vi.fn(() => Promise.resolve(false)),
     hasSettlementForDecisionRail: vi.fn(() => Promise.resolve(false)),
+    consumeDecisionOnce: vi.fn(() => Promise.resolve(true)),
     getDecisionPayloadByDecisionId: vi.fn(() =>
       Promise.resolve({
         action: 'ALLOW',
@@ -19,7 +21,16 @@ vi.mock('../../src/db', () => ({
       }),
     ),
     insertPolicyEvent: vi.fn(() => Promise.resolve()),
-    getActiveSession: vi.fn(() => Promise.resolve({ policyGrantId: null })),
+    getActiveSession: vi.fn(() =>
+      Promise.resolve({
+        id: 'sess-1',
+        plateNumber: 'ABC123',
+        lotId: 'LOT-1',
+        entryTime: new Date(),
+        status: 'active',
+        policyGrantId: null,
+      }),
+    ),
   },
 }))
 
@@ -163,13 +174,17 @@ describe('paymentWatcher', () => {
 
       // Allow async settleSession to complete
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
 
-      expect(db.endSession).toHaveBeenCalledWith('ABC123', {
-        feeAmount: 1.5,
-        feeCurrency: 'USDC',
-      })
+      expect(db.settleSessionAfterVerified).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          reason: 'settlement_verified',
+          feeAmount: 1.5,
+          feeCurrency: 'USDC',
+        }),
+      )
       expect(notifyGate).toHaveBeenCalledWith(
         'LOT-1',
         expect.objectContaining({ type: 'exit', plate: 'ABC123', paymentMethod: 'crypto-onchain' }),
@@ -189,7 +204,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     })
 
     it('does NOT settle when chain id does not match watched network', async () => {
@@ -201,7 +216,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     })
 
     it('settles when amount is within 1% tolerance', async () => {
@@ -213,7 +228,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
     })
 
@@ -224,7 +239,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
     })
 
@@ -234,12 +249,12 @@ describe('paymentWatcher', () => {
 
       onLogs([makeTransferLog('0xReceiver', 9_900_000n, '0xtx-boundary-ok')]) // exactly 1% low
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
 
       onLogs([makeTransferLog('0xReceiver', 9_899_999n, '0xtx-boundary-fail')]) // just above 1%
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).toHaveBeenCalledTimes(1)
+      expect(db.settleSessionAfterVerified).toHaveBeenCalledTimes(1)
     })
 
     it('does NOT settle when amount is outside 1% tolerance', async () => {
@@ -252,7 +267,7 @@ describe('paymentWatcher', () => {
 
       // Give async a chance to run
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     })
 
     it('does NOT settle when receiver does not match', async () => {
@@ -262,7 +277,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     })
 
     it('does not crash with no pending payments', () => {
@@ -277,7 +292,7 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
     })
 
@@ -289,12 +304,32 @@ describe('paymentWatcher', () => {
       onLogs([log])
 
       await new Promise((r) => setTimeout(r, 50))
-      expect(db.endSession).not.toHaveBeenCalled()
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
       expect(db.insertPolicyEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          eventType: 'riskSignal',
+          eventType: 'RISK_SIGNAL',
           payload: expect.objectContaining({ signal: 'REPLAY_SUSPICION', txHash: '0xtx-replay' }),
           txHash: '0xtx-replay',
+        }),
+      )
+    })
+
+    it('does NOT settle when decision was already consumed', async () => {
+      vi.mocked(db.consumeDecisionOnce).mockResolvedValueOnce(false)
+      addPendingPayment(makePending({ decisionId: 'dec-consumed' }))
+
+      const log = makeTransferLog('0xReceiver', 1_500_000n, '0xtx-consumed')
+      onLogs([log])
+
+      await new Promise((r) => setTimeout(r, 50))
+      expect(db.consumeDecisionOnce).toHaveBeenCalledWith('dec-consumed')
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
+      expect(db.insertPolicyEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'RISK_SIGNAL',
+          decisionId: 'dec-consumed',
+          txHash: '0xtx-consumed',
+          payload: expect.objectContaining({ signal: 'DECISION_ALREADY_CONSUMED' }),
         }),
       )
     })
@@ -339,7 +374,7 @@ describe('paymentWatcher', () => {
       onLogs([makeTransferLog('0xReceiver', 1_500_000n)])
 
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
       expect(endParkingSessionOnHedera).not.toHaveBeenCalled()
     })
@@ -352,7 +387,7 @@ describe('paymentWatcher', () => {
       onLogs([makeTransferLog('0xReceiver', 1_500_000n)])
 
       await vi.waitFor(() => {
-        expect(db.endSession).toHaveBeenCalledOnce()
+        expect(db.settleSessionAfterVerified).toHaveBeenCalledOnce()
       })
       expect(endParkingSessionOnHedera).not.toHaveBeenCalled()
     })
@@ -383,8 +418,8 @@ describe('paymentWatcher', () => {
       onLogs([makeTransferLog('0xReceiver', 1_500_000n)])
 
       // Since the payment was pruned, handleTransferEvent won't find a match,
-      // so settleSession (and thus db.endSession) should never be called
-      expect(db.endSession).not.toHaveBeenCalled()
+      // so settleSession (and thus db.settleSessionAfterVerified) should never be called
+      expect(db.settleSessionAfterVerified).not.toHaveBeenCalled()
     })
   })
 })

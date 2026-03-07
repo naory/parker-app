@@ -11,7 +11,8 @@ const mockDb = vi.hoisted(() => ({
   createSession: vi.fn(),
   getActiveSession: vi.fn(),
   getActiveSessionsByLot: vi.fn(),
-  endSession: vi.fn(),
+  settleSessionAfterVerified: vi.fn(),
+  transitionSession: vi.fn(),
   getSessionHistory: vi.fn(),
   getLot: vi.fn(),
   updateLot: vi.fn(),
@@ -24,6 +25,7 @@ const mockDb = vi.hoisted(() => ({
   insertPolicyEvent: vi.fn(),
   insertPolicyDecision: vi.fn(),
   getDecisionPayloadByDecisionId: vi.fn(),
+  consumeDecisionOnce: vi.fn(),
   hasSettlementForTxHash: vi.fn(),
   hasSettlementForDecisionRail: vi.fn(),
   getMedianFeeForLot: vi.fn(),
@@ -108,8 +110,9 @@ beforeEach(() => {
 
   mockDb.hasSettlementForTxHash.mockResolvedValue(false)
   mockDb.hasSettlementForDecisionRail.mockResolvedValue(false)
+  mockDb.consumeDecisionOnce.mockResolvedValue(true)
   mockDb.insertPolicyEvent.mockResolvedValue(undefined)
-  mockDb.endSession.mockResolvedValue({
+  mockDb.settleSessionAfterVerified.mockResolvedValue({
     id: 'sess-1',
     lotId: 'LOT-1',
     plateNumber: 'ABC123',
@@ -147,7 +150,7 @@ describe('stripe webhook hardening', () => {
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    expect(mockDb.endSession).toHaveBeenCalledTimes(1)
+    expect(mockDb.settleSessionAfterVerified).toHaveBeenCalledTimes(1)
   })
 
   it('webhook for already-closed session returns 200 no-op', async () => {
@@ -160,7 +163,7 @@ describe('stripe webhook hardening', () => {
       .send(Buffer.from('raw'))
 
     expect(res.status).toBe(200)
-    expect(mockDb.endSession).not.toHaveBeenCalled()
+    expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 
   it('amount mismatch rejects via enforcement and does not close', async () => {
@@ -176,10 +179,10 @@ describe('stripe webhook hardening', () => {
       .send(Buffer.from('raw'))
 
     expect(res.status).toBe(200)
-    expect(mockDb.endSession).not.toHaveBeenCalled()
+    expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
     expect(mockDb.insertPolicyEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'enforcementFailed',
+        eventType: 'SETTLEMENT_REJECTED',
         payload: expect.objectContaining({ reason: 'CAP_EXCEEDED_TX' }),
       }),
     )
@@ -207,7 +210,7 @@ describe('stripe webhook hardening', () => {
 
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ received: true, ignored: true, reason: 'metadata_mismatch' })
-    expect(mockDb.endSession).not.toHaveBeenCalled()
+    expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 
   it('metadata missing returns 400 and does not close', async () => {
@@ -232,7 +235,7 @@ describe('stripe webhook hardening', () => {
 
     expect(res.status).toBe(400)
     expect(res.body.error).toMatch(/missing session metadata/i)
-    expect(mockDb.endSession).not.toHaveBeenCalled()
+    expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 
   it('calls enforcement before closing session', async () => {
@@ -244,10 +247,24 @@ describe('stripe webhook hardening', () => {
 
     expect(res.status).toBe(200)
     expect(mockPolicy.enforceOrReject).toHaveBeenCalled()
-    expect(mockDb.endSession).toHaveBeenCalled()
+    expect(mockDb.settleSessionAfterVerified).toHaveBeenCalled()
 
     const enforceOrder = mockPolicy.enforceOrReject.mock.invocationCallOrder[0]
-    const closeOrder = mockDb.endSession.mock.invocationCallOrder[0]
+    const closeOrder = mockDb.settleSessionAfterVerified.mock.invocationCallOrder[0]
     expect(enforceOrder).toBeLessThan(closeOrder)
+  })
+
+  it('does not close when decision was already consumed', async () => {
+    mockDb.consumeDecisionOnce.mockResolvedValueOnce(false)
+
+    const res = await request(app)
+      .post('/api/webhooks/stripe')
+      .set('stripe-signature', 'sig')
+      .set('content-type', 'application/json')
+      .send(Buffer.from('raw'))
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ received: true, ignored: true, reason: 'decision_already_consumed' })
+    expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 })

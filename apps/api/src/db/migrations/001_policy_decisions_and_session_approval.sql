@@ -11,6 +11,7 @@ ALTER TABLE sessions
 -- First-class decision records (skip if table exists; definition must match schema.sql)
 CREATE TABLE IF NOT EXISTS policy_decisions (
     decision_id       VARCHAR(64) PRIMARY KEY,
+    decision_state    VARCHAR(16) NOT NULL DEFAULT 'created',
     policy_hash       VARCHAR(64) NOT NULL,
     session_grant_id  UUID,
     chosen_rail       VARCHAR(20),
@@ -27,6 +28,15 @@ CREATE TABLE IF NOT EXISTS policy_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_policy_decisions_session_grant ON policy_decisions(session_grant_id);
 CREATE INDEX IF NOT EXISTS idx_policy_decisions_expires_at ON policy_decisions(expires_at);
+ALTER TABLE policy_decisions DROP CONSTRAINT IF EXISTS chk_policy_decision_state;
+ALTER TABLE policy_decisions ADD CONSTRAINT chk_policy_decision_state
+  CHECK (decision_state IN ('created', 'approved', 'consumed', 'expired', 'rejected'));
+ALTER TABLE policy_decisions DROP CONSTRAINT IF EXISTS fk_policy_decisions_session_grant;
+ALTER TABLE policy_decisions ADD CONSTRAINT fk_policy_decisions_session_grant
+  FOREIGN KEY (session_grant_id) REFERENCES policy_grants(grant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_events_settlement_decision_once
+  ON policy_events(decision_id)
+  WHERE event_type = 'SETTLEMENT_VERIFIED' AND decision_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_events_settlement_decision_rail
   ON policy_events(decision_id, (payload->>'rail'))
-  WHERE event_type = 'settlementVerified' AND decision_id IS NOT NULL AND payload ? 'rail';
+  WHERE event_type = 'SETTLEMENT_VERIFIED' AND decision_id IS NOT NULL AND payload ? 'rail';

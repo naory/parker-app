@@ -4,8 +4,8 @@
  *
  * Call sites (all must use this before close and persist events; on !allowed they return without closing):
  * - EVM: paymentWatcher.ts — enforceOrReject → if !allowed return; else settlementVerified → settleSession
- * - XRPL: gate.ts — enforceOrReject → if !allowed return reply(403); else settlementVerified → endSession
- * - Stripe: webhooks.ts — enforceOrReject → if !allowed return res.json; else settlementVerified → endSession
+ * - XRPL: gate.ts — enforceOrReject → if !allowed return reply(403); else settlementVerified → settleSessionAfterVerified
+ * - Stripe: webhooks.ts — enforceOrReject → if !allowed return res.json; else settlementVerified → settleSessionAfterVerified
  *
  * Enforcement invariants (enforced by policy-core enforcePayment; replay by each handler):
  * - Settlement enforcement must reference decisionId (lookup) and payload contains sessionGrantId + policyHash.

@@ -37,12 +37,13 @@ Policy in Parker has three phases: **Grant** (entry), **Decision** (exit), and *
 
 2. **Decision (exit)**  
    The API builds a payment context with **priceFiat** (fiat minor, lot currency) and **spendTotalsFiat** (session/day totals in fiat minor). Caps are compared in fiat only. The payment decision (allow/deny/require-approval) is stored in `policy_events` with `event_type = 'paymentDecisionCreated'`. The persisted payload includes **priceFiat**, **settlementQuotes** (Stripe + x402 with atomic amounts, destination, FX snapshot), and **chosen** (rail + quoteId). The decision must be within the entry grant. The decision always carries `sessionGrantId` when the session has a `policyGrantId`. If the grant has expired, the decision is forced to `REQUIRE_APPROVAL` and `GRANT_EXPIRED` is **appended** to reasons.
+   Decision lifecycle is explicit (`created -> approved|consumed|expired|rejected`, `approved -> consumed|expired`), and a decision can be consumed only once. Reuse attempts are rejected.
 
 3. **Enforcement (settlement)**  
    Every settlement path calls **enforceOrReject()** before closing the session or burning NFT:
-   - **Stripe webhook**: enforceOrReject → then settlementVerified → endSession (+ Hedera burn if enabled).
-   - **XRPL verify route**: enforceOrReject → then settlementVerified → resolve intent → endSession (+ Hedera burn).
-   - **EVM watcher**: enforceOrReject → then settlementVerified → settleSession (endSession + Hedera burn if enabled).
+   - **Stripe webhook**: enforceOrReject → settlementVerified → `settleSessionAfterVerified` (+ Hedera burn if enabled).
+   - **XRPL verify route**: enforceOrReject → settlementVerified → resolve intent → `settleSessionAfterVerified` (+ Hedera burn).
+   - **EVM watcher**: enforceOrReject → settlementVerified → settleSession (`settleSessionAfterVerified` + Hedera burn if enabled).
 
    The **decision source of truth** is `policy_decisions.payload` (with `policy_events` fallback); enforcement references **decisionId** (lookup) and the payload contains **sessionGrantId** and **policyHash**. **Minimum checks**: rail match, asset match (if applicable), quote match, amount (exact when quote present; otherwise compared to cap), destination match, tx uniqueness / replay protection (`hasSettlementForTxHash`).
 

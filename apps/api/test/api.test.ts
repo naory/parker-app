@@ -12,7 +12,8 @@ const mockDb = vi.hoisted(() => ({
   createSession: vi.fn(),
   getActiveSession: vi.fn(),
   getActiveSessionsByLot: vi.fn(),
-  endSession: vi.fn(),
+  transitionSession: vi.fn(),
+  settleSessionAfterVerified: vi.fn(),
   getSessionHistory: vi.fn(),
   getLot: vi.fn(),
   updateLot: vi.fn(),
@@ -25,6 +26,7 @@ const mockDb = vi.hoisted(() => ({
   insertPolicyEvent: vi.fn(),
   insertPolicyDecision: vi.fn(),
   getDecisionPayloadByDecisionId: vi.fn(),
+  consumeDecisionOnce: vi.fn(),
   hasSettlementForTxHash: vi.fn(),
   hasSettlementForDecisionRail: vi.fn(),
   getMedianFeeForLot: vi.fn(),
@@ -389,6 +391,18 @@ describe('Gate', () => {
       mockDb.getDriverByPlate.mockResolvedValue(mockDriver)
       mockDb.getActiveSessionsByLot.mockResolvedValue([])
       mockDb.getActiveSession.mockResolvedValue(mockSession)
+  mockDb.consumeDecisionOnce.mockResolvedValue(true)
+  mockDb.transitionSession.mockImplementation(async (session: any, input: any) => ({
+    ...session,
+    status: input.to,
+  }))
+  mockDb.settleSessionAfterVerified.mockResolvedValue({
+    ...mockSession,
+    status: 'closed',
+    exitTime: new Date(),
+    feeAmount: 12,
+    feeCurrency: 'USD',
+  })
 
       const res = await request(app)
         .post('/api/gate/entry')
@@ -414,9 +428,9 @@ describe('Gate', () => {
     it('processes vehicle exit with fee calculation', async () => {
       mockDb.getActiveSession.mockResolvedValue(mockSession)
       mockDb.getLot.mockResolvedValue(mockLot)
-      mockDb.endSession.mockResolvedValue({
+      mockDb.settleSessionAfterVerified.mockResolvedValue({
         ...mockSession,
-        status: 'completed',
+        status: 'closed',
         exitTime: new Date(),
         feeAmount: 12,
         feeCurrency: 'USD',
@@ -536,7 +550,7 @@ describe('Sessions', () => {
     it('returns session history', async () => {
       const completedSession = {
         ...mockSession,
-        status: 'completed',
+        status: 'closed',
         exitTime: new Date(),
         feeAmount: 12,
         feeCurrency: 'USD',

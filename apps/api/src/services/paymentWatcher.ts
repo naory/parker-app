@@ -13,13 +13,14 @@
 
 import type { PublicClient, Log } from 'viem'
 import { parseAbi } from 'viem'
-import { USDC_ADDRESSES } from '@parker/core'
+import { LIFECYCLE_EVENT, USDC_ADDRESSES } from '@parker/core'
 import type { SettlementResult, Asset } from '@parker/policy-core'
 
 import { db } from '../db'
 import { enforceOrReject } from './policy/enforceOrReject'
 import { notifyGate, notifyDriver } from '../ws/index'
 import { isHederaEnabled, endParkingSessionOnHedera } from './hedera'
+import { sessionLifecycleService } from './sessionLifecycle'
 
 const CHAIN_ID_BY_NETWORK: Record<string, number> = {
   'base-sepolia': 84532,
@@ -172,7 +173,7 @@ async function handleTransferEvent(
     const alreadySettled = await db.hasSettlementForTxHash(txHash)
     if (alreadySettled) {
       await db.insertPolicyEvent({
-        eventType: 'riskSignal',
+        eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
         payload: { signal: 'REPLAY_SUSPICION', txHash, sessionId: pending.sessionId },
         sessionId: pending.sessionId,
         txHash,
@@ -206,8 +207,16 @@ async function handleTransferEvent(
       settlement,
     )
     if (!enforcement.allowed) {
+      if (session) {
+        await sessionLifecycleService.markPaymentFailed(session, {
+          reason: 'settlement_rejected',
+          decisionId: pending.decisionId,
+          txHash,
+          metadata: { source: 'payment_watcher', reason: enforcement.reason },
+        })
+      }
       await db.insertPolicyEvent({
-        eventType: 'enforcementFailed',
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
         payload: {
           decisionId: pending.decisionId,
           reason: enforcement.reason,
@@ -231,8 +240,14 @@ async function handleTransferEvent(
         decisionPayload?.sessionGrantId != null &&
         decisionPayload.sessionGrantId !== session.policyGrantId
       ) {
+        await sessionLifecycleService.markPaymentFailed(session, {
+          reason: 'settlement_rejected',
+          decisionId: pending.decisionId,
+          txHash,
+          metadata: { source: 'payment_watcher', reason: 'NEEDS_APPROVAL' },
+        })
         await db.insertPolicyEvent({
-          eventType: 'enforcementFailed',
+          eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
           payload: {
             decisionId: pending.decisionId,
             reason: 'NEEDS_APPROVAL',
@@ -249,26 +264,23 @@ async function handleTransferEvent(
       }
     }
     if (pending.decisionId) {
-      const alreadySettledDecisionRail = await db.hasSettlementForDecisionRail(
-        pending.decisionId,
-        'evm',
-      )
-      if (alreadySettledDecisionRail) {
+      const consumed = await db.consumeDecisionOnce(pending.decisionId)
+      if (!consumed) {
         await db.insertPolicyEvent({
-          eventType: 'riskSignal',
-          payload: { signal: 'DECISION_RAIL_REPLAY_SUSPICION', decisionId: pending.decisionId, rail: 'evm', txHash },
+          eventType: LIFECYCLE_EVENT.RISK_SIGNAL,
+          payload: { signal: 'DECISION_ALREADY_CONSUMED', decisionId: pending.decisionId, rail: 'evm', txHash },
           sessionId: pending.sessionId,
           decisionId: pending.decisionId,
           txHash,
         })
         console.warn(
-          `[paymentWatcher] Decision+rail replay ignored: decision=${pending.decisionId}, rail=evm`,
+          `[paymentWatcher] Decision already consumed: decision=${pending.decisionId}`,
         )
         return
       }
     }
     await db.insertPolicyEvent({
-      eventType: 'settlementVerified',
+      eventType: LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
       payload: {
         decisionId: pending.decisionId,
         amount: value.toString(),
@@ -286,7 +298,7 @@ async function handleTransferEvent(
     pendingPayments.delete(sessionId)
 
     try {
-      await settleSession(pending)
+      await settleSession(pending, txHash)
     } catch (err) {
       console.error(`[paymentWatcher] Failed to settle session=${sessionId}:`, err)
     }
@@ -295,26 +307,49 @@ async function handleTransferEvent(
   }
 }
 
-async function settleSession(pending: PendingPayment) {
+async function settleSession(pending: PendingPayment, txHash?: string) {
   const { plate, lotId, sessionId, fee, feeCurrency, tokenId } = pending
 
   // Burn parking NFT on Hedera if applicable
+  let nftBurnSucceeded = !isHederaEnabled() || !tokenId
   if (isHederaEnabled() && tokenId) {
     try {
       await endParkingSessionOnHedera(tokenId)
+      nftBurnSucceeded = true
     } catch (err) {
+      nftBurnSucceeded = false
       console.error(`[paymentWatcher] Hedera NFT burn failed for session=${sessionId}:`, err)
     }
   }
 
   // End session in DB
   try {
-    await db.endSession(plate, {
+    const activeSession = await db.getActiveSession(plate)
+    if (!activeSession) {
+      console.warn(`[paymentWatcher] No active session found to transition: session=${sessionId}`)
+      return
+    }
+    await sessionLifecycleService.closeSession(activeSession, {
+      reason: 'settlement_verified',
+      decisionId: pending.decisionId,
+      txHash,
+      metadata: {
+        source: 'payment_watcher',
+        rail: 'evm',
+        decisionValidated: true,
+        decisionNotExpired: true,
+        settlementProofVerified: true,
+        enforcementPassed: true,
+        txHashUnique: true,
+        settlementEventPersisted: true,
+        nftBurnSucceeded,
+        allowDelayedNftBurn: true,
+      },
       feeAmount: fee,
       feeCurrency,
     })
   } catch (err) {
-    console.error(`[paymentWatcher] DB endSession failed for session=${sessionId}:`, err)
+    console.error(`[paymentWatcher] DB transitionSession failed for session=${sessionId}:`, err)
   }
 
   // Notify gate + driver via WebSocket
