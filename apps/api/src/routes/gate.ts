@@ -48,6 +48,11 @@ import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
 import { sessionLifecycleService } from '../services/sessionLifecycle'
 import { createSignedPaymentAuthorization } from '../services/paymentAuthorization'
+import {
+  createSignedSessionBudgetAuthorization,
+  verifySignedSessionBudgetAuthorizationForDecision,
+  type SignedSessionBudgetAuthorization,
+} from '../services/sessionBudgetAuthorization'
 
 export const gateRouter = Router()
 
@@ -103,6 +108,17 @@ function reasonsForDisplay(reasons: PolicyReasonCode[] | undefined): PolicyReaso
 const LOT_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
 const XRPL_PAYLOAD_UUID_REGEX =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/
+
+function hasSignedSbaEnvelope(value: unknown): value is SignedSessionBudgetAuthorization {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.signature === 'string' &&
+    typeof v.keyId === 'string' &&
+    typeof v.authorization === 'object' &&
+    v.authorization !== null
+  )
+}
 
 /**
  * Resolve a plate number from either the provided string or an image via ALPR.
@@ -473,6 +489,7 @@ gateRouter.post('/entry', async (req, res) => {
 
     // Create session in DB (includes Hedera serial if minted)
     let session
+    let sessionBudgetAuthorization: SignedSessionBudgetAuthorization | undefined
     try {
       session = await sessionLifecycleService.activateSession({
         plateNumber: plate,
@@ -514,6 +531,42 @@ gateRouter.post('/entry', async (req, res) => {
         },
         sessionId: session.id,
       })
+
+      const maxAmountMinor =
+        grant.maxSpend?.perSessionMinor ??
+        grant.maxSpend?.perTxMinor ??
+        grant.maxSpend?.perDayMinor
+      if (typeof maxAmountMinor === 'string' && maxAmountMinor.length > 0) {
+        const destinationAllowlist = lot.operatorWallet ? [lot.operatorWallet] : []
+        const signedSba = createSignedSessionBudgetAuthorization({
+          sessionId: session.id,
+          vehicleId: plate,
+          policyHash: grant.policyHash,
+          currency: lot.currency || 'USD',
+          minorUnit: 2,
+          maxAmountMinor,
+          allowedRails: grant.allowedRails as Rail[],
+          allowedAssets: grant.allowedAssets as Asset[],
+          destinationAllowlist,
+          expiresAt: grant.expiresAtISO,
+        })
+        if (signedSba) {
+          sessionBudgetAuthorization = signedSba
+          await db.insertPolicyEvent({
+            eventType: LIFECYCLE_EVENT.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+            payload: {
+              budgetId: signedSba.authorization.budgetId,
+              maxAmountMinor: signedSba.authorization.maxAmountMinor,
+              currency: signedSba.authorization.currency,
+              minorUnit: signedSba.authorization.minorUnit,
+              allowedRails: signedSba.authorization.allowedRails,
+              expiresAt: signedSba.authorization.expiresAt,
+              sessionBudgetAuthorization: signedSba,
+            },
+            sessionId: session.id,
+          })
+        }
+      }
     } catch (dbErr) {
       // DB write failed but NFT was minted — session exists on-chain and can be recovered.
       // Log a warning and still open the gate (the NFT is the proof of entry).
@@ -544,7 +597,11 @@ gateRouter.post('/entry', async (req, res) => {
     })
 
     // reply() calls completeIdempotency(responseBody), so retries return this same body (session.policyGrantId, policyHash, approvalRequiredBeforePayment)
-    return reply(201, { session, ...(alprResult && { alpr: alprResult }) })
+    return reply(201, {
+      session,
+      ...(sessionBudgetAuthorization && { sessionBudgetAuthorization }),
+      ...(alprResult && { alpr: alprResult }),
+    })
   } catch (error) {
     console.error('Gate entry failed:', error)
     return reply(500, { error: 'Gate entry failed' })
@@ -844,6 +901,30 @@ gateRouter.post('/exit', async (req, res) => {
               })()
             : undefined,
       }
+
+      if (session?.id) {
+        const sbaPayload = await db.getLatestPolicyEventPayload(
+          session.id,
+          LIFECYCLE_EVENT.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+        )
+        const envelopeCandidate =
+          (sbaPayload as { sessionBudgetAuthorization?: unknown } | null)
+            ?.sessionBudgetAuthorization ?? sbaPayload
+        if (hasSignedSbaEnvelope(envelopeCandidate)) {
+          const sbaCheck = verifySignedSessionBudgetAuthorizationForDecision(envelopeCandidate, {
+            sessionId: session.id,
+            decision: decisionToPersist,
+          })
+          if (!sbaCheck.ok) {
+            paymentFailuresTotal.inc({ reason: `session_budget_authorization_${sbaCheck.reason}` })
+            return reply(403, {
+              error: 'Payment denied by session budget authorization',
+              reason: sbaCheck.reason,
+            })
+          }
+        }
+      }
+
       const paymentAuthorization = createSignedPaymentAuthorization(sessionId, decisionToPersist)
       const decisionPayloadForStorage = paymentAuthorization
         ? ({
@@ -873,6 +954,18 @@ gateRouter.post('/exit', async (req, res) => {
           sessionId,
           decisionId: finalDecision.decisionId,
         })
+        if (paymentAuthorization) {
+          await db.insertPolicyEvent({
+            eventType: LIFECYCLE_EVENT.SIGNED_PAYMENT_AUTHORIZATION_ISSUED,
+            payload: {
+              decisionId: finalDecision.decisionId,
+              policyHash: finalDecision.policyHash,
+              keyId: paymentAuthorization.keyId,
+            },
+            sessionId,
+            decisionId: finalDecision.decisionId,
+          })
+        }
         if (finalDecision.action === 'REQUIRE_APPROVAL') {
           await db.insertPolicyEvent({
             eventType: LIFECYCLE_EVENT.PAYMENT_APPROVAL_REQUIRED,

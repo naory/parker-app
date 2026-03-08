@@ -630,6 +630,35 @@ function standardizeSessionMetadata(
     }
   }
 
+  if (sessionEventType === SESSION_EVENTS.SESSION_BUDGET_AUTHORIZATION_ISSUED) {
+    const budgetId = asString(payloadRecord.budgetId)
+    const maxAmountMinor = asString(payloadRecord.maxAmountMinor)
+    const currency = asString(payloadRecord.currency)
+    const minorUnit =
+      typeof payloadRecord.minorUnit === 'number' ? payloadRecord.minorUnit : undefined
+    const allowedRails = Array.isArray(payloadRecord.allowedRails) ? payloadRecord.allowedRails : []
+    const expiresAt = asString(payloadRecord.expiresAt)
+    return {
+      ...(budgetId ? { budgetId } : {}),
+      ...(maxAmountMinor ? { maxAmountMinor } : {}),
+      ...(currency ? { currency } : {}),
+      ...(minorUnit !== undefined ? { minorUnit } : {}),
+      ...(allowedRails.length > 0 ? { allowedRails } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+    }
+  }
+
+  if (sessionEventType === SESSION_EVENTS.SIGNED_PAYMENT_AUTHORIZATION_ISSUED) {
+    const decisionId = asString(payloadRecord.decisionId) ?? input.decisionId ?? inferred.decisionId
+    const keyId = asString(payloadRecord.keyId)
+    const policyHash = asString(payloadRecord.policyHash) ?? inferred.policyHash
+    return {
+      ...(decisionId ? { decisionId } : {}),
+      ...(keyId ? { keyId } : {}),
+      ...(policyHash ? { policyHash } : {}),
+    }
+  }
+
   if (sessionEventType === SESSION_EVENTS.SETTLEMENT_VERIFIED) {
     const settlement = asRecord(payloadRecord.settlement)
     const decisionId = asString(payloadRecord.decisionId) ?? input.decisionId ?? inferred.decisionId
@@ -833,6 +862,21 @@ async function getDecisionPayloadByDecisionId(
     [decisionId, LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED],
   )
   return eventRows[0]?.payload ?? null
+}
+
+async function getLatestPolicyEventPayload(
+  sessionId: string,
+  eventType: string,
+): Promise<unknown | null> {
+  const { rows } = await pool.query(
+    `SELECT payload
+     FROM policy_events
+     WHERE session_id = $1 AND event_type = $2
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [sessionId, eventType],
+  )
+  return rows[0]?.payload ?? null
 }
 
 /** Replay protection: already settled with this tx_hash? */
@@ -1361,6 +1405,7 @@ export const db = {
   transitionDecisionState,
   consumeDecisionOnce,
   getDecisionPayloadByDecisionId,
+  getLatestPolicyEventPayload,
   hasSettlementForTxHash,
   hasSettlementForDecisionRail,
   getMedianFeeForLot,

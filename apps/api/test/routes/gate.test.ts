@@ -28,6 +28,7 @@ vi.mock('../../src/db', () => ({
     insertPolicyEvent: vi.fn(),
     insertPolicyDecision: vi.fn(),
     getDecisionPayloadByDecisionId: vi.fn(),
+    getLatestPolicyEventPayload: vi.fn(),
     getMedianFeeForLot: vi.fn(),
     getPolicyGrantByGrantId: vi.fn(),
     consumeDecisionOnce: vi.fn(),
@@ -165,6 +166,7 @@ describe('gate routes', () => {
     vi.mocked(db.updateSessionPolicyGrant).mockResolvedValue(undefined)
     vi.mocked(db.insertPolicyEvent).mockResolvedValue(undefined)
     vi.mocked(db.getDecisionPayloadByDecisionId).mockResolvedValue(null)
+    vi.mocked(db.getLatestPolicyEventPayload).mockResolvedValue(null)
     vi.mocked(db.getMedianFeeForLot).mockResolvedValue(null)
     vi.mocked(db.getPolicyGrantByGrantId).mockResolvedValue(null)
     vi.mocked(db.transitionSession).mockImplementation(async (session: any, input: any) => ({

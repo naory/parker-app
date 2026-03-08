@@ -228,6 +228,15 @@ policyHash
 
 This makes debugging production issues dramatically easier.
 
+9.1 Lifecycle Event Update (SBA + SPA)
+
+To reflect budget-first authorization and then decision-specific authorization, the lifecycle event chain is:
+
+POLICY.GRANT_ISSUED
+SESSION_BUDGET_AUTHORIZATION.ISSUED
+PAYMENT.DECISION_CREATED
+SIGNED_PAYMENT_AUTHORIZATION.ISSUED
+
 10. Definition of Done
 
 Sprint A is complete when:
