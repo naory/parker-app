@@ -1174,6 +1174,46 @@ describe('gate routes', () => {
       expect(vi.mocked(db.upsertXrplPendingIntent)).toHaveBeenCalledTimes(1)
     })
 
+    it('fails closed when xrpl pending intent persistence fails for unknown DB errors', async () => {
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+      } as any)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot as any)
+      vi.mocked(evaluateExitPolicy).mockResolvedValue({
+        action: 'ALLOW',
+        reasons: ['OK'],
+        decisionId: 'dec-unknown',
+        policyHash: 'ph-unknown',
+        sessionGrantId: 'grant-1',
+        rail: 'xrpl',
+        asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+        maxSpend: { perTxMinor: '10000000' },
+        expiresAtISO: new Date(Date.now() + 5 * 60_000).toISOString(),
+      } as any)
+      vi.mocked(db.upsertXrplPendingIntent).mockRejectedValueOnce(
+        new Error('timeout while writing pending intent'),
+      )
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(500)
+      expect(res.body.error).toMatch(/failed to persist xrpl payment intent/i)
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'PAYMENT_DECISION_CREATED',
+          decisionId: 'dec-unknown',
+        }),
+      )
+      expect(vi.mocked(db.upsertXrplPendingIntent)).toHaveBeenCalledTimes(1)
+    })
+
     it('cap exceeded: settlement would verify but enforcement blocks (perTxMinor)', async () => {
       const paymentId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
       vi.mocked(db.getActiveXrplPendingIntent).mockResolvedValue({

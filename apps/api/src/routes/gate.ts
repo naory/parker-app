@@ -1015,10 +1015,14 @@ gateRouter.post('/exit', async (req, res) => {
                 error: 'Policy invariant violation: pending intent policy binding mismatch',
               })
             }
-            console.warn(
-              '[x402:xrpl] Failed to persist pending intent (continuing):',
+            logger.error('gate_exit_pending_intent_persist_failed', {
+              session_id: session.id,
+              decision_id: finalDecision.decisionId,
               message,
-            )
+            })
+            return reply(500, {
+              error: 'Failed to persist XRPL payment intent',
+            })
           }
         }
       }
