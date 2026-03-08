@@ -1000,6 +1000,8 @@ gateRouter.post('/exit', async (req, res) => {
             const errorCode = (persistErr as Error & { code?: string }).code
             const constraint = (persistErr as Error & { constraint?: string }).constraint
             const message = (persistErr as Error).message || ''
+            // Fail closed on *all* XRPL intent persistence failures.
+            // We branch only to provide a clearer invariant-violation error message.
             const isBindingInvariant =
               errorCode === 'POLICY_HASH_BINDING_MISMATCH' ||
               errorCode === 'DECISION_NOT_FOUND' ||

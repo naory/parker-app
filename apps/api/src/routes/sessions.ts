@@ -43,16 +43,8 @@ sessionsRouter.get('/:sessionId/timeline', async (req, res) => {
     const timeline = await db.getSessionTimeline(req.params.sessionId, limit)
     res.json(
       timeline.map((event) => ({
-        id: event.id,
         event: event.eventType,
         timestamp: event.timestamp,
-        metadata: event.metadata,
-        paymentId: event.paymentId,
-        decisionId: event.decisionId,
-        txHash: event.txHash,
-        policyHash: event.policyHash,
-        vehicleId: event.vehicleId,
-        lotId: event.lotId,
       })),
     )
   } catch (error) {

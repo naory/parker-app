@@ -1,4 +1,5 @@
 import { pool } from './index'
+import { emitSessionEvent } from './events'
 import type { DriverRecord, SessionRecord, Lot, SessionState } from '@parker/core'
 import { assertSessionTransition, assertSessionTransitionPath } from '@parker/core'
 import type { DecisionState } from '@parker/core'
@@ -499,7 +500,11 @@ function asRecord(input: unknown): Record<string, unknown> | null {
 }
 
 function inferCorrelationFromPayload(payload: unknown): {
+  decisionId?: string
+  txHash?: string
   policyHash?: string
+  rail?: string
+  asset?: unknown
   vehicleId?: string
   lotId?: string
 } {
@@ -507,12 +512,31 @@ function inferCorrelationFromPayload(payload: unknown): {
   if (!data) return {}
   const settlement = asRecord(data.settlement)
   return {
+    decisionId:
+      typeof data.decisionId === 'string'
+        ? data.decisionId
+        : typeof settlement?.decisionId === 'string'
+          ? (settlement.decisionId as string)
+          : undefined,
+    txHash:
+      typeof data.txHash === 'string'
+        ? data.txHash
+        : typeof settlement?.txHash === 'string'
+          ? (settlement.txHash as string)
+          : undefined,
     policyHash:
       typeof data.policyHash === 'string'
         ? data.policyHash
         : typeof data.expectedPolicyHash === 'string'
           ? data.expectedPolicyHash
           : undefined,
+    rail:
+      typeof data.rail === 'string'
+        ? data.rail
+        : typeof settlement?.rail === 'string'
+          ? (settlement.rail as string)
+          : undefined,
+    asset: data.asset ?? settlement?.asset,
     vehicleId:
       typeof data.plateNumber === 'string'
         ? data.plateNumber
@@ -528,23 +552,23 @@ function inferCorrelationFromPayload(payload: unknown): {
   }
 }
 
+const MINIMAL_SESSION_TIMELINE_EVENTS = new Set<string>([
+  LIFECYCLE_EVENT.SESSION_CREATED,
+  LIFECYCLE_EVENT.POLICY_GRANT_ISSUED,
+  LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
+  LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
+  LIFECYCLE_EVENT.SESSION_CLOSED,
+])
+
 async function insertSessionEvent(input: InsertSessionEventInput): Promise<void> {
-  await pool.query(
-    `INSERT INTO session_events
-      (session_id, event_type, decision_id, tx_hash, policy_hash, vehicle_id, lot_id, payment_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::jsonb)`,
-    [
-      input.sessionId,
-      input.eventType,
-      input.decisionId ?? null,
-      input.txHash ?? null,
-      input.policyHash ?? null,
-      input.vehicleId ?? null,
-      input.lotId ?? null,
-      input.paymentId ?? null,
-      JSON.stringify(input.metadata ?? {}),
-    ],
-  )
+  await emitSessionEvent(input.sessionId, input.eventType, (input.metadata ?? {}) as Record<string, unknown>, {
+    paymentId: input.paymentId,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+    policyHash: input.policyHash,
+    vehicleId: input.vehicleId,
+    lotId: input.lotId,
+  })
 }
 
 async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
@@ -561,15 +585,29 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
     ],
   )
 
-  if (input.sessionId) {
+  if (input.sessionId && MINIMAL_SESSION_TIMELINE_EVENTS.has(input.eventType)) {
     const inferred = inferCorrelationFromPayload(input.payload)
+    const payloadRecord = asRecord(input.payload) ?? {}
+    const metadata = {
+      ...payloadRecord,
+      decisionId:
+        payloadRecord.decisionId ??
+        input.decisionId ??
+        inferred.decisionId,
+      policyHash: payloadRecord.policyHash ?? inferred.policyHash,
+      txHash: payloadRecord.txHash ?? input.txHash ?? inferred.txHash,
+      rail: payloadRecord.rail ?? inferred.rail,
+      asset: payloadRecord.asset ?? inferred.asset,
+      vehicleId: payloadRecord.vehicleId ?? inferred.vehicleId,
+      lotId: payloadRecord.lotId ?? inferred.lotId,
+    }
     await insertSessionEvent({
       sessionId: input.sessionId,
       eventType: input.eventType,
-      metadata: input.payload,
+      metadata,
       paymentId: input.paymentId,
-      decisionId: input.decisionId,
-      txHash: input.txHash,
+      decisionId: input.decisionId ?? inferred.decisionId,
+      txHash: input.txHash ?? inferred.txHash,
       policyHash: inferred.policyHash,
       vehicleId: inferred.vehicleId,
       lotId: inferred.lotId,
@@ -946,6 +984,8 @@ function normalizeXrplIntentBindingError(error: unknown): Error | null {
     )
   }
 
+  // Keep matcher strings in sync with SQL trigger messages in
+  // 007_xrpl_intent_policy_hash_binding.sql (validate_xrpl_intent_policy_hash).
   if (message.includes('xrpl intent references unknown decision_id=')) {
     return makeXrplIntentBindingError('DECISION_NOT_FOUND', message)
   }

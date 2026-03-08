@@ -117,8 +117,14 @@ describe('sessions routes', () => {
       expect(res.status).toBe(200)
       expect(db.getSessionTimeline).toHaveBeenCalledWith('s1', 500)
       expect(res.body).toEqual([
-        expect.objectContaining({ event: 'SESSION_CREATED' }),
-        expect.objectContaining({ event: 'SESSION_CLOSED' }),
+        {
+          event: 'SESSION_CREATED',
+          timestamp: '2026-03-07T09:11:02.000Z',
+        },
+        {
+          event: 'SESSION_CLOSED',
+          timestamp: '2026-03-07T09:18:46.000Z',
+        },
       ])
     })
 
