@@ -998,13 +998,19 @@ gateRouter.post('/exit', async (req, res) => {
             })
           } catch (persistErr) {
             const errorCode = (persistErr as Error & { code?: string }).code
+            const constraint = (persistErr as Error & { constraint?: string }).constraint
             const message = (persistErr as Error).message || ''
-            if (
+            const isBindingInvariant =
               errorCode === 'POLICY_HASH_BINDING_MISMATCH' ||
               errorCode === 'DECISION_NOT_FOUND' ||
+              (errorCode === '23503' && constraint === 'fk_xrpl_intents_decision') ||
+              (errorCode === '23514' &&
+                constraint === 'chk_xrpl_intent_decision_policy_pair') ||
               message.includes('POLICY_HASH_BINDING_MISMATCH') ||
-              message.includes('DECISION_NOT_FOUND')
-            ) {
+              message.includes('DECISION_NOT_FOUND') ||
+              message.includes('xrpl intent references unknown decision_id=') ||
+              message.includes('xrpl intent policy_hash mismatch for decision_id=')
+            if (isBindingInvariant) {
               logger.error('gate_exit_pending_intent_binding_violation', {
                 session_id: session.id,
                 decision_id: finalDecision.decisionId,
