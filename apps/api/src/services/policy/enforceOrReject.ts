@@ -58,9 +58,11 @@ export async function enforceOrReject(
       return {
         allowed: false,
         reason:
-          authorizationCheck.reason === 'mismatch'
-            ? 'QUOTE_AMOUNT_MISMATCH'
-            : 'POLICY_HASH_MISMATCH',
+          authorizationCheck.reason === 'invalid_signature'
+            ? 'PAYMENT_AUTH_INVALID_SIGNATURE'
+            : authorizationCheck.reason === 'expired'
+              ? 'PAYMENT_AUTH_EXPIRED'
+              : 'PAYMENT_AUTH_MISMATCH',
       }
     }
   }

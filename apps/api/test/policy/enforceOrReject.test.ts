@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { enforceOrReject } from '../../src/services/policy/enforceOrReject'
+import * as paymentAuthorization from '../../src/services/paymentAuthorization'
 
 describe('enforceOrReject', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   const settlement = {
     amount: '1000',
     rail: 'xrpl' as const,
@@ -19,7 +24,11 @@ describe('enforceOrReject', () => {
     expect(result).toEqual({ allowed: false, reason: 'DECISION_NOT_FOUND' })
   })
 
-  it('returns POLICY_HASH_MISMATCH when signed authorization is invalid', async () => {
+  it('maps invalid_signature to PAYMENT_AUTH_INVALID_SIGNATURE', async () => {
+    vi.spyOn(paymentAuthorization, 'verifySignedPaymentAuthorizationForSettlement').mockReturnValue({
+      ok: false,
+      reason: 'invalid_signature',
+    })
     const decisionPayload = {
       decisionId: 'dec-1',
       policyHash: 'ph-1',
@@ -46,6 +55,74 @@ describe('enforceOrReject', () => {
       },
     }
     const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
-    expect(result).toEqual({ allowed: false, reason: 'POLICY_HASH_MISMATCH' })
+    expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_INVALID_SIGNATURE' })
+  })
+
+  it('maps expired to PAYMENT_AUTH_EXPIRED', async () => {
+    vi.spyOn(paymentAuthorization, 'verifySignedPaymentAuthorizationForSettlement').mockReturnValue({
+      ok: false,
+      reason: 'expired',
+    })
+    const decisionPayload = {
+      decisionId: 'dec-1',
+      policyHash: 'ph-1',
+      action: 'ALLOW',
+      reasons: ['OK'],
+      expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
+      rail: 'xrpl',
+      asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      paymentAuthorization: {
+        authorization: {
+          version: 1,
+          decisionId: 'dec-1',
+          sessionId: '11111111-1111-4111-8111-111111111111',
+          policyHash: 'ph-1',
+          quoteId: 'q1',
+          rail: 'xrpl',
+          asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+          amount: '1000',
+          destination: 'rDest',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        signature: 'not-valid-base64-signature',
+        keyId: 'key-1',
+      },
+    }
+    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
+    expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_EXPIRED' })
+  })
+
+  it('maps mismatch to PAYMENT_AUTH_MISMATCH', async () => {
+    vi.spyOn(paymentAuthorization, 'verifySignedPaymentAuthorizationForSettlement').mockReturnValue({
+      ok: false,
+      reason: 'mismatch',
+    })
+    const decisionPayload = {
+      decisionId: 'dec-1',
+      policyHash: 'ph-1',
+      action: 'ALLOW',
+      reasons: ['OK'],
+      expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
+      rail: 'xrpl',
+      asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      paymentAuthorization: {
+        authorization: {
+          version: 1,
+          decisionId: 'dec-1',
+          sessionId: '11111111-1111-4111-8111-111111111111',
+          policyHash: 'ph-1',
+          quoteId: 'q1',
+          rail: 'xrpl',
+          asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+          amount: '1000',
+          destination: 'rDest',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        signature: 'not-valid-base64-signature',
+        keyId: 'key-1',
+      },
+    }
+    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
+    expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_MISMATCH' })
   })
 })

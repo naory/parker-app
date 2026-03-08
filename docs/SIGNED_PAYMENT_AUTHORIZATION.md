@@ -154,6 +154,10 @@ Signature input:
 SHA256(canonical_json(authorization))
 ```
 
+Parker signs the **digest bytes** above (not raw canonical JSON bytes).
+
+Verification must recompute the same digest and verify the signature over that digest.
+
 The signature must cover **only the authorization object**.
 
 ---
@@ -168,10 +172,11 @@ Parker signing key
 
 Verification steps for client:
 
-1. verify signature
-2. check expiration
-3. check payment parameters
-4. execute payment
+1. compute `SHA256(canonical_json(authorization))`
+2. verify signature over that digest
+3. check expiration
+4. check payment parameters
+5. execute payment
 
 The Parker backend later verifies:
 

@@ -20,6 +20,28 @@ export interface SignedPaymentAuthorization {
   keyId: string
 }
 
+function getExpectedSigningKeyId(): string {
+  return process.env.PARKER_SPA_SIGNING_KEY_ID || 'parker-signing-key-1'
+}
+
+function parseNowIso(nowISO: string | undefined): number | null {
+  if (!nowISO) return null
+  const parsed = Date.parse(nowISO)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function resolveVerificationNowMs(
+  settlement: SettlementResult,
+  options?: { nowISO?: string; nowMs?: number },
+): number {
+  if (typeof options?.nowMs === 'number' && Number.isFinite(options.nowMs)) return options.nowMs
+  const optionsNowIso = parseNowIso(options?.nowISO)
+  if (optionsNowIso !== null) return optionsNowIso
+  const settlementNowIso = parseNowIso(settlement.nowISO)
+  if (settlementNowIso !== null) return settlementNowIso
+  return Date.now()
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v)).join(',')}]`
@@ -42,22 +64,24 @@ function parseSigningPrivateKey(): crypto.KeyObject | null {
   }
 }
 
-function parseVerificationPublicKey(privateKey: crypto.KeyObject | null): crypto.KeyObject | null {
+function parseVerificationPublicKey(): crypto.KeyObject | null {
   const pem = process.env.PARKER_SPA_SIGNING_PUBLIC_KEY_PEM
-  if (pem) {
-    try {
-      return crypto.createPublicKey(pem)
-    } catch {
-      return null
-    }
+  if (!pem) return null
+  try {
+    return crypto.createPublicKey(pem)
+  } catch {
+    return null
   }
-  return privateKey ? crypto.createPublicKey(privateKey) : null
 }
 
 function buildAuthorization(
   sessionId: string,
   decision: PaymentPolicyDecision,
 ): PaymentAuthorization | null {
+  // v1 scope: SPA is issued only for asset-bearing rails (xrpl/evm).
+  // Hosted/stripe rails are intentionally excluded for now and return null.
+  if (decision.rail !== 'xrpl' && decision.rail !== 'evm') return null
+
   const quoteId = decision.chosen?.quoteId
   const quote = quoteId
     ? decision.settlementQuotes?.find((q) => q.quoteId === quoteId)
@@ -87,7 +111,7 @@ export function createSignedPaymentAuthorization(
   if (!authorization || !privateKey) return null
 
   const signature = crypto.sign(null, hashAuthorization(authorization), privateKey).toString('base64')
-  const keyId = process.env.PARKER_SPA_SIGNING_KEY_ID || 'parker-signing-key-1'
+  const keyId = getExpectedSigningKeyId()
   return { authorization, signature, keyId }
 }
 
@@ -99,9 +123,13 @@ export function verifySignedPaymentAuthorizationForSettlement(
   envelope: SignedPaymentAuthorization,
   decisionId: string,
   settlement: SettlementResult,
+  options?: { nowISO?: string; nowMs?: number },
 ): { ok: true } | { ok: false; reason: 'invalid_signature' | 'expired' | 'mismatch' } {
-  const privateKey = parseSigningPrivateKey()
-  const publicKey = parseVerificationPublicKey(privateKey)
+  if (envelope.keyId !== getExpectedSigningKeyId()) {
+    return { ok: false, reason: 'invalid_signature' }
+  }
+
+  const publicKey = parseVerificationPublicKey()
   if (!publicKey) return { ok: false, reason: 'invalid_signature' }
 
   const isValid = crypto.verify(
@@ -112,7 +140,10 @@ export function verifySignedPaymentAuthorizationForSettlement(
   )
   if (!isValid) return { ok: false, reason: 'invalid_signature' }
 
-  if (Date.parse(envelope.authorization.expiresAt) <= Date.now()) return { ok: false, reason: 'expired' }
+  const verificationNowMs = resolveVerificationNowMs(settlement, options)
+  if (Date.parse(envelope.authorization.expiresAt) <= verificationNowMs) {
+    return { ok: false, reason: 'expired' }
+  }
 
   const auth = envelope.authorization
   if (
