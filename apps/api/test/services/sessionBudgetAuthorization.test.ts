@@ -28,6 +28,7 @@ describe('sessionBudgetAuthorization service', () => {
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
       vehicleId: '1234567',
+      scopeId: 'veh_123',
       policyHash: 'ph-1',
       currency: 'USD',
       minorUnit: 2,
@@ -39,6 +40,7 @@ describe('sessionBudgetAuthorization service', () => {
     })
     expect(envelope).not.toBeNull()
     expect(envelope!.authorization.budgetScope).toBe('SESSION')
+    expect(envelope!.authorization.scopeId).toBe('veh_123')
 
     const decision = {
       decisionId: 'dec-1',
@@ -77,6 +79,7 @@ describe('sessionBudgetAuthorization service', () => {
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
       vehicleId: '1234567',
+      scopeId: 'veh_123',
       policyHash: 'ph-1',
       currency: 'USD',
       maxAmountMinor: '1000',
@@ -125,6 +128,7 @@ describe('sessionBudgetAuthorization service', () => {
       policyHash: 'ph-1',
       currency: 'USD',
       budgetScope: 'DAY',
+      scopeId: 'veh_123',
       maxAmountMinor: '5000',
       allowedRails: ['stripe'],
       allowedAssets: [],

@@ -8,6 +8,7 @@ export interface SessionBudgetAuthorization {
   budgetId: string
   sessionId: string
   vehicleId: string
+  scopeId?: string
   policyHash: string
   currency: string
   minorUnit: number
@@ -64,6 +65,7 @@ function parseVerificationPublicKey(): crypto.KeyObject | null {
 export function createSignedSessionBudgetAuthorization(input: {
   sessionId: string
   vehicleId: string
+  scopeId?: string
   policyHash: string
   currency: string
   minorUnit?: number
@@ -82,6 +84,7 @@ export function createSignedSessionBudgetAuthorization(input: {
     budgetId: randomUUID(),
     sessionId: input.sessionId,
     vehicleId: input.vehicleId,
+    ...(input.scopeId ? { scopeId: input.scopeId } : {}),
     policyHash: input.policyHash,
     currency: input.currency,
     minorUnit: input.minorUnit ?? 2,

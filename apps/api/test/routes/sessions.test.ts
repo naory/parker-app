@@ -247,5 +247,41 @@ describe('sessions routes', () => {
         },
       ])
     })
+
+    it('returns SBA timeline metadata including budgetScope', async () => {
+      vi.mocked(db.getSessionState).mockResolvedValue('active')
+      vi.mocked(db.getSessionTimeline).mockResolvedValue([
+        {
+          id: 'evt-sba',
+          sessionId,
+          eventType: 'SESSION_BUDGET_AUTHORIZATION.ISSUED',
+          timestamp: new Date('2026-03-07T09:11:03.000Z'),
+          metadata: {
+            budgetId: 'bud-1',
+            maxAmountMinor: '3000',
+            minorUnit: 2,
+            currency: 'USD',
+            budgetScope: 'SESSION',
+            scopeId: 'veh_123',
+          },
+        } as any,
+      ])
+      const app = createApp()
+      const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.events[0]).toEqual({
+        eventType: 'SESSION_BUDGET_AUTHORIZATION.ISSUED',
+        createdAt: '2026-03-07T09:11:03.000Z',
+        metadata: {
+          budgetId: 'bud-1',
+          maxAmountMinor: '3000',
+          minorUnit: 2,
+          currency: 'USD',
+          budgetScope: 'SESSION',
+          scopeId: 'veh_123',
+        },
+      })
+    })
   })
 })

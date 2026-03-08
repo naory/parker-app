@@ -100,6 +100,7 @@ Example:
   "budgetId": "bud_6f92c",
   "sessionId": "sess_8ac21",
   "vehicleId": "veh_92c1",
+  "scopeId": "sess_8ac21",
   "policyHash": "a93fd2...",
   "currency": "USD",
   "minorUnit": 2,
@@ -126,6 +127,18 @@ Example:
 In the initial Parker implementation the value is expected to be `SESSION`, meaning the budget applies only to the current parking session.  
 Future implementations may support broader scopes such as `DAY`, `VEHICLE`, or `FLEET`.
 
+## Budget Scope Values
+
+| Value | Description |
+|------|-------------|
+| SESSION | Budget applies only to the current parking session |
+| DAY | Budget applies across all sessions for the same vehicle during a day |
+| VEHICLE | Budget applies across sessions for a specific vehicle |
+| FLEET | Budget applies across multiple vehicles under a fleet policy |
+
+`scopeId` identifies the entity that the budget scope applies to.  
+Examples: `budgetScope: "VEHICLE"` with `scopeId: "veh_123"`, or `budgetScope: "FLEET"` with `scopeId: "fleet_abc"`.
+
 ---
 
 # Field Definitions
@@ -136,6 +149,7 @@ Future implementations may support broader scopes such as `DAY`, `VEHICLE`, or `
 | budgetId | unique identifier |
 | sessionId | Parker session |
 | vehicleId | vehicle identifier |
+| scopeId | identifier of the entity represented by `budgetScope` (e.g., session, vehicle, fleet) |
 | policyHash | hash of policy snapshot |
 | currency | fiat currency reference |
 | minorUnit | decimal precision of the currency (e.g., USD = 2) |
@@ -217,6 +231,8 @@ decision.rail ∈ budget.allowedRails
 decision.asset ∈ budget.allowedAssets
 decision.destination ∈ destinationAllowlist
 ```
+
+For scopes broader than `SESSION` (`DAY`, `VEHICLE`, `FLEET`), enforcement must apply this as a cumulative spend limit across the relevant scope window keyed by `scopeId`.
 
 If any rule fails:
 
@@ -315,6 +331,7 @@ maxAmountMinor
 currency
 minorUnit
 budgetScope
+scopeId
 allowedRails
 expiresAt
 ```
