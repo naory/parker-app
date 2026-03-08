@@ -997,9 +997,24 @@ gateRouter.post('/exit', async (req, res) => {
               asset: finalDecision.asset,
             })
           } catch (persistErr) {
+            const message = (persistErr as Error).message || ''
+            if (
+              message.includes('POLICY_HASH_BINDING_MISMATCH') ||
+              message.includes('DECISION_NOT_FOUND')
+            ) {
+              logger.error('gate_exit_pending_intent_binding_violation', {
+                session_id: session.id,
+                decision_id: finalDecision.decisionId,
+                policy_hash: finalDecision.policyHash,
+                message,
+              })
+              return reply(500, {
+                error: 'Policy invariant violation: pending intent policy binding mismatch',
+              })
+            }
             console.warn(
               '[x402:xrpl] Failed to persist pending intent (continuing):',
-              (persistErr as Error).message,
+              message,
             )
           }
         }

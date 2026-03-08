@@ -915,6 +915,22 @@ interface UpsertXrplPendingIntentInput {
 async function upsertXrplPendingIntent(
   input: UpsertXrplPendingIntentInput,
 ): Promise<XrplPaymentIntentRecord> {
+  if (input.decisionId) {
+    const { rows: decisionRows } = await pool.query(
+      `SELECT policy_hash FROM policy_decisions WHERE decision_id = $1`,
+      [input.decisionId],
+    )
+    const expectedPolicyHash = decisionRows[0]?.policy_hash as string | undefined
+    if (!expectedPolicyHash) {
+      throw new Error(`DECISION_NOT_FOUND: ${input.decisionId}`)
+    }
+    if (!input.policyHash || input.policyHash !== expectedPolicyHash) {
+      throw new Error(
+        `POLICY_HASH_BINDING_MISMATCH: decision=${input.decisionId} expected=${expectedPolicyHash} actual=${input.policyHash ?? 'null'}`,
+      )
+    }
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO xrpl_payment_intents (
         plate_number, lot_id, session_id, amount, destination, token, network,
