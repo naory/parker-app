@@ -119,6 +119,8 @@ Example:
 }
 ```
 
+`allowedAssets` is only enforced for rails that require an on-chain asset (`xrpl`, `evm`). It is ignored for hosted payment rails such as `stripe`.
+
 ---
 
 # Field Definitions
