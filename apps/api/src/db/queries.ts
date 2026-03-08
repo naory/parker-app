@@ -500,7 +500,11 @@ function asRecord(input: unknown): Record<string, unknown> | null {
 }
 
 function inferCorrelationFromPayload(payload: unknown): {
+  decisionId?: string
+  txHash?: string
   policyHash?: string
+  rail?: string
+  asset?: unknown
   vehicleId?: string
   lotId?: string
 } {
@@ -508,12 +512,31 @@ function inferCorrelationFromPayload(payload: unknown): {
   if (!data) return {}
   const settlement = asRecord(data.settlement)
   return {
+    decisionId:
+      typeof data.decisionId === 'string'
+        ? data.decisionId
+        : typeof settlement?.decisionId === 'string'
+          ? (settlement.decisionId as string)
+          : undefined,
+    txHash:
+      typeof data.txHash === 'string'
+        ? data.txHash
+        : typeof settlement?.txHash === 'string'
+          ? (settlement.txHash as string)
+          : undefined,
     policyHash:
       typeof data.policyHash === 'string'
         ? data.policyHash
         : typeof data.expectedPolicyHash === 'string'
           ? data.expectedPolicyHash
           : undefined,
+    rail:
+      typeof data.rail === 'string'
+        ? data.rail
+        : typeof settlement?.rail === 'string'
+          ? (settlement.rail as string)
+          : undefined,
+    asset: data.asset ?? settlement?.asset,
     vehicleId:
       typeof data.plateNumber === 'string'
         ? data.plateNumber
@@ -564,13 +587,27 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
 
   if (input.sessionId && MINIMAL_SESSION_TIMELINE_EVENTS.has(input.eventType)) {
     const inferred = inferCorrelationFromPayload(input.payload)
+    const payloadRecord = asRecord(input.payload) ?? {}
+    const metadata = {
+      ...payloadRecord,
+      decisionId:
+        payloadRecord.decisionId ??
+        input.decisionId ??
+        inferred.decisionId,
+      policyHash: payloadRecord.policyHash ?? inferred.policyHash,
+      txHash: payloadRecord.txHash ?? input.txHash ?? inferred.txHash,
+      rail: payloadRecord.rail ?? inferred.rail,
+      asset: payloadRecord.asset ?? inferred.asset,
+      vehicleId: payloadRecord.vehicleId ?? inferred.vehicleId,
+      lotId: payloadRecord.lotId ?? inferred.lotId,
+    }
     await insertSessionEvent({
       sessionId: input.sessionId,
       eventType: input.eventType,
-      metadata: input.payload,
+      metadata,
       paymentId: input.paymentId,
-      decisionId: input.decisionId,
-      txHash: input.txHash,
+      decisionId: input.decisionId ?? inferred.decisionId,
+      txHash: input.txHash ?? inferred.txHash,
       policyHash: inferred.policyHash,
       vehicleId: inferred.vehicleId,
       lotId: inferred.lotId,
