@@ -213,7 +213,7 @@ describe('stripe webhook hardening', () => {
     expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 
-  it('metadata missing returns 400 and does not close', async () => {
+  it('metadata missing is ignored with 200 and does not close', async () => {
     mockStripe.verifyWebhookSignature.mockReturnValueOnce({
       ...stripeEvent,
       data: {
@@ -233,8 +233,8 @@ describe('stripe webhook hardening', () => {
       .set('content-type', 'application/json')
       .send(Buffer.from('raw'))
 
-    expect(res.status).toBe(400)
-    expect(res.body.error).toMatch(/missing session metadata/i)
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ received: true, ignored: true, reason: 'metadata_missing' })
     expect(mockDb.settleSessionAfterVerified).not.toHaveBeenCalled()
   })
 

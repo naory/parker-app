@@ -61,7 +61,7 @@ const DEPLOYMENT_COUNTRIES = (process.env.DEPLOYMENT_COUNTRIES || '')
   .filter(Boolean)
 
 /** User-friendly short messages for policy reason codes (for client display). */
-const REASON_WHY: Partial<Record<PolicyReasonCode, string>> = {
+const REASON_WHY: Record<PolicyReasonCode, string> = {
   OK: 'Payment allowed',
   LOT_NOT_ALLOWED: 'This lot is not allowed by policy',
   VENDOR_NOT_ALLOWED: 'Operator is not allowed by policy',
@@ -80,6 +80,14 @@ const REASON_WHY: Partial<Record<PolicyReasonCode, string>> = {
   RISK_HIGH: 'Risk check requires approval',
   NEEDS_APPROVAL: 'Approval required before payment',
   GRANT_EXPIRED: 'Session grant expired; approval required',
+}
+
+function toMetricReason(reason: string | undefined): string {
+  const normalized = (reason ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || 'unknown'
 }
 
 function reasonsForDisplay(reasons: PolicyReasonCode[] | undefined): PolicyReasonCode[] {
@@ -1003,7 +1011,7 @@ gateRouter.post('/exit', async (req, res) => {
           policyHash: finalDecision.policyHash,
           sessionGrantId: finalDecision.sessionGrantId ?? undefined,
           action: finalDecision.action,
-          why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
+          why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r]),
           reasons: finalDecision.reasons ?? [],
         }
         notifyDriver(plate, {
@@ -1044,7 +1052,7 @@ gateRouter.post('/exit', async (req, res) => {
         policyHash: finalDecision.policyHash,
         sessionGrantId: finalDecision.sessionGrantId ?? undefined,
         action: finalDecision.action,
-        why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r] ?? r),
+        why: reasonsForDisplay(finalDecision.reasons).map((r) => REASON_WHY[r]),
         reasons: finalDecision.reasons ?? [],
         grantId: finalDecision.grantId ?? finalDecision.sessionGrantId ?? undefined,
         expiresAt: finalDecision.expiresAtISO,
@@ -1325,7 +1333,7 @@ gateRouter.post('/exit', async (req, res) => {
           decisionId: pendingIntent.decisionId ?? undefined,
           txHash: proofHash ?? undefined,
         })
-        paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
+        paymentFailuresTotal.inc({ reason: toMetricReason(enforcement.reason) })
         return reply(403, {
           error: 'Settlement rejected by policy',
           reason: enforcement.reason,
@@ -1366,7 +1374,7 @@ gateRouter.post('/exit', async (req, res) => {
             decisionId: pendingIntent.decisionId,
             txHash: proofHash ?? undefined,
           })
-          paymentFailuresTotal.inc({ reason: 'enforcement_failed' })
+          paymentFailuresTotal.inc({ reason: toMetricReason('NEEDS_APPROVAL') })
           return reply(403, {
             error: 'Settlement rejected by policy',
             reason: 'NEEDS_APPROVAL',
