@@ -504,6 +504,7 @@ gateRouter.post('/entry', async (req, res) => {
         payload: {
           grantId,
           policyHash: grant.policyHash,
+          reasons: grant.reasons,
           sessionId: session.id,
           expiresAtISO: grant.expiresAtISO,
         },
@@ -840,25 +841,6 @@ gateRouter.post('/exit', async (req, res) => {
             : undefined,
       }
 
-      await db.insertPolicyEvent({
-        eventType: LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
-        payload: decisionToPersist,
-        sessionId,
-        decisionId: finalDecision.decisionId,
-      })
-      if (finalDecision.action === 'REQUIRE_APPROVAL') {
-        await db.insertPolicyEvent({
-          eventType: LIFECYCLE_EVENT.PAYMENT_APPROVAL_REQUIRED,
-          payload: {
-            decisionId: finalDecision.decisionId,
-            reasons: finalDecision.reasons,
-            policyHash: finalDecision.policyHash,
-          },
-          sessionId,
-          decisionId: finalDecision.decisionId,
-        })
-      }
-
       try {
         await db.insertPolicyDecision({
           decisionId: finalDecision.decisionId,
@@ -874,8 +856,35 @@ gateRouter.post('/exit', async (req, res) => {
           requireApproval: finalDecision.action === 'REQUIRE_APPROVAL',
           payload: decisionToPersist,
         })
+        await db.insertPolicyEvent({
+          eventType: LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
+          payload: decisionToPersist,
+          sessionId,
+          decisionId: finalDecision.decisionId,
+        })
+        if (finalDecision.action === 'REQUIRE_APPROVAL') {
+          await db.insertPolicyEvent({
+            eventType: LIFECYCLE_EVENT.PAYMENT_APPROVAL_REQUIRED,
+            payload: {
+              decisionId: finalDecision.decisionId,
+              reasons: finalDecision.reasons,
+              policyHash: finalDecision.policyHash,
+            },
+            sessionId,
+            decisionId: finalDecision.decisionId,
+          })
+        }
       } catch (err) {
-        console.warn('[exit] insertPolicyDecision failed (event already stored):', (err as Error).message)
+        const message = (err as Error).message || 'unknown error'
+        logger.error('gate_exit_policy_decision_persist_failed', {
+          session_id: sessionId,
+          decision_id: finalDecision.decisionId,
+          policy_hash: finalDecision.policyHash,
+          message,
+        })
+        return reply(500, {
+          error: 'Failed to persist payment decision',
+        })
       }
 
       // Build options for x402 and stripe; then filter by finalDecision.rail when ALLOW
@@ -1428,6 +1437,7 @@ gateRouter.post('/exit', async (req, res) => {
             paymentId: pendingIntent.paymentId,
             amount: transfer.amount.toString(),
             rail: 'xrpl',
+            asset: pendingIntent.token,
           },
           paymentId: pendingIntent.paymentId,
           sessionId: pendingIntent.sessionId,
@@ -1500,6 +1510,7 @@ gateRouter.post('/exit', async (req, res) => {
           decisionId: settlementDecisionId,
           amount: transfer.amount.toString(),
           rail: paymentVerificationRail ?? (X402_NETWORK.startsWith('xrpl:') ? 'xrpl' : 'evm'),
+          asset: X402_STABLECOIN,
         },
         sessionId,
         decisionId: settlementDecisionId,
@@ -1524,6 +1535,7 @@ gateRouter.post('/exit', async (req, res) => {
 
     // End session in DB (skip if using fallback and DB is down)
     let closedSession = null
+    const closeRail = paymentVerificationRail ?? (isXrplRail ? 'xrpl' : transfer ? 'evm' : undefined)
     if (!usingFallback) {
       if (!session) {
         return reply(409, { error: 'No active session found for transition', plateNumber: plate })
@@ -1540,6 +1552,7 @@ gateRouter.post('/exit', async (req, res) => {
           enforcementPassed: true,
           txHashUnique: settlementTxHashUnique,
           settlementEventPersisted,
+          rail: closeRail,
           nftBurnSucceeded,
           allowDelayedNftBurn: true,
         },
@@ -1566,6 +1579,7 @@ gateRouter.post('/exit', async (req, res) => {
               enforcementPassed: true,
               txHashUnique: settlementTxHashUnique,
               settlementEventPersisted,
+              rail: closeRail,
               nftBurnSucceeded,
               allowDelayedNftBurn: true,
             },

@@ -194,6 +194,12 @@ describe('gate routes', () => {
 
       expect(res.status).toBe(201)
       expect(res.body.session.id).toBe('s1')
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'SESSION_CREATED',
+          sessionId: 's1',
+        }),
+      )
     })
 
     it('returns 400 without lotId', async () => {
@@ -421,6 +427,36 @@ describe('gate routes', () => {
           }),
         }),
       )
+    })
+
+    it('fails closed when policy decision persistence fails', async () => {
+      const futureExpiry = new Date(Date.now() + 30 * 60_000)
+      vi.mocked(db.getActiveSession).mockResolvedValue({
+        id: 's1',
+        plateNumber: '1234567',
+        lotId: 'LOT-1',
+        entryTime: new Date(Date.now() - 60 * 60 * 1000),
+        status: 'active',
+        policyGrantId: 'grant-1',
+        policyHash: 'hash-1',
+      } as any)
+      vi.mocked(db.getPolicyGrantExpiresAt).mockResolvedValue(futureExpiry)
+      vi.mocked(db.getLot).mockResolvedValue(mockLot)
+      vi.mocked(db.insertPolicyDecision).mockRejectedValueOnce(new Error('db unavailable'))
+
+      const app = createApp()
+      const res = await request(app)
+        .post('/api/gate/exit')
+        .send({ plateNumber: '1234567', lotId: 'LOT-1' })
+
+      expect(res.status).toBe(500)
+      expect(res.body.error).toMatch(/persist payment decision/i)
+      expect(vi.mocked(db.insertPolicyEvent)).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'PAYMENT_DECISION_CREATED',
+        }),
+      )
+      expect(vi.mocked(db.upsertXrplPendingIntent)).not.toHaveBeenCalled()
     })
 
     it('returns 500 when session has policy_grant_id but decision missing sessionGrantId (invariant)', async () => {

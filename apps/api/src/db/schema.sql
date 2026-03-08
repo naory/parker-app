@@ -247,20 +247,12 @@ CREATE UNIQUE INDEX idx_policy_events_settlement_decision_rail ON policy_events(
 
 -- Session lifecycle timeline (append-only observability log)
 CREATE TABLE session_events (
-    id           BIGSERIAL PRIMARY KEY,
-    session_id   VARCHAR(64) NOT NULL,
-    event_type   VARCHAR(64) NOT NULL,
-    decision_id  VARCHAR(64),
-    tx_hash      VARCHAR(128),
-    policy_hash  VARCHAR(64),
-    vehicle_id   VARCHAR(20),
-    lot_id       VARCHAR(50),
-    payment_id   UUID,
-    metadata     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at   TIMESTAMPTZ DEFAULT NOW()
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id   UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    event_type   TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata     JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX idx_session_events_session_id ON session_events(session_id);
-CREATE INDEX idx_session_events_created_at ON session_events(created_at);
-CREATE INDEX idx_session_events_event_type ON session_events(event_type);
-CREATE INDEX idx_session_events_session_timeline ON session_events(session_id, created_at);
+CREATE INDEX idx_session_events_session_created_at ON session_events(session_id, created_at);
+CREATE INDEX idx_session_events_type_created_at ON session_events(event_type, created_at);

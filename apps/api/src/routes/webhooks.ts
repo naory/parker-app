@@ -218,7 +218,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         }
         await db.insertPolicyEvent({
           eventType: LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
-          payload: { decisionId, amount: amountMinor, rail: 'stripe' },
+          payload: { decisionId, amount: amountMinor, rail: 'stripe', asset: feeCurrency || 'USD' },
           sessionId,
           decisionId,
           txHash: stripeSession.id,

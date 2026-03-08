@@ -118,12 +118,14 @@ describe('sessions routes', () => {
       expect(db.getSessionTimeline).toHaveBeenCalledWith('s1', 500)
       expect(res.body).toEqual([
         {
-          event: 'SESSION_CREATED',
-          timestamp: '2026-03-07T09:11:02.000Z',
+          eventType: 'SESSION_CREATED',
+          createdAt: '2026-03-07T09:11:02.000Z',
+          metadata: { plateNumber: '1234567' },
         },
         {
-          event: 'SESSION_CLOSED',
-          timestamp: '2026-03-07T09:18:46.000Z',
+          eventType: 'SESSION_CLOSED',
+          createdAt: '2026-03-07T09:18:46.000Z',
+          metadata: {},
         },
       ])
     })
