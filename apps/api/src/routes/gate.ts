@@ -875,7 +875,16 @@ gateRouter.post('/exit', async (req, res) => {
           })
         }
       } catch (err) {
-        console.warn('[exit] insertPolicyDecision failed (decision event not emitted):', (err as Error).message)
+        const message = (err as Error).message || 'unknown error'
+        logger.error('gate_exit_policy_decision_persist_failed', {
+          session_id: sessionId,
+          decision_id: finalDecision.decisionId,
+          policy_hash: finalDecision.policyHash,
+          message,
+        })
+        return reply(500, {
+          error: 'Failed to persist payment decision',
+        })
       }
 
       // Build options for x402 and stripe; then filter by finalDecision.rail when ALLOW
