@@ -191,6 +191,14 @@ async function handleTransferEvent(
     const asset: Asset = pending.asset
       ? (JSON.parse(pending.asset) as Asset)
       : { kind: 'ERC20', chainId: ctx.chainId, token: ctx.usdcAddress }
+    const settlementAssetLabel =
+      typeof (asset as any)?.symbol === 'string'
+        ? (asset as any).symbol
+        : typeof (asset as any)?.currency === 'string'
+          ? (asset as any).currency
+          : typeof (asset as any)?.token === 'string'
+            ? (asset as any).token
+            : 'USDC'
     const settlement: SettlementResult = {
       amount: value.toString(),
       asset,
@@ -318,6 +326,7 @@ async function handleTransferEvent(
         decisionId: pending.decisionId,
         amount: value.toString(),
         rail: 'evm',
+        asset: settlementAssetLabel,
       },
       sessionId: pending.sessionId,
       decisionId: pending.decisionId,

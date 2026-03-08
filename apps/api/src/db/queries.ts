@@ -1,5 +1,7 @@
 import { pool } from './index'
-import { emitSessionEvent } from './events'
+import type { SessionEventType } from '../events/types'
+import { SESSION_EVENTS, toSessionEventType } from '../events/types'
+import { emitSessionEvent } from '../events/emitSessionEvent'
 import type { DriverRecord, SessionRecord, Lot, SessionState } from '@parker/core'
 import { assertSessionTransition, assertSessionTransitionPath } from '@parker/core'
 import type { DecisionState } from '@parker/core'
@@ -471,7 +473,7 @@ export interface InsertPolicyEventInput {
 
 export interface InsertSessionEventInput {
   sessionId: string
-  eventType: string
+  eventType: SessionEventType
   metadata?: unknown
   paymentId?: string
   decisionId?: string
@@ -482,21 +484,21 @@ export interface InsertSessionEventInput {
 }
 
 export interface SessionTimelineEvent {
-  id: number
+  id: string
   sessionId: string
   eventType: string
   timestamp: Date
   metadata: unknown
-  paymentId?: string
-  decisionId?: string
-  txHash?: string
-  policyHash?: string
-  vehicleId?: string
-  lotId?: string
 }
 
 function asRecord(input: unknown): Record<string, unknown> | null {
   return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : null
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  )
 }
 
 function inferCorrelationFromPayload(payload: unknown): {
@@ -552,22 +554,119 @@ function inferCorrelationFromPayload(payload: unknown): {
   }
 }
 
-const MINIMAL_SESSION_TIMELINE_EVENTS = new Set<string>([
-  LIFECYCLE_EVENT.SESSION_CREATED,
-  LIFECYCLE_EVENT.POLICY_GRANT_ISSUED,
-  LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
-  LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
-  LIFECYCLE_EVENT.SESSION_CLOSED,
-])
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function toAssetLabel(asset: unknown): string | undefined {
+  if (typeof asset === 'string') return asset
+  const record = asRecord(asset)
+  if (!record) return undefined
+  return (
+    asString(record.symbol) ??
+    asString(record.currency) ??
+    asString(record.token) ??
+    asString(record.kind)
+  )
+}
+
+function standardizeSessionMetadata(
+  sessionEventType: SessionEventType,
+  payloadRecord: Record<string, unknown>,
+  inferred: ReturnType<typeof inferCorrelationFromPayload>,
+  input: InsertPolicyEventInput,
+): Record<string, unknown> {
+  if (sessionEventType === SESSION_EVENTS.SESSION_CREATED) {
+    const lotId = asString(payloadRecord.lotId) ?? inferred.lotId
+    const plateNumber = asString(payloadRecord.plateNumber)
+    const vehicleId = asString(payloadRecord.vehicleId) ?? inferred.vehicleId ?? plateNumber
+    return {
+      ...(lotId ? { lotId } : {}),
+      ...(vehicleId ? { vehicleId } : {}),
+      ...(plateNumber ? { plateNumber } : {}),
+    }
+  }
+
+  if (sessionEventType === SESSION_EVENTS.POLICY_GRANT_ISSUED) {
+    const grantId = asString(payloadRecord.grantId)
+    const policyHash = asString(payloadRecord.policyHash) ?? inferred.policyHash
+    const reasons = Array.isArray(payloadRecord.reasons)
+      ? payloadRecord.reasons
+      : ['OK']
+    return {
+      ...(grantId ? { grantId } : {}),
+      ...(policyHash ? { policyHash } : {}),
+      reasons,
+    }
+  }
+
+  if (sessionEventType === SESSION_EVENTS.PAYMENT_DECISION_CREATED) {
+    const priceFiat = asRecord(payloadRecord.priceFiat)
+    const decisionId = asString(payloadRecord.decisionId) ?? input.decisionId ?? inferred.decisionId
+    const policyHash = asString(payloadRecord.policyHash) ?? inferred.policyHash
+    const rail = asString(payloadRecord.rail) ?? inferred.rail
+    const amountMinor =
+      asString(priceFiat?.amountMinor) ?? asString(payloadRecord.quoteMinor)
+    const currency =
+      asString(priceFiat?.currency) ?? asString(payloadRecord.quoteCurrency)
+    return {
+      ...(decisionId ? { decisionId } : {}),
+      ...(policyHash ? { policyHash } : {}),
+      ...(rail ? { rail } : {}),
+      ...(amountMinor ? { amountMinor } : {}),
+      ...(currency ? { currency } : {}),
+    }
+  }
+
+  if (sessionEventType === SESSION_EVENTS.SETTLEMENT_VERIFIED) {
+    const settlement = asRecord(payloadRecord.settlement)
+    const decisionId = asString(payloadRecord.decisionId) ?? input.decisionId ?? inferred.decisionId
+    const rail = asString(payloadRecord.rail) ?? inferred.rail ?? asString(settlement?.rail)
+    const txHash = asString(payloadRecord.txHash) ?? input.txHash ?? inferred.txHash
+    const amount = asString(payloadRecord.amount) ?? asString(settlement?.amount)
+    const asset =
+      toAssetLabel(payloadRecord.asset) ??
+      toAssetLabel(settlement?.asset) ??
+      toAssetLabel(inferred.asset)
+    return {
+      ...(decisionId ? { decisionId } : {}),
+      ...(rail ? { rail } : {}),
+      ...(txHash ? { txHash } : {}),
+      ...(amount ? { amount } : {}),
+      ...(asset ? { asset } : {}),
+    }
+  }
+
+  if (sessionEventType === SESSION_EVENTS.SESSION_CLOSED) {
+    const metadata = asRecord(payloadRecord.metadata)
+    const decisionId = asString(payloadRecord.decisionId) ?? input.decisionId ?? inferred.decisionId
+    const txHash = asString(payloadRecord.txHash) ?? input.txHash ?? inferred.txHash
+    const rail = asString(payloadRecord.rail) ?? asString(metadata?.rail) ?? inferred.rail
+    return {
+      ...(decisionId ? { decisionId } : {}),
+      ...(txHash ? { txHash } : {}),
+      ...(rail ? { rail } : {}),
+    }
+  }
+
+  return payloadRecord
+}
 
 async function insertSessionEvent(input: InsertSessionEventInput): Promise<void> {
-  await emitSessionEvent(input.sessionId, input.eventType, (input.metadata ?? {}) as Record<string, unknown>, {
-    paymentId: input.paymentId,
-    decisionId: input.decisionId,
-    txHash: input.txHash,
-    policyHash: input.policyHash,
-    vehicleId: input.vehicleId,
-    lotId: input.lotId,
+  const metadataRecord = ((input.metadata ?? {}) as Record<string, unknown>) ?? {}
+  const metadata = {
+    ...metadataRecord,
+    ...(!('paymentId' in metadataRecord) && input.paymentId ? { paymentId: input.paymentId } : {}),
+    ...(!('decisionId' in metadataRecord) && input.decisionId ? { decisionId: input.decisionId } : {}),
+    ...(!('txHash' in metadataRecord) && input.txHash ? { txHash: input.txHash } : {}),
+    ...(!('policyHash' in metadataRecord) && input.policyHash ? { policyHash: input.policyHash } : {}),
+    ...(!('vehicleId' in metadataRecord) && input.vehicleId ? { vehicleId: input.vehicleId } : {}),
+    ...(!('lotId' in metadataRecord) && input.lotId ? { lotId: input.lotId } : {}),
+  }
+  await emitSessionEvent(pool, {
+    sessionId: input.sessionId,
+    eventType: input.eventType,
+    metadata,
   })
 }
 
@@ -585,25 +684,14 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
     ],
   )
 
-  if (input.sessionId && MINIMAL_SESSION_TIMELINE_EVENTS.has(input.eventType)) {
+  const sessionEventType = toSessionEventType(input.eventType)
+  if (input.sessionId && isUuid(input.sessionId) && sessionEventType) {
     const inferred = inferCorrelationFromPayload(input.payload)
     const payloadRecord = asRecord(input.payload) ?? {}
-    const metadata = {
-      ...payloadRecord,
-      decisionId:
-        payloadRecord.decisionId ??
-        input.decisionId ??
-        inferred.decisionId,
-      policyHash: payloadRecord.policyHash ?? inferred.policyHash,
-      txHash: payloadRecord.txHash ?? input.txHash ?? inferred.txHash,
-      rail: payloadRecord.rail ?? inferred.rail,
-      asset: payloadRecord.asset ?? inferred.asset,
-      vehicleId: payloadRecord.vehicleId ?? inferred.vehicleId,
-      lotId: payloadRecord.lotId ?? inferred.lotId,
-    }
+    const metadata = standardizeSessionMetadata(sessionEventType, payloadRecord, inferred, input)
     await insertSessionEvent({
       sessionId: input.sessionId,
-      eventType: input.eventType,
+      eventType: sessionEventType,
       metadata,
       paymentId: input.paymentId,
       decisionId: input.decisionId ?? inferred.decisionId,
@@ -618,10 +706,10 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
 async function getSessionTimeline(sessionId: string, limit = 500): Promise<SessionTimelineEvent[]> {
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 1000) : 500
   const { rows } = await pool.query(
-    `SELECT id, session_id, event_type, decision_id, tx_hash, policy_hash, vehicle_id, lot_id, payment_id, metadata, created_at
+    `SELECT id, session_id, event_type, metadata, created_at
      FROM session_events
-     WHERE session_id = $1
-     ORDER BY created_at ASC, id ASC
+     WHERE session_id = $1::uuid
+     ORDER BY created_at ASC
      LIMIT $2`,
     [sessionId, safeLimit],
   )
@@ -631,12 +719,6 @@ async function getSessionTimeline(sessionId: string, limit = 500): Promise<Sessi
     eventType: row.event_type,
     timestamp: row.created_at,
     metadata: row.metadata ?? {},
-    paymentId: row.payment_id ?? undefined,
-    decisionId: row.decision_id ?? undefined,
-    txHash: row.tx_hash ?? undefined,
-    policyHash: row.policy_hash ?? undefined,
-    vehicleId: row.vehicle_id ?? undefined,
-    lotId: row.lot_id ?? undefined,
   }))
 }
 

@@ -194,6 +194,12 @@ describe('gate routes', () => {
 
       expect(res.status).toBe(201)
       expect(res.body.session.id).toBe('s1')
+      expect(vi.mocked(db.insertPolicyEvent)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'SESSION_CREATED',
+          sessionId: 's1',
+        }),
+      )
     })
 
     it('returns 400 without lotId', async () => {
