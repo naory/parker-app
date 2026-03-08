@@ -263,3 +263,4 @@ CREATE TABLE session_events (
 CREATE INDEX idx_session_events_session_id ON session_events(session_id);
 CREATE INDEX idx_session_events_created_at ON session_events(created_at);
 CREATE INDEX idx_session_events_event_type ON session_events(event_type);
+CREATE INDEX idx_session_events_session_timeline ON session_events(session_id, created_at);

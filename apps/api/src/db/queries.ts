@@ -1,4 +1,5 @@
 import { pool } from './index'
+import { emitSessionEvent } from './events'
 import type { DriverRecord, SessionRecord, Lot, SessionState } from '@parker/core'
 import { assertSessionTransition, assertSessionTransitionPath } from '@parker/core'
 import type { DecisionState } from '@parker/core'
@@ -528,23 +529,23 @@ function inferCorrelationFromPayload(payload: unknown): {
   }
 }
 
+const MINIMAL_SESSION_TIMELINE_EVENTS = new Set<string>([
+  LIFECYCLE_EVENT.SESSION_CREATED,
+  LIFECYCLE_EVENT.POLICY_GRANT_ISSUED,
+  LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
+  LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
+  LIFECYCLE_EVENT.SESSION_CLOSED,
+])
+
 async function insertSessionEvent(input: InsertSessionEventInput): Promise<void> {
-  await pool.query(
-    `INSERT INTO session_events
-      (session_id, event_type, decision_id, tx_hash, policy_hash, vehicle_id, lot_id, payment_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::jsonb)`,
-    [
-      input.sessionId,
-      input.eventType,
-      input.decisionId ?? null,
-      input.txHash ?? null,
-      input.policyHash ?? null,
-      input.vehicleId ?? null,
-      input.lotId ?? null,
-      input.paymentId ?? null,
-      JSON.stringify(input.metadata ?? {}),
-    ],
-  )
+  await emitSessionEvent(input.sessionId, input.eventType, (input.metadata ?? {}) as Record<string, unknown>, {
+    paymentId: input.paymentId,
+    decisionId: input.decisionId,
+    txHash: input.txHash,
+    policyHash: input.policyHash,
+    vehicleId: input.vehicleId,
+    lotId: input.lotId,
+  })
 }
 
 async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
@@ -561,7 +562,7 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
     ],
   )
 
-  if (input.sessionId) {
+  if (input.sessionId && MINIMAL_SESSION_TIMELINE_EVENTS.has(input.eventType)) {
     const inferred = inferCorrelationFromPayload(input.payload)
     await insertSessionEvent({
       sessionId: input.sessionId,
