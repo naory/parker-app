@@ -6,7 +6,7 @@ import { sessionsRouter } from '../../src/routes/sessions'
 vi.mock('../../src/db', () => ({
   db: {
     getActiveSession: vi.fn(),
-    sessionExists: vi.fn(),
+    getSessionState: vi.fn(),
     getSessionHistory: vi.fn(),
     getSessionTimeline: vi.fn(),
   },
@@ -116,7 +116,7 @@ describe('sessions routes', () => {
     const sessionId = '11111111-1111-4111-8111-111111111111'
 
     it('returns ordered timeline events with default limit', async () => {
-      vi.mocked(db.sessionExists).mockResolvedValue(true)
+      vi.mocked(db.getSessionState).mockResolvedValue('payment_required')
       vi.mocked(db.getSessionTimeline).mockResolvedValue([
         {
           id: 'evt-1',
@@ -138,10 +138,11 @@ describe('sessions routes', () => {
       const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
 
       expect(res.status).toBe(200)
-      expect(db.sessionExists).toHaveBeenCalledWith(sessionId)
+      expect(db.getSessionState).toHaveBeenCalledWith(sessionId)
       expect(db.getSessionTimeline).toHaveBeenCalledWith(sessionId, 500)
       expect(res.body).toEqual({
         sessionId,
+        state: 'payment_required',
         eventCount: 2,
         events: [
           {
@@ -159,7 +160,7 @@ describe('sessions routes', () => {
     })
 
     it('respects and caps timeline limit', async () => {
-      vi.mocked(db.sessionExists).mockResolvedValue(true)
+      vi.mocked(db.getSessionState).mockResolvedValue('active')
       vi.mocked(db.getSessionTimeline).mockResolvedValue([])
       const app = createApp()
 
@@ -175,7 +176,7 @@ describe('sessions routes', () => {
       const res = await request(app).get('/api/sessions/not-a-uuid/timeline')
 
       expect(res.status).toBe(400)
-      expect(db.sessionExists).not.toHaveBeenCalled()
+      expect(db.getSessionState).not.toHaveBeenCalled()
       expect(db.getSessionTimeline).not.toHaveBeenCalled()
     })
 
@@ -185,12 +186,12 @@ describe('sessions routes', () => {
       const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
 
       expect(res.status).toBe(401)
-      expect(db.sessionExists).not.toHaveBeenCalled()
+      expect(db.getSessionState).not.toHaveBeenCalled()
       expect(db.getSessionTimeline).not.toHaveBeenCalled()
     })
 
     it('returns 404 for missing session', async () => {
-      vi.mocked(db.sessionExists).mockResolvedValue(false)
+      vi.mocked(db.getSessionState).mockResolvedValue(null)
       const app = createApp()
       const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
 
@@ -199,17 +200,17 @@ describe('sessions routes', () => {
     })
 
     it('returns 200 with empty events for existing session with no timeline rows', async () => {
-      vi.mocked(db.sessionExists).mockResolvedValue(true)
+      vi.mocked(db.getSessionState).mockResolvedValue('active')
       vi.mocked(db.getSessionTimeline).mockResolvedValue([])
       const app = createApp()
       const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
 
       expect(res.status).toBe(200)
-      expect(res.body).toEqual({ sessionId, eventCount: 0, events: [] })
+      expect(res.body).toEqual({ sessionId, state: 'active', eventCount: 0, events: [] })
     })
 
     it('preserves db event order when timestamps are identical', async () => {
-      vi.mocked(db.sessionExists).mockResolvedValue(true)
+      vi.mocked(db.getSessionState).mockResolvedValue('closed')
       vi.mocked(db.getSessionTimeline).mockResolvedValue([
         {
           id: '00000000-0000-4000-8000-0000000000b2',
@@ -231,6 +232,7 @@ describe('sessions routes', () => {
       const res = await request(app).get(`/api/sessions/${sessionId}/timeline`)
 
       expect(res.status).toBe(200)
+      expect(res.body.state).toBe('closed')
       expect(res.body.eventCount).toBe(2)
       expect(res.body.events).toEqual([
         {

@@ -54,13 +54,14 @@ sessionsRouter.get('/:sessionId/timeline', async (req, res) => {
     const rawLimit = parseInt(req.query.limit as string)
     const limit = !isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 500
     const sessionId = req.params.sessionId
-    const exists = await db.sessionExists(sessionId)
-    if (!exists) {
+    const state = await db.getSessionState(sessionId)
+    if (!state) {
       return res.status(404).json({ error: 'Session not found' })
     }
     const timeline = await db.getSessionTimeline(sessionId, limit)
     res.json({
       sessionId,
+      state,
       eventCount: timeline.length,
       events: timeline.map((event) => ({
         eventType: event.eventType,
