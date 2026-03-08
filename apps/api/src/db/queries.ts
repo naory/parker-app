@@ -912,11 +912,74 @@ interface UpsertXrplPendingIntentInput {
   asset?: unknown
 }
 
+type XrplIntentBindingErrorCode = 'DECISION_NOT_FOUND' | 'POLICY_HASH_BINDING_MISMATCH'
+
+function makeXrplIntentBindingError(code: XrplIntentBindingErrorCode, detail: string): Error {
+  const err = new Error(`${code}: ${detail}`)
+  ;(err as Error & { code?: string }).code = code
+  return err
+}
+
+function normalizeXrplIntentBindingError(error: unknown): Error | null {
+  const err = error as
+    | { message?: string; code?: string; constraint?: string }
+    | undefined
+
+  const message = err?.message ?? ''
+  const constraint = err?.constraint ?? ''
+
+  if (
+    err?.code === '23503' &&
+    (constraint === 'fk_xrpl_intents_decision' || message.includes('fk_xrpl_intents_decision'))
+  ) {
+    return makeXrplIntentBindingError('DECISION_NOT_FOUND', message || 'decision reference missing')
+  }
+
+  if (
+    err?.code === '23514' &&
+    (constraint === 'chk_xrpl_intent_decision_policy_pair' ||
+      message.includes('chk_xrpl_intent_decision_policy_pair'))
+  ) {
+    return makeXrplIntentBindingError(
+      'POLICY_HASH_BINDING_MISMATCH',
+      message || 'decision/policy hash pair invalid',
+    )
+  }
+
+  if (message.includes('xrpl intent references unknown decision_id=')) {
+    return makeXrplIntentBindingError('DECISION_NOT_FOUND', message)
+  }
+
+  if (message.includes('xrpl intent policy_hash mismatch for decision_id=')) {
+    return makeXrplIntentBindingError('POLICY_HASH_BINDING_MISMATCH', message)
+  }
+
+  return null
+}
+
 async function upsertXrplPendingIntent(
   input: UpsertXrplPendingIntentInput,
 ): Promise<XrplPaymentIntentRecord> {
-  const { rows } = await pool.query(
-    `INSERT INTO xrpl_payment_intents (
+  try {
+    if (input.decisionId) {
+      const { rows: decisionRows } = await pool.query(
+        `SELECT policy_hash FROM policy_decisions WHERE decision_id = $1`,
+        [input.decisionId],
+      )
+      const expectedPolicyHash = decisionRows[0]?.policy_hash as string | undefined
+      if (!expectedPolicyHash) {
+        throw makeXrplIntentBindingError('DECISION_NOT_FOUND', input.decisionId)
+      }
+      if (!input.policyHash || input.policyHash !== expectedPolicyHash) {
+        throw makeXrplIntentBindingError(
+          'POLICY_HASH_BINDING_MISMATCH',
+          `decision=${input.decisionId} expected=${expectedPolicyHash} actual=${input.policyHash ?? 'null'}`,
+        )
+      }
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO xrpl_payment_intents (
         plate_number, lot_id, session_id, amount, destination, token, network,
         decision_id, policy_hash, rail, asset, status, expires_at, updated_at
       )
@@ -952,10 +1015,15 @@ async function upsertXrplPendingIntent(
       input.rail ?? null,
       input.asset != null ? JSON.stringify(input.asset) : null,
       input.expiresAt,
-    ],
-  )
+      ],
+    )
 
-  return mapXrplIntent(rows[0])
+    return mapXrplIntent(rows[0])
+  } catch (error) {
+    const normalized = normalizeXrplIntentBindingError(error)
+    if (normalized) throw normalized
+    throw error
+  }
 }
 
 async function getActiveXrplPendingIntent(
