@@ -997,8 +997,11 @@ gateRouter.post('/exit', async (req, res) => {
               asset: finalDecision.asset,
             })
           } catch (persistErr) {
+            const errorCode = (persistErr as Error & { code?: string }).code
             const message = (persistErr as Error).message || ''
             if (
+              errorCode === 'POLICY_HASH_BINDING_MISMATCH' ||
+              errorCode === 'DECISION_NOT_FOUND' ||
               message.includes('POLICY_HASH_BINDING_MISMATCH') ||
               message.includes('DECISION_NOT_FOUND')
             ) {
