@@ -99,13 +99,23 @@ export class SessionLifecycleService {
   ): Promise<SessionRecord | null> {
     if (session.status === 'approval_required') return session
     this.assertCanTransition(session, 'approval_required')
-    return db.transitionSession(session, {
+    const transitioned = await db.transitionSession(session, {
       to: 'approval_required',
       reason: input.reason,
       decisionId: input.decisionId,
       txHash: input.txHash,
       metadata: input.metadata,
     })
+    if (transitioned) {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.PAYMENT_APPROVAL_REQUIRED,
+        payload: { reason: input.reason, ...(input.metadata ?? {}) },
+        sessionId: transitioned.id,
+        decisionId: input.decisionId,
+        txHash: input.txHash,
+      })
+    }
+    return transitioned
   }
 
   async markPaymentVerified(
@@ -126,7 +136,7 @@ export class SessionLifecycleService {
         'Cannot mark payment verified without settlement proof',
       )
     }
-    return db.transitionSession(session, {
+    const transitioned = await db.transitionSession(session, {
       to: 'payment_verified',
       reason: input.reason,
       decisionId: input.decisionId,
@@ -140,6 +150,16 @@ export class SessionLifecycleService {
         txHashUnique: true,
       },
     })
+    if (transitioned) {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.PAYMENT_APPROVED,
+        payload: { reason: input.reason, ...(input.metadata ?? {}) },
+        sessionId: transitioned.id,
+        decisionId: input.decisionId,
+        txHash: input.txHash,
+      })
+    }
+    return transitioned
   }
 
   async markPaymentFailed(
@@ -174,13 +194,23 @@ export class SessionLifecycleService {
       current = required
     }
     this.assertCanTransition(current, 'payment_failed')
-    return db.transitionSession(current, {
+    const transitioned = await db.transitionSession(current, {
       to: 'payment_failed',
       reason: input.reason,
       decisionId: input.decisionId,
       txHash: input.txHash,
       metadata: input.metadata,
     })
+    if (transitioned) {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.PAYMENT_REJECTED,
+        payload: { reason: input.reason, ...(input.metadata ?? {}) },
+        sessionId: transitioned.id,
+        decisionId: input.decisionId,
+        txHash: input.txHash,
+      })
+    }
+    return transitioned
   }
 
   async closeSession(
@@ -207,13 +237,23 @@ export class SessionLifecycleService {
   ): Promise<SessionRecord | null> {
     if (session.status === 'denied') return session
     this.assertCanTransition(session, 'denied')
-    return db.transitionSession(session, {
+    const transitioned = await db.transitionSession(session, {
       to: 'denied',
       reason: input.reason,
       decisionId: input.decisionId,
       txHash: input.txHash,
       metadata: input.metadata,
     })
+    if (transitioned) {
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SESSION_DENIED,
+        payload: { reason: input.reason, ...(input.metadata ?? {}) },
+        sessionId: transitioned.id,
+        decisionId: input.decisionId,
+        txHash: input.txHash,
+      })
+    }
+    return transitioned
   }
 }
 

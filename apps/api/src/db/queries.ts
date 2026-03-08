@@ -468,6 +468,85 @@ export interface InsertPolicyEventInput {
   txHash?: string
 }
 
+export interface InsertSessionEventInput {
+  sessionId: string
+  eventType: string
+  metadata?: unknown
+  paymentId?: string
+  decisionId?: string
+  txHash?: string
+  policyHash?: string
+  vehicleId?: string
+  lotId?: string
+}
+
+export interface SessionTimelineEvent {
+  id: number
+  sessionId: string
+  eventType: string
+  timestamp: Date
+  metadata: unknown
+  paymentId?: string
+  decisionId?: string
+  txHash?: string
+  policyHash?: string
+  vehicleId?: string
+  lotId?: string
+}
+
+function asRecord(input: unknown): Record<string, unknown> | null {
+  return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : null
+}
+
+function inferCorrelationFromPayload(payload: unknown): {
+  policyHash?: string
+  vehicleId?: string
+  lotId?: string
+} {
+  const data = asRecord(payload)
+  if (!data) return {}
+  const settlement = asRecord(data.settlement)
+  return {
+    policyHash:
+      typeof data.policyHash === 'string'
+        ? data.policyHash
+        : typeof data.expectedPolicyHash === 'string'
+          ? data.expectedPolicyHash
+          : undefined,
+    vehicleId:
+      typeof data.plateNumber === 'string'
+        ? data.plateNumber
+        : typeof data.vehicleId === 'string'
+          ? data.vehicleId
+          : undefined,
+    lotId:
+      typeof data.lotId === 'string'
+        ? data.lotId
+        : typeof settlement?.lotId === 'string'
+          ? (settlement.lotId as string)
+          : undefined,
+  }
+}
+
+async function insertSessionEvent(input: InsertSessionEventInput): Promise<void> {
+  await pool.query(
+    `INSERT INTO session_events
+      (session_id, event_type, decision_id, tx_hash, policy_hash, vehicle_id, lot_id, payment_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::jsonb)`,
+    [
+      input.sessionId,
+      input.eventType,
+      input.decisionId ?? null,
+      input.txHash ?? null,
+      input.policyHash ?? null,
+      input.vehicleId ?? null,
+      input.lotId ?? null,
+      input.paymentId ?? null,
+      JSON.stringify(input.metadata ?? {}),
+    ],
+  )
+}
+
 async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
   await pool.query(
     `INSERT INTO policy_events (event_type, payload, payment_id, session_id, decision_id, tx_hash)
@@ -481,6 +560,46 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
       input.txHash ?? null,
     ],
   )
+
+  if (input.sessionId) {
+    const inferred = inferCorrelationFromPayload(input.payload)
+    await insertSessionEvent({
+      sessionId: input.sessionId,
+      eventType: input.eventType,
+      metadata: input.payload,
+      paymentId: input.paymentId,
+      decisionId: input.decisionId,
+      txHash: input.txHash,
+      policyHash: inferred.policyHash,
+      vehicleId: inferred.vehicleId,
+      lotId: inferred.lotId,
+    })
+  }
+}
+
+async function getSessionTimeline(sessionId: string, limit = 500): Promise<SessionTimelineEvent[]> {
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 1000) : 500
+  const { rows } = await pool.query(
+    `SELECT id, session_id, event_type, decision_id, tx_hash, policy_hash, vehicle_id, lot_id, payment_id, metadata, created_at
+     FROM session_events
+     WHERE session_id = $1
+     ORDER BY created_at ASC, id ASC
+     LIMIT $2`,
+    [sessionId, safeLimit],
+  )
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.session_id,
+    eventType: row.event_type,
+    timestamp: row.created_at,
+    metadata: row.metadata ?? {},
+    paymentId: row.payment_id ?? undefined,
+    decisionId: row.decision_id ?? undefined,
+    txHash: row.tx_hash ?? undefined,
+    policyHash: row.policy_hash ?? undefined,
+    vehicleId: row.vehicle_id ?? undefined,
+    lotId: row.lot_id ?? undefined,
+  }))
 }
 
 /** Insert first-class decision record (exit-time policy outcome). */
@@ -1040,6 +1159,8 @@ export const db = {
   getFiatSpendTotalsByCurrency,
   getSpendTotalsFiat,
   insertPolicyEvent,
+  insertSessionEvent,
+  getSessionTimeline,
   insertPolicyDecision,
   transitionDecisionState,
   consumeDecisionOnce,

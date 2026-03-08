@@ -15,6 +15,14 @@ import { sessionLifecycleService } from '../services/sessionLifecycle'
 
 export const webhooksRouter = Router()
 
+function toMetricReason(reason: string | undefined): string {
+  const normalized = (reason ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || 'unknown'
+}
+
 /**
  * POST /api/webhooks/stripe
  *
@@ -67,7 +75,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
     if (!sessionId || !plateNumber || !lotId) {
       paymentFailuresTotal.inc({ rail: 'stripe', reason: 'metadata_missing' })
       logger.warn('stripe_webhook_missing_metadata', { metadata: stripeSession.metadata })
-      return res.status(400).json({ error: 'Missing session metadata' })
+      return res.json({ received: true, ignored: true, reason: 'metadata_missing' })
     }
 
     logger.info('stripe_payment_completed', {
@@ -110,6 +118,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
 
       // Settlement enforcement: must pass before closing (same as XRPL/EVM)
       const amountMinor = String(stripeSession.amount_total ?? 0)
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+        payload: { decisionId: decisionId ?? undefined, amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+        sessionId,
+        decisionId: decisionId ?? undefined,
+        txHash: stripeSession.id,
+      })
       const settlement = {
         amount: amountMinor,
         rail: 'stripe' as const,
@@ -123,13 +138,23 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         settlement,
       )
       if (!enforcement.allowed) {
+        await db.insertPolicyEvent({
+          eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_FAILED,
+          payload: {
+            reason: enforcement.reason,
+            settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id },
+          },
+          sessionId,
+          decisionId: decisionId ?? undefined,
+          txHash: stripeSession.id,
+        })
         await sessionLifecycleService.markPaymentFailed(session, {
           reason: 'settlement_rejected',
           decisionId: decisionId ?? undefined,
           txHash: stripeSession.id,
           metadata: { source: 'stripe_webhook', reason: enforcement.reason },
         })
-        paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
+        paymentFailuresTotal.inc({ rail: 'stripe', reason: toMetricReason(enforcement.reason) })
         await db.insertPolicyEvent({
           eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
           payload: {
@@ -146,6 +171,13 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         })
         return res.json({ received: true })
       }
+      await db.insertPolicyEvent({
+        eventType: LIFECYCLE_EVENT.POLICY_ENFORCEMENT_PASSED,
+        payload: { settlement: { amount: amountMinor, rail: 'stripe', txHash: stripeSession.id } },
+        sessionId,
+        decisionId: decisionId ?? undefined,
+        txHash: stripeSession.id,
+      })
       // Decision→grant linkage: decision must reference session's grant when session has one
       if (session.policyGrantId && decisionId) {
         const decisionPayload = (await db.getDecisionPayloadByDecisionId(decisionId)) as
@@ -161,7 +193,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
             txHash: stripeSession.id,
             metadata: { source: 'stripe_webhook', reason: 'NEEDS_APPROVAL' },
           })
-          paymentFailuresTotal.inc({ rail: 'stripe', reason: 'enforcement_failed' })
+          paymentFailuresTotal.inc({ rail: 'stripe', reason: toMetricReason('NEEDS_APPROVAL') })
           await db.insertPolicyEvent({
             eventType: LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
             payload: {

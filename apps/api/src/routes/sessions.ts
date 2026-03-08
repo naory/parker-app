@@ -34,3 +34,29 @@ sessionsRouter.get('/history/:plate', async (req, res) => {
     res.status(500).json({ error: 'Failed to get session history' })
   }
 })
+
+// GET /api/sessions/:sessionId/timeline — Get ordered lifecycle event timeline
+sessionsRouter.get('/:sessionId/timeline', async (req, res) => {
+  try {
+    const rawLimit = parseInt(req.query.limit as string)
+    const limit = !isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 500
+    const timeline = await db.getSessionTimeline(req.params.sessionId, limit)
+    res.json(
+      timeline.map((event) => ({
+        id: event.id,
+        event: event.eventType,
+        timestamp: event.timestamp,
+        metadata: event.metadata,
+        paymentId: event.paymentId,
+        decisionId: event.decisionId,
+        txHash: event.txHash,
+        policyHash: event.policyHash,
+        vehicleId: event.vehicleId,
+        lotId: event.lotId,
+      })),
+    )
+  } catch (error) {
+    console.error('Failed to get session timeline:', error)
+    res.status(500).json({ error: 'Failed to get session timeline' })
+  }
+})
