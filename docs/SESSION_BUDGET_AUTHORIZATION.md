@@ -103,6 +103,7 @@ Example:
   "policyHash": "a93fd2...",
   "currency": "USD",
   "minorUnit": 2,
+  "budgetScope": "SESSION",
   "maxAmountMinor": "3000",
   "allowedRails": ["xrpl", "stripe"],
   "allowedAssets": [
@@ -121,6 +122,10 @@ Example:
 
 `allowedAssets` is only enforced for rails that require an on-chain asset (`xrpl`, `evm`). It is ignored for hosted payment rails such as `stripe`.
 
+`budgetScope` defines the logical scope of the spending envelope.  
+In the initial Parker implementation the value is expected to be `SESSION`, meaning the budget applies only to the current parking session.  
+Future implementations may support broader scopes such as `DAY`, `VEHICLE`, or `FLEET`.
+
 ---
 
 # Field Definitions
@@ -134,6 +139,7 @@ Example:
 | policyHash | hash of policy snapshot |
 | currency | fiat currency reference |
 | minorUnit | decimal precision of the currency (e.g., USD = 2) |
+| budgetScope | scope of the authorized budget (e.g., SESSION, DAY, VEHICLE, FLEET) |
 | maxAmountMinor | max spend allowed |
 | allowedRails | permitted payment rails |
 | allowedAssets | permitted crypto assets |
@@ -308,6 +314,7 @@ budgetId
 maxAmountMinor
 currency
 minorUnit
+budgetScope
 allowedRails
 expiresAt
 ```
