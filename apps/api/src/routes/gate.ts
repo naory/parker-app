@@ -558,6 +558,7 @@ gateRouter.post('/entry', async (req, res) => {
               budgetId: signedSba.authorization.budgetId,
               maxAmountMinor: signedSba.authorization.maxAmountMinor,
               currency: signedSba.authorization.currency,
+              minorUnit: signedSba.authorization.minorUnit,
               allowedRails: signedSba.authorization.allowedRails,
               expiresAt: signedSba.authorization.expiresAt,
               sessionBudgetAuthorization: signedSba,

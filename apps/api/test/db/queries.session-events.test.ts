@@ -153,6 +153,38 @@ describe('db.insertPolicyEvent mirrored session timeline metadata standardizatio
     expect(emitSessionEvent).not.toHaveBeenCalled()
   })
 
+  it('standardizes session budget authorization metadata including minorUnit', async () => {
+    const sessionId = '66666666-6666-4666-8666-666666666666'
+    await db.insertPolicyEvent({
+      eventType: LIFECYCLE_EVENT.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+      sessionId,
+      payload: {
+        budgetId: 'bud-1',
+        maxAmountMinor: '3000',
+        currency: 'USD',
+        minorUnit: 2,
+        allowedRails: ['xrpl', 'stripe'],
+        expiresAt: '2026-03-08T18:00:00Z',
+      },
+    })
+
+    expect(emitSessionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ query: expect.any(Function) }),
+      expect.objectContaining({
+        sessionId,
+        eventType: SESSION_EVENTS.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+        metadata: {
+          budgetId: 'bud-1',
+          maxAmountMinor: '3000',
+          currency: 'USD',
+          minorUnit: 2,
+          allowedRails: ['xrpl', 'stripe'],
+          expiresAt: '2026-03-08T18:00:00Z',
+        },
+      }),
+    )
+  })
+
   it('emits settlement verified before session closed in timeline order', async () => {
     const sessionId = '55555555-5555-4555-8555-555555555555'
     await db.insertPolicyEvent({

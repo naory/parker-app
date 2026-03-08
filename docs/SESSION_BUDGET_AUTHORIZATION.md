@@ -305,6 +305,7 @@ Metadata:
 budgetId
 maxAmountMinor
 currency
+minorUnit
 allowedRails
 expiresAt
 ```

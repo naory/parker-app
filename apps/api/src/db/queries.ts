@@ -634,12 +634,15 @@ function standardizeSessionMetadata(
     const budgetId = asString(payloadRecord.budgetId)
     const maxAmountMinor = asString(payloadRecord.maxAmountMinor)
     const currency = asString(payloadRecord.currency)
+    const minorUnit =
+      typeof payloadRecord.minorUnit === 'number' ? payloadRecord.minorUnit : undefined
     const allowedRails = Array.isArray(payloadRecord.allowedRails) ? payloadRecord.allowedRails : []
     const expiresAt = asString(payloadRecord.expiresAt)
     return {
       ...(budgetId ? { budgetId } : {}),
       ...(maxAmountMinor ? { maxAmountMinor } : {}),
       ...(currency ? { currency } : {}),
+      ...(minorUnit !== undefined ? { minorUnit } : {}),
       ...(allowedRails.length > 0 ? { allowedRails } : {}),
       ...(expiresAt ? { expiresAt } : {}),
     }
