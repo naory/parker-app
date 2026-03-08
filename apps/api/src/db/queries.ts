@@ -428,6 +428,24 @@ export interface PolicyGrantRecord {
   reasons: string[]
 }
 
+function mapPolicyGrantRecord(r: any): PolicyGrantRecord {
+  return {
+    grantId: r.grant_id,
+    policyHash: r.policy_hash,
+    allowedRails: Array.isArray(r.allowed_rails) ? r.allowed_rails : JSON.parse(r.allowed_rails || '[]'),
+    allowedAssets: Array.isArray(r.allowed_assets) ? r.allowed_assets : JSON.parse(r.allowed_assets || '[]'),
+    maxSpend:
+      r.max_spend == null
+        ? null
+        : typeof r.max_spend === 'object'
+          ? r.max_spend
+          : JSON.parse(r.max_spend),
+    expiresAt: r.expires_at,
+    requireApproval: r.require_approval === true,
+    reasons: Array.isArray(r.reasons) ? r.reasons : JSON.parse(r.reasons || '[]'),
+  }
+}
+
 async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantRecord | null> {
   const { rows } = await pool.query(
     `SELECT grant_id, policy_hash, allowed_rails, allowed_assets, max_spend, require_approval, reasons, expires_at
@@ -435,17 +453,7 @@ async function getPolicyGrantByGrantId(grantId: string): Promise<PolicyGrantReco
     [grantId],
   )
   if (!rows[0]) return null
-  const r = rows[0]
-  return {
-    grantId: r.grant_id,
-    policyHash: r.policy_hash,
-    allowedRails: Array.isArray(r.allowed_rails) ? r.allowed_rails : JSON.parse(r.allowed_rails || '[]'),
-    allowedAssets: Array.isArray(r.allowed_assets) ? r.allowed_assets : JSON.parse(r.allowed_assets || '[]'),
-    maxSpend: r.max_spend == null ? null : (typeof r.max_spend === 'object' ? r.max_spend : JSON.parse(r.max_spend)),
-    expiresAt: r.expires_at,
-    requireApproval: r.require_approval === true,
-    reasons: Array.isArray(r.reasons) ? r.reasons : JSON.parse(r.reasons || '[]'),
-  }
+  return mapPolicyGrantRecord(rows[0])
 }
 
 /**
@@ -877,6 +885,167 @@ async function getLatestPolicyEventPayload(
     [sessionId, eventType],
   )
   return rows[0]?.payload ?? null
+}
+
+interface DecisionRecord {
+  decisionId: string
+  decisionState: string
+  policyHash: string
+  sessionGrantId: string | null
+  chosenRail: string | null
+  chosenAsset: unknown
+  quoteMinor: string
+  quoteCurrency: string
+  expiresAt: Date
+  action: string
+  reasons: unknown
+  requireApproval: boolean
+  payload: unknown
+  createdAt: Date
+}
+
+function mapDecisionRecord(r: any): DecisionRecord {
+  return {
+    decisionId: r.decision_id,
+    decisionState: r.decision_state,
+    policyHash: r.policy_hash,
+    sessionGrantId: r.session_grant_id ?? null,
+    chosenRail: r.chosen_rail ?? null,
+    chosenAsset: r.chosen_asset ?? null,
+    quoteMinor: r.quote_minor,
+    quoteCurrency: r.quote_currency,
+    expiresAt: r.expires_at,
+    action: r.action,
+    reasons: r.reasons ?? [],
+    requireApproval: r.require_approval === true,
+    payload: r.payload ?? {},
+    createdAt: r.created_at,
+  }
+}
+
+interface SettlementDebugRecord {
+  eventType: string
+  createdAt: Date
+  txHash?: string
+  decisionId?: string
+  payload: unknown
+}
+
+export interface SessionDebugRecord {
+  session: SessionRecord
+  grant: PolicyGrantRecord | null
+  budget: unknown | null
+  decision: DecisionRecord | null
+  signedAuthorization: unknown | null
+  settlement: SettlementDebugRecord | null
+}
+
+async function getSessionDebugRecord(sessionId: string): Promise<SessionDebugRecord | null> {
+  const { rows: sessionRows } = await pool.query(`SELECT * FROM sessions WHERE id = $1::uuid LIMIT 1`, [sessionId])
+  if (!sessionRows[0]) return null
+  const session = mapSession(sessionRows[0])
+
+  let grant: PolicyGrantRecord | null = null
+  if (session.policyGrantId) {
+    grant = await getPolicyGrantByGrantId(session.policyGrantId)
+  } else {
+    const { rows: grantRows } = await pool.query(
+      `SELECT grant_id, policy_hash, allowed_rails, allowed_assets, max_spend, require_approval, reasons, expires_at
+       FROM policy_grants
+       WHERE session_id = $1::uuid
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [sessionId],
+    )
+    grant = grantRows[0] ? mapPolicyGrantRecord(grantRows[0]) : null
+  }
+
+  const budgetPayload = await getLatestPolicyEventPayload(
+    sessionId,
+    LIFECYCLE_EVENT.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+  )
+  const budget =
+    (asRecord(budgetPayload)?.sessionBudgetAuthorization as unknown | undefined) ?? budgetPayload ?? null
+
+  let decision: DecisionRecord | null = null
+  if (grant?.grantId) {
+    const { rows: decisionRows } = await pool.query(
+      `SELECT *
+       FROM policy_decisions
+       WHERE session_grant_id = $1::uuid
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [grant.grantId],
+    )
+    if (decisionRows[0]) {
+      decision = mapDecisionRecord(decisionRows[0])
+    }
+  }
+
+  if (!decision) {
+    const { rows: eventDecisionRows } = await pool.query(
+      `SELECT payload
+       FROM policy_events
+       WHERE session_id = $1 AND event_type = $2
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [sessionId, LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED],
+    )
+    if (eventDecisionRows[0]?.payload) {
+      decision = {
+        decisionId: asString(asRecord(eventDecisionRows[0].payload)?.decisionId) ?? '',
+        decisionState: 'created',
+        policyHash: asString(asRecord(eventDecisionRows[0].payload)?.policyHash) ?? '',
+        sessionGrantId: asString(asRecord(eventDecisionRows[0].payload)?.sessionGrantId) ?? null,
+        chosenRail: asString(asRecord(eventDecisionRows[0].payload)?.rail) ?? null,
+        chosenAsset: asRecord(eventDecisionRows[0].payload)?.asset ?? null,
+        quoteMinor: asString(asRecord(eventDecisionRows[0].payload)?.quoteMinor) ?? '0',
+        quoteCurrency: asString(asRecord(eventDecisionRows[0].payload)?.quoteCurrency) ?? '',
+        expiresAt: new Date(asString(asRecord(eventDecisionRows[0].payload)?.expiresAtISO) ?? Date.now()),
+        action: asString(asRecord(eventDecisionRows[0].payload)?.action) ?? 'ALLOW',
+        reasons: asRecord(eventDecisionRows[0].payload)?.reasons ?? [],
+        requireApproval: asRecord(eventDecisionRows[0].payload)?.action === 'REQUIRE_APPROVAL',
+        payload: eventDecisionRows[0].payload,
+        createdAt: new Date(),
+      }
+    }
+  }
+
+  const signedAuthorization =
+    (asRecord(decision?.payload)?.paymentAuthorization as unknown | undefined) ?? null
+
+  const { rows: settlementRows } = await pool.query(
+    `SELECT event_type, created_at, tx_hash, decision_id, payload
+     FROM policy_events
+     WHERE session_id = $1
+       AND event_type IN ($2, $3, $4)
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [
+      sessionId,
+      LIFECYCLE_EVENT.SETTLEMENT_VERIFIED,
+      LIFECYCLE_EVENT.SETTLEMENT_REJECTED,
+      LIFECYCLE_EVENT.SETTLEMENT_DETECTED,
+    ],
+  )
+  const settlement: SettlementDebugRecord | null = settlementRows[0]
+    ? {
+        eventType: settlementRows[0].event_type,
+        createdAt: settlementRows[0].created_at,
+        txHash: settlementRows[0].tx_hash ?? undefined,
+        decisionId: settlementRows[0].decision_id ?? undefined,
+        payload: settlementRows[0].payload ?? {},
+      }
+    : null
+
+  return {
+    session,
+    grant,
+    budget,
+    decision,
+    signedAuthorization,
+    settlement,
+  }
 }
 
 /** Replay protection: already settled with this tx_hash? */
@@ -1406,6 +1575,7 @@ export const db = {
   consumeDecisionOnce,
   getDecisionPayloadByDecisionId,
   getLatestPolicyEventPayload,
+  getSessionDebugRecord,
   hasSettlementForTxHash,
   hasSettlementForDecisionRail,
   getMedianFeeForLot,

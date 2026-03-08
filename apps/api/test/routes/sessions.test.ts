@@ -7,6 +7,7 @@ vi.mock('../../src/db', () => ({
   db: {
     getActiveSession: vi.fn(),
     getSessionState: vi.fn(),
+    getSessionDebugRecord: vi.fn(),
     getSessionHistory: vi.fn(),
     getSessionTimeline: vi.fn(),
   },
@@ -246,6 +247,135 @@ describe('sessions routes', () => {
           metadata: { lotId: 'LOT-1' },
         },
       ])
+    })
+  })
+
+  describe('GET /api/sessions/:sessionId/debug', () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111'
+
+    it('returns full debug bundle for existing session', async () => {
+      vi.mocked(db.getSessionDebugRecord).mockResolvedValue({
+        session: {
+          id: sessionId,
+          plateNumber: '1234567',
+          lotId: 'LOT-1',
+          entryTime: new Date('2026-03-08T10:00:00.000Z'),
+          status: 'payment_required',
+        },
+        grant: { grantId: 'grant-1', policyHash: 'ph-1' },
+        budget: { authorization: { budgetId: 'bud-1' }, keyId: 'parker-budget-signing-key-1' },
+        decision: { decisionId: 'dec-1', action: 'ALLOW' },
+        signedAuthorization: { keyId: 'parker-signing-key-1' },
+        settlement: { eventType: 'SETTLEMENT_VERIFIED', txHash: '0xabc' },
+      } as any)
+      vi.mocked(db.getSessionTimeline).mockResolvedValue([
+        {
+          id: 'evt-1',
+          sessionId,
+          eventType: 'SESSION.CREATED',
+          timestamp: new Date('2026-03-08T10:00:00.000Z'),
+          metadata: { lotId: 'LOT-1' },
+        } as any,
+      ])
+
+      const app = createApp()
+      const res = await request(app).get(`/api/sessions/${sessionId}/debug`)
+
+      expect(res.status).toBe(200)
+      expect(db.getSessionDebugRecord).toHaveBeenCalledWith(sessionId)
+      expect(db.getSessionTimeline).toHaveBeenCalledWith(sessionId, 500)
+      expect(res.body).toEqual({
+        debugVersion: 1,
+        session: expect.objectContaining({ id: sessionId, status: 'payment_required' }),
+        grant: expect.objectContaining({ grantId: 'grant-1', policyHash: 'ph-1' }),
+        budget: { authorization: { budgetId: 'bud-1' }, keyId: 'parker-budget-signing-key-1' },
+        decision: { decisionId: 'dec-1', action: 'ALLOW' },
+        signedAuthorization: { keyId: 'parker-signing-key-1' },
+        settlement: { eventType: 'SETTLEMENT_VERIFIED', txHash: '0xabc' },
+        invariants: {
+          decisionWithinBudget: true,
+          authorizationMatchesDecision: true,
+          settlementMatchesAuthorization: true,
+          settlementMatchesPolicy: true,
+        },
+        timeline: [
+          {
+            eventType: 'SESSION.CREATED',
+            createdAt: '2026-03-08T10:00:00.000Z',
+            metadata: { lotId: 'LOT-1' },
+          },
+        ],
+      })
+    })
+
+    it('adds human-readable derived amount fields for budget and settlement', async () => {
+      vi.mocked(db.getSessionDebugRecord).mockResolvedValue({
+        session: {
+          id: sessionId,
+          plateNumber: '1234567',
+          lotId: 'LOT-1',
+          entryTime: new Date('2026-03-08T10:00:00.000Z'),
+          status: 'payment_required',
+        },
+        grant: null,
+        budget: {
+          authorization: {
+            budgetId: 'bud-1',
+            maxAmountMinor: '3000',
+            minorUnit: 2,
+            currency: 'USD',
+          },
+          keyId: 'parker-budget-signing-key-1',
+        },
+        decision: {
+          decisionId: 'dec-1',
+          policyHash: 'ph-1',
+          rail: 'stripe',
+          quoteCurrency: 'USD',
+        },
+        signedAuthorization: null,
+        settlement: {
+          eventType: 'SETTLEMENT_VERIFIED',
+          payload: {
+            amountMinor: '1250',
+            minorUnit: 2,
+            currency: 'USD',
+          },
+        },
+      } as any)
+      vi.mocked(db.getSessionTimeline).mockResolvedValue([])
+
+      const app = createApp()
+      const res = await request(app).get(`/api/sessions/${sessionId}/debug`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.debugVersion).toBe(1)
+      expect(res.body.budget.authorization.maxAmount).toBe('30.00 USD')
+      expect(res.body.settlement.amountDisplay).toBe('12.50 USD')
+      expect(res.body.settlement.payload.amountDisplay).toBe('12.50 USD')
+    })
+
+    it('returns 400 for malformed sessionId', async () => {
+      const app = createApp()
+      const res = await request(app).get('/api/sessions/not-a-uuid/debug')
+      expect(res.status).toBe(400)
+      expect(db.getSessionDebugRecord).not.toHaveBeenCalled()
+    })
+
+    it('returns 401 when internal key is configured but missing', async () => {
+      process.env.SESSION_TIMELINE_API_KEY = 'internal-key-1'
+      const app = createApp()
+      const res = await request(app).get(`/api/sessions/${sessionId}/debug`)
+      expect(res.status).toBe(401)
+      expect(db.getSessionDebugRecord).not.toHaveBeenCalled()
+    })
+
+    it('returns 404 for unknown session', async () => {
+      vi.mocked(db.getSessionDebugRecord).mockResolvedValue(null)
+      const app = createApp()
+      const res = await request(app).get(`/api/sessions/${sessionId}/debug`)
+      expect(res.status).toBe(404)
+      expect(db.getSessionTimeline).not.toHaveBeenCalled()
     })
   })
 })
