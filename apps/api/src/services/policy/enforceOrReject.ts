@@ -22,6 +22,10 @@ import type {
   SettlementResult,
   EnforcementResult,
 } from '@parker/policy-core'
+import {
+  verifySignedPaymentAuthorizationForSettlement,
+  type SignedPaymentAuthorization,
+} from '../paymentAuthorization'
 
 export type GetDecisionPayload = (decisionId: string) => Promise<unknown | null>
 
@@ -43,6 +47,22 @@ export async function enforceOrReject(
   if (!payload || typeof payload !== 'object') {
     return { allowed: false, reason: 'DECISION_NOT_FOUND' }
   }
-  const decision = payload as PaymentPolicyDecision
+  const decision = payload as PaymentPolicyDecision & { paymentAuthorization?: SignedPaymentAuthorization }
+  if (decision.paymentAuthorization) {
+    const authorizationCheck = verifySignedPaymentAuthorizationForSettlement(
+      decision.paymentAuthorization,
+      decisionId,
+      settlement,
+    )
+    if (!authorizationCheck.ok) {
+      return {
+        allowed: false,
+        reason:
+          authorizationCheck.reason === 'mismatch'
+            ? 'QUOTE_AMOUNT_MISMATCH'
+            : 'POLICY_HASH_MISMATCH',
+      }
+    }
+  }
   return enforcePayment(decision, settlement)
 }

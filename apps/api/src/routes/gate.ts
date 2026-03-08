@@ -47,6 +47,7 @@ import type {
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
 import { sessionLifecycleService } from '../services/sessionLifecycle'
+import { createSignedPaymentAuthorization } from '../services/paymentAuthorization'
 
 export const gateRouter = Router()
 
@@ -840,6 +841,13 @@ gateRouter.post('/exit', async (req, res) => {
               })()
             : undefined,
       }
+      const paymentAuthorization = createSignedPaymentAuthorization(sessionId, decisionToPersist)
+      const decisionPayloadForStorage = paymentAuthorization
+        ? ({
+            ...decisionToPersist,
+            paymentAuthorization,
+          } as PaymentPolicyDecision & { paymentAuthorization: unknown })
+        : decisionToPersist
 
       try {
         await db.insertPolicyDecision({
@@ -854,11 +862,11 @@ gateRouter.post('/exit', async (req, res) => {
           action: finalDecision.action,
           reasons: finalDecision.reasons,
           requireApproval: finalDecision.action === 'REQUIRE_APPROVAL',
-          payload: decisionToPersist,
+          payload: decisionPayloadForStorage,
         })
         await db.insertPolicyEvent({
           eventType: LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
-          payload: decisionToPersist,
+          payload: decisionPayloadForStorage,
           sessionId,
           decisionId: finalDecision.decisionId,
         })
@@ -1110,6 +1118,7 @@ gateRouter.post('/exit', async (req, res) => {
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
         policy: policyPayload,
+        ...(paymentAuthorization && { paymentAuthorization }),
         ...(approvalRequired && {
           approvalRequired: true,
           approval: {
