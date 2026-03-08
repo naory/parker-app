@@ -137,6 +137,7 @@ Future implementations may support broader scopes such as `DAY`, `VEHICLE`, or `
 | FLEET | Budget applies across multiple vehicles under a fleet policy |
 
 `scopeId` identifies the entity that the budget scope applies to.  
+For `SESSION` scope, `scopeId` should equal `sessionId`.  
 Examples: `budgetScope: "VEHICLE"` with `scopeId: "veh_123"`, or `budgetScope: "FLEET"` with `scopeId: "fleet_abc"`.
 
 ---
