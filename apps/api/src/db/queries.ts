@@ -2,6 +2,7 @@ import { pool } from './index'
 import type { SessionEventType } from '../events/types'
 import { SESSION_EVENTS, toSessionEventType } from '../events/types'
 import { emitSessionEvent } from '../events/emitSessionEvent'
+import { getSessionTimeline as getSessionTimelineRows } from '../events/getSessionTimeline'
 import type { DriverRecord, SessionRecord, Lot, SessionState } from '@parker/core'
 import { assertSessionTransition, assertSessionTransitionPath } from '@parker/core'
 import type { DecisionState } from '@parker/core'
@@ -705,14 +706,7 @@ async function insertPolicyEvent(input: InsertPolicyEventInput): Promise<void> {
 
 async function getSessionTimeline(sessionId: string, limit = 500): Promise<SessionTimelineEvent[]> {
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 1000) : 500
-  const { rows } = await pool.query(
-    `SELECT id, session_id, event_type, metadata, created_at
-     FROM session_events
-     WHERE session_id = $1::uuid
-     ORDER BY created_at ASC, id ASC
-     LIMIT $2`,
-    [sessionId, safeLimit],
-  )
+  const rows = await getSessionTimelineRows(pool, sessionId, safeLimit)
   return rows.map((row) => ({
     id: row.id,
     sessionId: row.session_id,
