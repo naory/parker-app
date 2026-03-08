@@ -28,6 +28,7 @@ describe('sessionBudgetAuthorization service', () => {
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
       vehicleId: '1234567',
+      scopeId: 'veh_123',
       policyHash: 'ph-1',
       currency: 'USD',
       minorUnit: 2,
@@ -38,6 +39,8 @@ describe('sessionBudgetAuthorization service', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     })
     expect(envelope).not.toBeNull()
+    expect(envelope!.authorization.budgetScope).toBe('SESSION')
+    expect(envelope!.authorization.scopeId).toBe('veh_123')
 
     const decision = {
       decisionId: 'dec-1',
@@ -76,6 +79,7 @@ describe('sessionBudgetAuthorization service', () => {
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
       vehicleId: '1234567',
+      scopeId: 'veh_123',
       policyHash: 'ph-1',
       currency: 'USD',
       maxAmountMinor: '1000',
@@ -104,6 +108,43 @@ describe('sessionBudgetAuthorization service', () => {
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
       ],
+    } as unknown as PaymentPolicyDecision
+
+    const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      decision,
+    })
+    expect(verification).toEqual({ ok: false, reason: 'mismatch' })
+  })
+
+  it('rejects unsupported non-session budget scopes in current implementation', () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519')
+    process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+    process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+
+    const envelope = createSignedSessionBudgetAuthorization({
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      vehicleId: '1234567',
+      policyHash: 'ph-1',
+      currency: 'USD',
+      budgetScope: 'DAY',
+      scopeId: 'veh_123',
+      maxAmountMinor: '5000',
+      allowedRails: ['stripe'],
+      allowedAssets: [],
+      destinationAllowlist: [],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    })
+    expect(envelope).not.toBeNull()
+
+    const decision = {
+      decisionId: 'dec-1',
+      policyHash: 'ph-1',
+      action: 'ALLOW',
+      reasons: ['OK'],
+      expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
+      rail: 'stripe',
+      priceFiat: { amountMinor: '1000', currency: 'USD' },
     } as unknown as PaymentPolicyDecision
 
     const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {

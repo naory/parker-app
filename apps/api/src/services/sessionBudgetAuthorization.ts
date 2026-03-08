@@ -1,14 +1,18 @@
 import crypto, { createHash, randomUUID } from 'node:crypto'
 import type { Asset, PaymentPolicyDecision, Rail } from '@parker/policy-core'
 
+export type BudgetScope = 'SESSION' | 'DAY' | 'VEHICLE' | 'FLEET'
+
 export interface SessionBudgetAuthorization {
   version: 1
   budgetId: string
   sessionId: string
   vehicleId: string
+  scopeId?: string
   policyHash: string
   currency: string
   minorUnit: number
+  budgetScope: BudgetScope
   maxAmountMinor: string
   allowedRails: Rail[]
   allowedAssets: Asset[]
@@ -61,9 +65,11 @@ function parseVerificationPublicKey(): crypto.KeyObject | null {
 export function createSignedSessionBudgetAuthorization(input: {
   sessionId: string
   vehicleId: string
+  scopeId?: string
   policyHash: string
   currency: string
   minorUnit?: number
+  budgetScope?: BudgetScope
   maxAmountMinor: string
   allowedRails: Rail[]
   allowedAssets: Asset[]
@@ -78,9 +84,11 @@ export function createSignedSessionBudgetAuthorization(input: {
     budgetId: randomUUID(),
     sessionId: input.sessionId,
     vehicleId: input.vehicleId,
+    ...(input.scopeId ? { scopeId: input.scopeId } : {}),
     policyHash: input.policyHash,
     currency: input.currency,
     minorUnit: input.minorUnit ?? 2,
+    budgetScope: input.budgetScope ?? 'SESSION',
     maxAmountMinor: input.maxAmountMinor,
     allowedRails: input.allowedRails,
     allowedAssets: input.allowedAssets,
@@ -126,6 +134,9 @@ export function verifySignedSessionBudgetAuthorizationForDecision(
   const { authorization } = envelope
   const { decision } = input
   if (authorization.sessionId !== input.sessionId || authorization.policyHash !== decision.policyHash) {
+    return { ok: false, reason: 'mismatch' }
+  }
+  if (authorization.budgetScope !== 'SESSION') {
     return { ok: false, reason: 'mismatch' }
   }
   if (decision.rail && !authorization.allowedRails.includes(decision.rail)) {

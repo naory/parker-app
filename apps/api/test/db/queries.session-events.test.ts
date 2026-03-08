@@ -163,6 +163,8 @@ describe('db.insertPolicyEvent mirrored session timeline metadata standardizatio
         maxAmountMinor: '3000',
         currency: 'USD',
         minorUnit: 2,
+        budgetScope: 'SESSION',
+        scopeId: 'veh_123',
         allowedRails: ['xrpl', 'stripe'],
         expiresAt: '2026-03-08T18:00:00Z',
       },
@@ -178,9 +180,41 @@ describe('db.insertPolicyEvent mirrored session timeline metadata standardizatio
           maxAmountMinor: '3000',
           currency: 'USD',
           minorUnit: 2,
+          budgetScope: 'SESSION',
+          scopeId: 'veh_123',
           allowedRails: ['xrpl', 'stripe'],
           expiresAt: '2026-03-08T18:00:00Z',
         },
+      }),
+    )
+  })
+
+  it('includes budgetScope in timeline metadata when only nested SBA envelope is present', async () => {
+    const sessionId = '77777777-7777-4777-8777-777777777777'
+    await db.insertPolicyEvent({
+      eventType: LIFECYCLE_EVENT.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+      sessionId,
+      payload: {
+        sessionBudgetAuthorization: {
+          authorization: {
+            budgetScope: 'SESSION',
+            scopeId: 'veh_123',
+          },
+          signature: 'sig',
+          keyId: 'parker-budget-signing-key-1',
+        },
+      },
+    })
+
+    expect(emitSessionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ query: expect.any(Function) }),
+      expect.objectContaining({
+        sessionId,
+        eventType: SESSION_EVENTS.SESSION_BUDGET_AUTHORIZATION_ISSUED,
+        metadata: expect.objectContaining({
+          budgetScope: 'SESSION',
+          scopeId: 'veh_123',
+        }),
       }),
     )
   })

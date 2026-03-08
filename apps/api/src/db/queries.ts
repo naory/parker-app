@@ -639,11 +639,15 @@ function standardizeSessionMetadata(
   }
 
   if (sessionEventType === SESSION_EVENTS.SESSION_BUDGET_AUTHORIZATION_ISSUED) {
+    const signedSba = asRecord(payloadRecord.sessionBudgetAuthorization)
+    const signedSbaAuthorization = asRecord(signedSba?.authorization)
     const budgetId = asString(payloadRecord.budgetId)
     const maxAmountMinor = asString(payloadRecord.maxAmountMinor)
     const currency = asString(payloadRecord.currency)
     const minorUnit =
       typeof payloadRecord.minorUnit === 'number' ? payloadRecord.minorUnit : undefined
+    const budgetScope = asString(payloadRecord.budgetScope) ?? asString(signedSbaAuthorization?.budgetScope)
+    const scopeId = asString(payloadRecord.scopeId) ?? asString(signedSbaAuthorization?.scopeId)
     const allowedRails = Array.isArray(payloadRecord.allowedRails) ? payloadRecord.allowedRails : []
     const expiresAt = asString(payloadRecord.expiresAt)
     return {
@@ -651,6 +655,8 @@ function standardizeSessionMetadata(
       ...(maxAmountMinor ? { maxAmountMinor } : {}),
       ...(currency ? { currency } : {}),
       ...(minorUnit !== undefined ? { minorUnit } : {}),
+      ...(budgetScope ? { budgetScope } : {}),
+      ...(scopeId ? { scopeId } : {}),
       ...(allowedRails.length > 0 ? { allowedRails } : {}),
       ...(expiresAt ? { expiresAt } : {}),
     }
