@@ -709,7 +709,7 @@ async function getSessionTimeline(sessionId: string, limit = 500): Promise<Sessi
     `SELECT id, session_id, event_type, metadata, created_at
      FROM session_events
      WHERE session_id = $1::uuid
-     ORDER BY created_at ASC
+     ORDER BY created_at ASC, id ASC
      LIMIT $2`,
     [sessionId, safeLimit],
   )
