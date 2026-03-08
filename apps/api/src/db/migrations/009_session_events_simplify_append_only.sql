@@ -5,8 +5,13 @@
 --   event_type TEXT
 --   created_at TIMESTAMPTZ
 --   metadata JSONB
+-- NOTE:
+--   Legacy rows with non-UUID session_id values are intentionally discarded
+--   during normalization because the new schema enforces UUID session_id.
 
 DO $$
+DECLARE
+  discarded_legacy_rows BIGINT := 0;
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -21,6 +26,19 @@ BEGIN
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       metadata   JSONB NOT NULL DEFAULT '{}'::jsonb
     );
+
+    SELECT COUNT(*)
+      INTO discarded_legacy_rows
+    FROM session_events se
+    WHERE NOT (
+      se.session_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    );
+
+    IF discarded_legacy_rows > 0 THEN
+      RAISE NOTICE
+        'session_events normalization: discarding % legacy rows with non-UUID session_id',
+        discarded_legacy_rows;
+    END IF;
 
     WITH normalized AS (
       SELECT

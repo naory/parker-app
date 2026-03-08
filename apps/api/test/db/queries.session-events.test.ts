@@ -16,7 +16,7 @@ import { emitSessionEvent } from '../../src/events/emitSessionEvent'
 import { db } from '../../src/db/queries'
 import { SESSION_EVENTS } from '../../src/events/types'
 
-describe('db.insertPolicyEvent session correlation metadata', () => {
+describe('db.insertPolicyEvent mirrored session timeline metadata standardization', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(pool.query).mockResolvedValue({ rows: [], rowCount: 1 } as never)
