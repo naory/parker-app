@@ -984,6 +984,8 @@ function normalizeXrplIntentBindingError(error: unknown): Error | null {
     )
   }
 
+  // Keep matcher strings in sync with SQL trigger messages in
+  // 007_xrpl_intent_policy_hash_binding.sql (validate_xrpl_intent_policy_hash).
   if (message.includes('xrpl intent references unknown decision_id=')) {
     return makeXrplIntentBindingError('DECISION_NOT_FOUND', message)
   }

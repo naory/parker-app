@@ -1,4 +1,23 @@
 -- Migration: enforce xrpl intent decision/policy hash integrity
+-- Preflight for non-dev environments:
+--   Ensure legacy rows are clean before applying FK/check/trigger:
+--   1) orphaned decision_id:
+--      SELECT payment_id, decision_id
+--      FROM xrpl_payment_intents x
+--      WHERE decision_id IS NOT NULL
+--        AND NOT EXISTS (
+--          SELECT 1 FROM policy_decisions d WHERE d.decision_id = x.decision_id
+--        );
+--   2) one-sided null pair:
+--      SELECT payment_id, decision_id, policy_hash
+--      FROM xrpl_payment_intents
+--      WHERE (decision_id IS NULL) <> (policy_hash IS NULL);
+--   3) mismatched decision/policy hash:
+--      SELECT x.payment_id, x.decision_id, x.policy_hash, d.policy_hash AS expected_policy_hash
+--      FROM xrpl_payment_intents x
+--      JOIN policy_decisions d ON d.decision_id = x.decision_id
+--      WHERE x.decision_id IS NOT NULL
+--        AND x.policy_hash IS DISTINCT FROM d.policy_hash;
 
 ALTER TABLE xrpl_payment_intents DROP CONSTRAINT IF EXISTS fk_xrpl_intents_decision;
 ALTER TABLE xrpl_payment_intents ADD CONSTRAINT fk_xrpl_intents_decision
@@ -25,6 +44,8 @@ BEGIN
   FROM policy_decisions
   WHERE decision_id = NEW.decision_id;
 
+  -- NOTE: Exception message text is matched by app-side normalizer
+  -- (apps/api/src/db/queries.ts::normalizeXrplIntentBindingError).
   IF expected_hash IS NULL THEN
     RAISE EXCEPTION 'xrpl intent references unknown decision_id=%', NEW.decision_id;
   END IF;
