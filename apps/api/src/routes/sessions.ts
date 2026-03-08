@@ -76,3 +76,44 @@ sessionsRouter.get('/:sessionId/timeline', async (req, res) => {
     res.status(500).json({ error: 'Failed to get session timeline' })
   }
 })
+
+// GET /api/sessions/:sessionId/debug — Operator-focused session diagnostics bundle
+sessionsRouter.get('/:sessionId/debug', async (req, res) => {
+  try {
+    if (!UUID_V4_REGEX.test(req.params.sessionId)) {
+      return res.status(400).json({ error: 'Invalid sessionId format' })
+    }
+    if (!hasTimelineAccess(req)) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+
+    const sessionId = req.params.sessionId
+    const debugRecord = await db.getSessionDebugRecord(sessionId)
+    if (!debugRecord) {
+      return res.status(404).json({ error: 'Session not found' })
+    }
+
+    const rawLimit = parseInt(req.query.limit as string)
+    const limit = !isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 500
+    const timeline = await db.getSessionTimeline(sessionId, limit)
+
+    logger.info('session.debug.fetch', { sessionId, eventCount: timeline.length })
+
+    return res.json({
+      session: debugRecord.session,
+      grant: debugRecord.grant,
+      budget: debugRecord.budget,
+      decision: debugRecord.decision,
+      signedAuthorization: debugRecord.signedAuthorization,
+      settlement: debugRecord.settlement,
+      timeline: timeline.map((event) => ({
+        eventType: event.eventType,
+        createdAt: event.timestamp,
+        metadata: event.metadata ?? {},
+      })),
+    })
+  } catch (error) {
+    console.error('Failed to get session debug bundle:', error)
+    return res.status(500).json({ error: 'Failed to get session debug bundle' })
+  }
+})
