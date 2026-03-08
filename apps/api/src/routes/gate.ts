@@ -47,6 +47,7 @@ import type {
 import { buildEntryPolicyStack } from '../services/policyStack'
 import { enforceOrReject, evaluateExitPolicy, buildAssetsOffered } from '../services/policy'
 import { sessionLifecycleService } from '../services/sessionLifecycle'
+import { createSignedPaymentAuthorization } from '../services/paymentAuthorization'
 
 export const gateRouter = Router()
 
@@ -72,6 +73,9 @@ const REASON_WHY: Record<PolicyReasonCode, string> = {
   QUOTE_AMOUNT_MISMATCH: 'Settlement amount does not match quote',
   DESTINATION_MISMATCH: 'Settlement destination does not match quote',
   DECISION_NOT_FOUND: 'Policy decision not found',
+  PAYMENT_AUTH_INVALID_SIGNATURE: 'Payment authorization signature is invalid',
+  PAYMENT_AUTH_EXPIRED: 'Payment authorization has expired',
+  PAYMENT_AUTH_MISMATCH: 'Payment does not match signed authorization',
   POLICY_HASH_MISMATCH: 'Settlement does not match decision policy hash',
   CAP_EXCEEDED_TX: 'Amount exceeds per-transaction limit',
   CAP_EXCEEDED_SESSION: 'Amount exceeds session limit',
@@ -840,6 +844,13 @@ gateRouter.post('/exit', async (req, res) => {
               })()
             : undefined,
       }
+      const paymentAuthorization = createSignedPaymentAuthorization(sessionId, decisionToPersist)
+      const decisionPayloadForStorage = paymentAuthorization
+        ? ({
+            ...decisionToPersist,
+            paymentAuthorization,
+          } as PaymentPolicyDecision & { paymentAuthorization: unknown })
+        : decisionToPersist
 
       try {
         await db.insertPolicyDecision({
@@ -854,11 +865,11 @@ gateRouter.post('/exit', async (req, res) => {
           action: finalDecision.action,
           reasons: finalDecision.reasons,
           requireApproval: finalDecision.action === 'REQUIRE_APPROVAL',
-          payload: decisionToPersist,
+          payload: decisionPayloadForStorage,
         })
         await db.insertPolicyEvent({
           eventType: LIFECYCLE_EVENT.PAYMENT_DECISION_CREATED,
-          payload: decisionToPersist,
+          payload: decisionPayloadForStorage,
           sessionId,
           decisionId: finalDecision.decisionId,
         })
@@ -1110,6 +1121,7 @@ gateRouter.post('/exit', async (req, res) => {
         durationMinutes: Math.round(durationMinutes),
         paymentOptions,
         policy: policyPayload,
+        ...(paymentAuthorization && { paymentAuthorization }),
         ...(approvalRequired && {
           approvalRequired: true,
           approval: {
