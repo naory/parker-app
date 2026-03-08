@@ -2,6 +2,7 @@ import { Router, type Request } from 'express'
 import { normalizePlate } from '@parker/core'
 
 import { db } from '../db'
+import { logger } from '../services/observability'
 
 export const sessionsRouter = Router()
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -59,6 +60,7 @@ sessionsRouter.get('/:sessionId/timeline', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' })
     }
     const timeline = await db.getSessionTimeline(sessionId, limit)
+    logger.info('timeline.fetch', { sessionId, eventCount: timeline.length })
     res.json({
       sessionId,
       state,
