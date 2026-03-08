@@ -249,27 +249,47 @@ GET /api/sessions/:sessionId/timeline
 ### Response
 
 ```
-[
-  {
-    "eventType": "SESSION.CREATED",
-    "createdAt": "...",
-    "metadata": {
-      "lotId": "lot-1",
-      "vehicleId": "veh-1"
+{
+  "sessionId": "11111111-1111-4111-8111-111111111111",
+  "eventCount": 2,
+  "events": [
+    {
+      "eventType": "SESSION.CREATED",
+      "createdAt": "...",
+      "metadata": {
+        "lotId": "lot-1",
+        "vehicleId": "veh-1"
+      }
+    },
+    {
+      "eventType": "POLICY.GRANT_ISSUED",
+      "createdAt": "...",
+      "metadata": {
+        "grantId": "grant-1",
+        "policyHash": "..."
+      }
     }
-  },
-  {
-    "eventType": "POLICY.GRANT_ISSUED",
-    "createdAt": "...",
-    "metadata": {
-      "grantId": "grant-1",
-      "policyHash": "..."
-    }
-  }
-]
+  ]
+}
 ```
 
 Events should be returned in chronological order.
+
+Validation behavior:
+
+- malformed `sessionId` (non-UUID): `400`
+- unknown session: `404`
+- existing session with no events yet: `200` with `"events": []`
+
+Current query capabilities:
+
+- supports `?limit=<n>` (capped to 1000, default 500)
+- event-type filtering (for example `?type=SETTLEMENT.VERIFIED`) is planned as a future extension
+
+Authorization behavior:
+
+- timeline is internal/operator access
+- if `SESSION_TIMELINE_API_KEY` (or `GATE_API_KEY`) is configured, caller must send matching `x-gate-api-key`
 
 ---
 

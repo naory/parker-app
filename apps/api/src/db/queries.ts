@@ -97,6 +97,17 @@ async function getActiveSession(plate: string): Promise<SessionRecord | null> {
   return rows[0] ? mapSession(rows[0]) : null
 }
 
+async function sessionExists(sessionId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1
+     FROM sessions
+     WHERE id = $1::uuid
+     LIMIT 1`,
+    [sessionId],
+  )
+  return rows.length > 0
+}
+
 async function getActiveSessionsByLot(lotId: string): Promise<SessionRecord[]> {
   const { rows } = await pool.query(
     `SELECT * FROM sessions
@@ -1332,6 +1343,7 @@ export const db = {
   deactivateDriver,
   createSession,
   getActiveSession,
+  sessionExists,
   getActiveSessionsByLot,
   transitionSession,
   settleSessionAfterVerified,

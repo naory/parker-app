@@ -410,6 +410,25 @@ parker-app/
 | ------ | ------------------------------ | -------------------------- |
 | GET    | `/api/sessions/active/:plate`  | Get active parking session |
 | GET    | `/api/sessions/history/:plate` | Get session history        |
+| GET    | `/api/sessions/:sessionId/timeline` | Get ordered lifecycle timeline events (`x-gate-api-key` required when configured) |
+
+Timeline response shape:
+
+```json
+{
+  "sessionId": "11111111-1111-4111-8111-111111111111",
+  "eventCount": 2,
+  "events": [
+    {
+      "eventType": "SESSION.CREATED",
+      "createdAt": "2026-03-08T12:00:00Z",
+      "metadata": {
+        "lotId": "lot_1"
+      }
+    }
+  ]
+}
+```
 
 ### Gate API
 
