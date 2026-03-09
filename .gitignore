@@ -35,6 +35,7 @@ coverage.json
 .turbo/
 
 # Misc
+diff.tmp
 *.log
 npm-debug.log*
 pnpm-debug.log*
