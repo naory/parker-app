@@ -25,6 +25,7 @@ import type {
 import {
   verifySignedPaymentAuthorizationForSettlement,
   type SignedPaymentAuthorization,
+  type SpaVerifier,
 } from '../paymentAuthorization'
 
 export type GetDecisionPayload = (decisionId: string) => Promise<unknown | null>
@@ -39,6 +40,7 @@ export async function enforceOrReject(
   getDecisionPayload: GetDecisionPayload,
   decisionId: string | undefined,
   settlement: SettlementResult,
+  spaVerifier: SpaVerifier | null,
 ): Promise<EnforcementResult> {
   if (!decisionId || decisionId.trim().length === 0) {
     return { allowed: false, reason: 'DECISION_NOT_FOUND' }
@@ -49,10 +51,14 @@ export async function enforceOrReject(
   }
   const decision = payload as PaymentPolicyDecision & { paymentAuthorization?: SignedPaymentAuthorization }
   if (decision.paymentAuthorization) {
+    if (!spaVerifier) {
+      return { allowed: false, reason: 'PAYMENT_AUTH_INVALID_SIGNATURE' }
+    }
     const authorizationCheck = verifySignedPaymentAuthorizationForSettlement(
       decision.paymentAuthorization,
       decisionId,
       settlement,
+      spaVerifier,
     )
     if (!authorizationCheck.ok) {
       return {

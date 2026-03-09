@@ -1,4 +1,4 @@
-import crypto, { createHash } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import type { Asset, PaymentPolicyDecision, SettlementResult } from '@parker/policy-core'
 
 export interface PaymentAuthorization {
@@ -20,8 +20,16 @@ export interface SignedPaymentAuthorization {
   keyId: string
 }
 
-function getExpectedSigningKeyId(): string {
-  return process.env.PARKER_SPA_SIGNING_KEY_ID || 'parker-signing-key-1'
+/** Signer for creating SPA envelopes. Injected by service layer. */
+export interface SpaSigner {
+  keyId: string
+  sign(hash: Buffer): string
+}
+
+/** Verifier for SPA envelopes. Injected by service layer. */
+export interface SpaVerifier {
+  expectedKeyId: string
+  verify(hash: Buffer, signatureBase64: string): boolean
 }
 
 function parseNowIso(nowISO: string | undefined): number | null {
@@ -52,26 +60,6 @@ function canonicalJson(value: unknown): string {
 
 function hashAuthorization(authorization: PaymentAuthorization): Buffer {
   return createHash('sha256').update(canonicalJson(authorization)).digest()
-}
-
-function parseSigningPrivateKey(): crypto.KeyObject | null {
-  const pem = process.env.PARKER_SPA_SIGNING_PRIVATE_KEY_PEM
-  if (!pem) return null
-  try {
-    return crypto.createPrivateKey(pem)
-  } catch {
-    return null
-  }
-}
-
-function parseVerificationPublicKey(): crypto.KeyObject | null {
-  const pem = process.env.PARKER_SPA_SIGNING_PUBLIC_KEY_PEM
-  if (!pem) return null
-  try {
-    return crypto.createPublicKey(pem)
-  } catch {
-    return null
-  }
 }
 
 function buildAuthorization(
@@ -105,14 +93,14 @@ function buildAuthorization(
 export function createSignedPaymentAuthorization(
   sessionId: string,
   decision: PaymentPolicyDecision,
+  signer: SpaSigner,
 ): SignedPaymentAuthorization | null {
   const authorization = buildAuthorization(sessionId, decision)
-  const privateKey = parseSigningPrivateKey()
-  if (!authorization || !privateKey) return null
+  if (!authorization) return null
 
-  const signature = crypto.sign(null, hashAuthorization(authorization), privateKey).toString('base64')
-  const keyId = getExpectedSigningKeyId()
-  return { authorization, signature, keyId }
+  const hash = hashAuthorization(authorization)
+  const signature = signer.sign(hash)
+  return { authorization, signature, keyId: signer.keyId }
 }
 
 function assetMatches(a: Asset, b: Asset): boolean {
@@ -123,21 +111,15 @@ export function verifySignedPaymentAuthorizationForSettlement(
   envelope: SignedPaymentAuthorization,
   decisionId: string,
   settlement: SettlementResult,
+  verifier: SpaVerifier,
   options?: { nowISO?: string; nowMs?: number },
 ): { ok: true } | { ok: false; reason: 'invalid_signature' | 'expired' | 'mismatch' } {
-  if (envelope.keyId !== getExpectedSigningKeyId()) {
+  if (envelope.keyId !== verifier.expectedKeyId) {
     return { ok: false, reason: 'invalid_signature' }
   }
 
-  const publicKey = parseVerificationPublicKey()
-  if (!publicKey) return { ok: false, reason: 'invalid_signature' }
-
-  const isValid = crypto.verify(
-    null,
-    hashAuthorization(envelope.authorization),
-    publicKey,
-    Buffer.from(envelope.signature, 'base64'),
-  )
+  const hash = hashAuthorization(envelope.authorization)
+  const isValid = verifier.verify(hash, envelope.signature)
   if (!isValid) return { ok: false, reason: 'invalid_signature' }
 
   const verificationNowMs = resolveVerificationNowMs(settlement, options)

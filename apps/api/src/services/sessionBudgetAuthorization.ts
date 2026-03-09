@@ -26,6 +26,18 @@ export interface SignedSessionBudgetAuthorization {
   keyId: string
 }
 
+/** Signer for creating SBA envelopes. Injected by service layer. */
+export interface SbaSigner {
+  keyId: string
+  sign(hash: Buffer): string
+}
+
+/** Verifier for SBA envelopes. Injected by service layer. */
+export interface SbaVerifier {
+  expectedKeyId: string
+  verify(hash: Buffer, signatureBase64: string): boolean
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v)).join(',')}]`
@@ -38,31 +50,8 @@ function hashAuthorization(authorization: SessionBudgetAuthorization): Buffer {
   return createHash('sha256').update(canonicalJson(authorization)).digest()
 }
 
-function getExpectedKeyId(): string {
-  return process.env.PARKER_SBA_SIGNING_KEY_ID || 'parker-budget-signing-key-1'
-}
-
-function parseSigningPrivateKey(): crypto.KeyObject | null {
-  const pem = process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM
-  if (!pem) return null
-  try {
-    return crypto.createPrivateKey(pem)
-  } catch {
-    return null
-  }
-}
-
-function parseVerificationPublicKey(): crypto.KeyObject | null {
-  const pem = process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM
-  if (!pem) return null
-  try {
-    return crypto.createPublicKey(pem)
-  } catch {
-    return null
-  }
-}
-
-export function createSignedSessionBudgetAuthorization(input: {
+export function createSignedSessionBudgetAuthorization(
+  input: {
   sessionId: string
   vehicleId: string
   scopeId?: string
@@ -75,10 +64,9 @@ export function createSignedSessionBudgetAuthorization(input: {
   allowedAssets: Asset[]
   destinationAllowlist: string[]
   expiresAt: string
-}): SignedSessionBudgetAuthorization | null {
-  const privateKey = parseSigningPrivateKey()
-  if (!privateKey) return null
-
+},
+  signer: SbaSigner,
+): SignedSessionBudgetAuthorization | null {
   const authorization: SessionBudgetAuthorization = {
     version: 1,
     budgetId: randomUUID(),
@@ -96,11 +84,12 @@ export function createSignedSessionBudgetAuthorization(input: {
     expiresAt: input.expiresAt,
   }
 
-  const signature = crypto.sign(null, hashAuthorization(authorization), privateKey).toString('base64')
+  const hash = hashAuthorization(authorization)
+  const signature = signer.sign(hash)
   return {
     authorization,
     signature,
-    keyId: getExpectedKeyId(),
+    keyId: signer.keyId,
   }
 }
 
@@ -111,19 +100,13 @@ function assetMatches(a: Asset, b: Asset): boolean {
 export function verifySignedSessionBudgetAuthorizationForDecision(
   envelope: SignedSessionBudgetAuthorization,
   input: { sessionId: string; decision: PaymentPolicyDecision; nowMs?: number },
+  verifier: SbaVerifier,
 ): { ok: true } | { ok: false; reason: 'invalid_signature' | 'expired' | 'mismatch' } {
-  if (envelope.keyId !== getExpectedKeyId()) {
+  if (envelope.keyId !== verifier.expectedKeyId) {
     return { ok: false, reason: 'invalid_signature' }
   }
-  const publicKey = parseVerificationPublicKey()
-  if (!publicKey) return { ok: false, reason: 'invalid_signature' }
-
-  const isValid = crypto.verify(
-    null,
-    hashAuthorization(envelope.authorization),
-    publicKey,
-    Buffer.from(envelope.signature, 'base64'),
-  )
+  const hash = hashAuthorization(envelope.authorization)
+  const isValid = verifier.verify(hash, envelope.signature)
   if (!isValid) return { ok: false, reason: 'invalid_signature' }
 
   const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now()

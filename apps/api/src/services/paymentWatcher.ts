@@ -18,6 +18,7 @@ import type { SettlementResult, Asset } from '@parker/policy-core'
 
 import { db } from '../db'
 import { enforceOrReject } from './policy/enforceOrReject'
+import { getSpaVerifier } from './signingDeps'
 import { notifyGate, notifyDriver } from '../ws/index'
 import { isHederaEnabled, endParkingSessionOnHedera } from './hedera'
 import { sessionLifecycleService } from './sessionLifecycle'
@@ -225,6 +226,7 @@ async function handleTransferEvent(
       db.getDecisionPayloadByDecisionId.bind(db),
       pending.decisionId,
       settlement,
+      getSpaVerifier(),
     )
     if (!enforcement.allowed) {
       await db.insertPolicyEvent({

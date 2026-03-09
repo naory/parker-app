@@ -1,29 +1,33 @@
 import crypto from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { PaymentPolicyDecision } from '@parker/policy-core'
 import {
   createSignedSessionBudgetAuthorization,
   verifySignedSessionBudgetAuthorizationForDecision,
+  type SbaSigner,
+  type SbaVerifier,
 } from '../../src/services/sessionBudgetAuthorization'
 
-const ORIGINAL_ENV = {
-  privateKey: process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM,
-  publicKey: process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM,
-  keyId: process.env.PARKER_SBA_SIGNING_KEY_ID,
+function mkSignerVerifier(keyId = 'budget-key-1') {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519')
+  const signer: SbaSigner = {
+    keyId,
+    sign(hash) {
+      return crypto.sign(null, hash, privateKey).toString('base64')
+    },
+  }
+  const verifier: SbaVerifier = {
+    expectedKeyId: keyId,
+    verify(hash, sig) {
+      return crypto.verify(null, hash, publicKey, Buffer.from(sig, 'base64'))
+    },
+  }
+  return { signer, verifier }
 }
-
-afterEach(() => {
-  process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM = ORIGINAL_ENV.privateKey
-  process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM = ORIGINAL_ENV.publicKey
-  process.env.PARKER_SBA_SIGNING_KEY_ID = ORIGINAL_ENV.keyId
-})
 
 describe('sessionBudgetAuthorization service', () => {
   it('creates and verifies signed SBA envelope for a matching decision', () => {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519')
-    process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
-    process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM = publicKey.export({ type: 'spki', format: 'pem' }).toString()
-    process.env.PARKER_SBA_SIGNING_KEY_ID = 'budget-key-1'
+    const { signer, verifier } = mkSignerVerifier()
 
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
@@ -37,7 +41,7 @@ describe('sessionBudgetAuthorization service', () => {
       allowedAssets: [{ kind: 'IOU', currency: 'RLUSD', issuer: 'rIssuer' }],
       destinationAllowlist: ['rDestination'],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    })
+    }, signer)
     expect(envelope).not.toBeNull()
     expect(envelope!.authorization.budgetScope).toBe('SESSION')
     expect(envelope!.authorization.scopeId).toBe('veh_123')
@@ -67,14 +71,54 @@ describe('sessionBudgetAuthorization service', () => {
     const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {
       sessionId: '11111111-1111-4111-8111-111111111111',
       decision,
-    })
+    }, verifier)
     expect(verification).toEqual({ ok: true })
   })
 
+  it('rejects decision with wrong rail (rail not in allowedRails)', () => {
+    const { signer, verifier } = mkSignerVerifier()
+
+    const envelope = createSignedSessionBudgetAuthorization({
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      vehicleId: '1234567',
+      policyHash: 'ph-1',
+      currency: 'USD',
+      maxAmountMinor: '5000',
+      allowedRails: ['xrpl'],
+      allowedAssets: [],
+      destinationAllowlist: [],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }, signer)
+    expect(envelope).not.toBeNull()
+
+    const decision = {
+      decisionId: 'dec-1',
+      policyHash: 'ph-1',
+      action: 'ALLOW',
+      reasons: ['OK'],
+      expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
+      rail: 'evm',
+      chosen: { rail: 'evm', quoteId: 'q1' },
+      settlementQuotes: [
+        {
+          quoteId: 'q1',
+          rail: 'evm',
+          amount: { amount: '1000', decimals: 18 },
+          destination: '0xDest',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      ],
+    } as unknown as PaymentPolicyDecision
+
+    const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      decision,
+    }, verifier)
+    expect(verification).toEqual({ ok: false, reason: 'mismatch' })
+  })
+
   it('rejects decision that exceeds budget amount', () => {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519')
-    process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
-    process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    const { signer, verifier } = mkSignerVerifier()
 
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
@@ -87,7 +131,7 @@ describe('sessionBudgetAuthorization service', () => {
       allowedAssets: [],
       destinationAllowlist: [],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    })
+    }, signer)
     expect(envelope).not.toBeNull()
 
     const decision = {
@@ -113,14 +157,12 @@ describe('sessionBudgetAuthorization service', () => {
     const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {
       sessionId: '11111111-1111-4111-8111-111111111111',
       decision,
-    })
+    }, verifier)
     expect(verification).toEqual({ ok: false, reason: 'mismatch' })
   })
 
   it('rejects unsupported non-session budget scopes in current implementation', () => {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519')
-    process.env.PARKER_SBA_SIGNING_PRIVATE_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
-    process.env.PARKER_SBA_SIGNING_PUBLIC_KEY_PEM = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    const { signer, verifier } = mkSignerVerifier()
 
     const envelope = createSignedSessionBudgetAuthorization({
       sessionId: '11111111-1111-4111-8111-111111111111',
@@ -134,7 +176,7 @@ describe('sessionBudgetAuthorization service', () => {
       allowedAssets: [],
       destinationAllowlist: [],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    })
+    }, signer)
     expect(envelope).not.toBeNull()
 
     const decision = {
@@ -150,7 +192,7 @@ describe('sessionBudgetAuthorization service', () => {
     const verification = verifySignedSessionBudgetAuthorizationForDecision(envelope!, {
       sessionId: '11111111-1111-4111-8111-111111111111',
       decision,
-    })
+    }, verifier)
     expect(verification).toEqual({ ok: false, reason: 'mismatch' })
   })
 })

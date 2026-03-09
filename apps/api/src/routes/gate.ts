@@ -53,6 +53,7 @@ import {
   verifySignedSessionBudgetAuthorizationForDecision,
   type SignedSessionBudgetAuthorization,
 } from '../services/sessionBudgetAuthorization'
+import { getSpaSigner, getSpaVerifier, getSbaSigner, getSbaVerifier } from '../services/signingDeps'
 
 export const gateRouter = Router()
 
@@ -538,18 +539,24 @@ gateRouter.post('/entry', async (req, res) => {
         grant.maxSpend?.perDayMinor
       if (typeof maxAmountMinor === 'string' && maxAmountMinor.length > 0) {
         const destinationAllowlist = lot.operatorWallet ? [lot.operatorWallet] : []
-        const signedSba = createSignedSessionBudgetAuthorization({
-          sessionId: session.id,
-          vehicleId: plate,
-          policyHash: grant.policyHash,
-          currency: lot.currency || 'USD',
-          minorUnit: 2,
-          maxAmountMinor,
-          allowedRails: grant.allowedRails as Rail[],
-          allowedAssets: grant.allowedAssets as Asset[],
-          destinationAllowlist,
-          expiresAt: grant.expiresAtISO,
-        })
+        const sbaSigner = getSbaSigner()
+        const signedSba = sbaSigner
+          ? createSignedSessionBudgetAuthorization(
+              {
+                sessionId: session.id,
+                vehicleId: plate,
+                policyHash: grant.policyHash,
+                currency: lot.currency || 'USD',
+                minorUnit: 2,
+                maxAmountMinor,
+                allowedRails: grant.allowedRails as Rail[],
+                allowedAssets: grant.allowedAssets as Asset[],
+                destinationAllowlist,
+                expiresAt: grant.expiresAtISO,
+              },
+              sbaSigner,
+            )
+          : null
         if (signedSba) {
           sessionBudgetAuthorization = signedSba
           await db.insertPolicyEvent({
@@ -913,10 +920,19 @@ gateRouter.post('/exit', async (req, res) => {
           (sbaPayload as { sessionBudgetAuthorization?: unknown } | null)
             ?.sessionBudgetAuthorization ?? sbaPayload
         if (hasSignedSbaEnvelope(envelopeCandidate)) {
-          const sbaCheck = verifySignedSessionBudgetAuthorizationForDecision(envelopeCandidate, {
-            sessionId: session.id,
-            decision: decisionToPersist,
-          })
+          const sbaVerifier = getSbaVerifier()
+          if (!sbaVerifier) {
+            paymentFailuresTotal.inc({ reason: 'session_budget_authorization_invalid_signature' })
+            return reply(403, {
+              error: 'Payment denied by session budget authorization',
+              reason: 'invalid_signature',
+            })
+          }
+          const sbaCheck = verifySignedSessionBudgetAuthorizationForDecision(
+            envelopeCandidate,
+            { sessionId: session.id, decision: decisionToPersist },
+            sbaVerifier,
+          )
           if (!sbaCheck.ok) {
             paymentFailuresTotal.inc({ reason: `session_budget_authorization_${sbaCheck.reason}` })
             return reply(403, {
@@ -927,7 +943,10 @@ gateRouter.post('/exit', async (req, res) => {
         }
       }
 
-      const paymentAuthorization = createSignedPaymentAuthorization(sessionId, decisionToPersist)
+      const spaSigner = getSpaSigner()
+      const paymentAuthorization = spaSigner
+        ? createSignedPaymentAuthorization(sessionId, decisionToPersist, spaSigner)
+        : null
       const decisionPayloadForStorage = paymentAuthorization
         ? ({
             ...decisionToPersist,
@@ -1446,6 +1465,7 @@ gateRouter.post('/exit', async (req, res) => {
         db.getDecisionPayloadByDecisionId.bind(db),
         pendingIntent.decisionId ?? undefined,
         settlement,
+        getSpaVerifier(),
       )
       if (!enforcement.allowed) {
         await db.insertPolicyEvent({

@@ -14,14 +14,35 @@ describe('enforceOrReject', () => {
     asset: { kind: 'IOU' as const, currency: 'USDC', issuer: 'rIssuer' },
   }
 
+  const mockSpaVerifier = { expectedKeyId: 'key-1', verify: () => true }
+
   it('returns DECISION_NOT_FOUND when decisionId is missing', async () => {
-    const result = await enforceOrReject(async () => null, undefined, settlement)
+    const result = await enforceOrReject(async () => null, undefined, settlement, null)
     expect(result).toEqual({ allowed: false, reason: 'DECISION_NOT_FOUND' })
   })
 
   it('returns DECISION_NOT_FOUND when decision payload is not found', async () => {
-    const result = await enforceOrReject(async () => null, 'dec-1', settlement)
+    const result = await enforceOrReject(async () => null, 'dec-1', settlement, null)
     expect(result).toEqual({ allowed: false, reason: 'DECISION_NOT_FOUND' })
+  })
+
+  it('returns PAYMENT_AUTH_INVALID_SIGNATURE when decision has SPA but verifier is null', async () => {
+    const decisionPayload = {
+      decisionId: 'dec-1',
+      policyHash: 'ph-1',
+      action: 'ALLOW',
+      reasons: ['OK'],
+      expiresAtISO: new Date(Date.now() + 60_000).toISOString(),
+      rail: 'xrpl',
+      asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' },
+      paymentAuthorization: {
+        authorization: { version: 1, decisionId: 'dec-1', sessionId: 's1', policyHash: 'ph-1', quoteId: 'q1', rail: 'xrpl', asset: { kind: 'IOU', currency: 'USDC', issuer: 'rIssuer' }, amount: '1000', destination: 'rDest', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+        signature: 'sig',
+        keyId: 'key-1',
+      },
+    }
+    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement, null)
+    expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_INVALID_SIGNATURE' })
   })
 
   it('maps invalid_signature to PAYMENT_AUTH_INVALID_SIGNATURE', async () => {
@@ -54,7 +75,12 @@ describe('enforceOrReject', () => {
         keyId: 'key-1',
       },
     }
-    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
+    const result = await enforceOrReject(
+      async () => decisionPayload,
+      'dec-1',
+      settlement,
+      mockSpaVerifier,
+    )
     expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_INVALID_SIGNATURE' })
   })
 
@@ -88,7 +114,12 @@ describe('enforceOrReject', () => {
         keyId: 'key-1',
       },
     }
-    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
+    const result = await enforceOrReject(
+      async () => decisionPayload,
+      'dec-1',
+      settlement,
+      mockSpaVerifier,
+    )
     expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_EXPIRED' })
   })
 
@@ -122,7 +153,12 @@ describe('enforceOrReject', () => {
         keyId: 'key-1',
       },
     }
-    const result = await enforceOrReject(async () => decisionPayload, 'dec-1', settlement)
+    const result = await enforceOrReject(
+      async () => decisionPayload,
+      'dec-1',
+      settlement,
+      mockSpaVerifier,
+    )
     expect(result).toEqual({ allowed: false, reason: 'PAYMENT_AUTH_MISMATCH' })
   })
 })

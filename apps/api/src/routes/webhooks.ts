@@ -11,6 +11,7 @@ import {
 import { verifyWebhookSignature, isStripeEnabled } from '../services/stripe'
 import { logger, paymentFailuresTotal } from '../services/observability'
 import { enforceOrReject } from '../services/policy'
+import { getSpaVerifier } from '../services/signingDeps'
 import { sessionLifecycleService } from '../services/sessionLifecycle'
 
 export const webhooksRouter = Router()
@@ -136,6 +137,7 @@ webhooksRouter.post('/stripe', raw({ type: 'application/json' }), async (req, re
         db.getDecisionPayloadByDecisionId.bind(db),
         decisionId,
         settlement,
+        getSpaVerifier(),
       )
       if (!enforcement.allowed) {
         await db.insertPolicyEvent({
